@@ -1,0 +1,164 @@
+Crystal clear 👍
+You want a **dashboard-style layout**: **TAB NAME → KPIs inside each tab**, based strictly on the **features and behavior framework we built so far**.
+
+Below is a **production-ready analytical dashboard blueprint** for **Day-Ahead 96-Block Load Behavior Monitoring** ⚡📊
+
+---
+
+# ⚡ LOAD BEHAVIOR ANALYTICS DASHBOARD STRUCTURE
+
+---
+
+## 🕒 **TAB 1: Time & Block Pattern Analysis**
+
+**Purpose:** Understand natural daily load rhythm and curve shape behavior.
+
+### KPIs
+
+* Average Load per Block
+* Peak Block Probability (%)
+* Morning Ramp Rate (MW/block)
+* Evening Ramp Rate (MW/block)
+* Base Load (Night Minimum Avg)
+* Peak Load (Daily Max Avg)
+* Curve Flatness Index
+* Intra-day Load Volatility Index
+* Peak Timing Stability Score
+* Valley Depth Index
+
+---
+
+## 📅 **TAB 2: Calendar & Holiday Impact**
+
+**Purpose:** Measure demand distortion caused by weekends and holidays.
+
+### KPIs
+
+* Weekend Load Change (%)
+* Holiday Load Suppression Factor
+* Pre-Holiday Load Uplift (%)
+* Post-Holiday Recovery Lag (Days)
+* Bridge Day Load Deviation (%)
+* Long Weekend Impact Index
+* Weekday vs Weekend Peak Shift (Blocks)
+* Holiday Morning Dip (%)
+* Holiday Evening Peak Reduction (%)
+
+---
+
+## 🌡 **TAB 3: Weather Sensitivity (Historical Proxy Based)**
+
+**Purpose:** Understand weather-driven behavioral response.
+
+### KPIs
+
+* Temperature Sensitivity (MW/°C)
+* Cooling Load Contribution (%)
+* Heating Load Contribution (%)
+* Humidity Amplification Factor
+* Rain Impact on Daytime Load (%)
+* Rain Impact on Evening Load (%)
+* Heat Stress Load Index
+* Weather Driven Peak Expansion (%)
+* Seasonal Temperature Load Elasticity
+
+---
+
+## 📊 **TAB 4: Load Memory & Persistence Behavior**
+
+**Purpose:** Measure how strongly historical load patterns repeat.
+
+### KPIs
+
+* Same Block Day Persistence Score
+* Weekly Recurrence Strength
+* Rolling Mean Dependency Ratio
+* Load Inertia Index
+* Structural Base Load Stability
+* Historical Curve Shape Similarity Score
+* Yesterday Influence Weight
+* Weekly Pattern Reliability Score
+
+---
+
+## 📈 **TAB 5: Trend & Momentum Behavior**
+
+**Purpose:** Track rising/falling demand regimes.
+
+### KPIs
+
+* Day-over-Day Load Change (%)
+* Week-over-Week Load Change (%)
+* Peak Load Growth Rate (%)
+* Rolling 7-Day Trend Strength
+* Trend Persistence Length (Days)
+* Demand Acceleration Index
+* Load Regime Shift Indicator
+* Momentum Stability Score
+
+---
+
+## 🧬 **TAB 6: Interaction Effects Analysis**
+
+**Purpose:** Measure nonlinear combined behavior.
+
+### KPIs
+
+* Peak Temperature Amplification Factor
+* Weekend Heat Impact Index
+* Holiday Heat Stress Load Index
+* Load Memory × Weather Amplification
+* Weather × Peak Coincidence Score
+* Behavioral Interaction Strength Index
+* Combined Feature Impact Score
+
+---
+
+## 🧱 **TAB 7: Baseline Curve Performance**
+
+**Purpose:** Validate historical baseline logic.
+
+### KPIs
+
+* Baseline Curve Error (%)
+* Baseline Peak Deviation (MW)
+* Shape Similarity Index
+* Daily Energy Deviation (%)
+* Peak Timing Offset (Blocks)
+* Seasonal Baseline Drift
+* Baseline Stability Score
+
+---
+
+## 🚦 **TAB 8: Stability & Risk Monitoring**
+
+**Purpose:** Operational reliability tracking.
+
+### KPIs
+
+* Peak Volatility Index
+* Block Risk Heat Score
+* Ramp Stress Index
+* Curve Distortion Score
+* Extreme Load Event Frequency
+* Anomaly Day Count
+* Dispatch Risk Indicator
+* Load Uncertainty Score
+
+---
+
+## 📊 **TAB 9: Executive Summary (Decision Layer)**
+
+**Purpose:** Management-level view.
+
+### KPIs
+
+* Expected Peak Load Range
+* Demand Growth Rate (Monthly)
+* Weather Sensitivity Summary
+* Holiday Impact Summary
+* System Stability Index
+* Forecast Readiness Score
+* Operational Risk Level
+
+

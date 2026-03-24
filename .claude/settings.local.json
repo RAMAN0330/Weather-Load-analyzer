@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''backend/short_term_pipeline.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''backend/main.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''backend/main.py'', doraise=True\\); py_compile.compile\\(''backend/backtester.py'', doraise=True\\); print\\(''OK''\\)\")"
+    ]
+  }
+}

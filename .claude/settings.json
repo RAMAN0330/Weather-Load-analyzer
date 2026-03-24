@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''main.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(node node_modules/vite/bin/vite.js build)",
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)",
+      "Bash(node node_modules/.bin/vite build)",
+      "Bash(where node:*)",
+      "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")",
+      "Bash(grep -n \"active === ''analysis''\" \"c:/Users/RamanSharma/OneDrive - GNA-Energy/Desktop/RD/frontend/src/App.jsx\" -A 50)",
+      "Read(//c/Users/RamanSharma/**)",
+      "Bash(npx --yes vite build --logLevel error)",
+      "Bash(npx.cmd vite:*)",
+      "Bash(where npm:*)",
+      "Read(//c/Program Files/nodejs/**)",
+      "Read(//c//**)",
+      "Read(//c/Users/RamanSharma/OneDrive - GNA-Energy/Desktop/RD/frontend/$LOCALAPPDATA/**)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/vite/bin/vite.js build)",
+      "Read(//mnt/c/Users/RamanSharma/OneDrive - GNA-Energy/Desktop/**)",
+      "Bash(python process_data.py)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"console.log\\(''checking python syntax...''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''short_term_pipeline.py: OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''OK''\\)\")"
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+export type DriverType = "weather_pct" | "daytype_pct" | "holiday_pct" | "manual_pct";
+
+export type DriverLocks = {
+  weather_pct: boolean;
+  daytype_pct: boolean;
+  holiday_pct: boolean;
+  manual_pct: boolean;
+};
+
+export type BlockDriver = {
+  block_number: number;
+  baseline_mw: number;
+  actual_mw?: number | null;
+  selection_mask?: number;
+  exog?: {
+    temperature_pct: number;
+    humidity_pct: number;
+    precipitation_pct: number;
+    wind_pct?: number;
+    temperature_increase_delta_pct?: number | null;
+    temperature_reduction_delta_pct?: number | null;
+    humidity_increase_delta_pct?: number | null;
+    humidity_reduction_delta_pct?: number | null;
+    precipitation_increase_delta_pct?: number | null;
+    precipitation_reduction_delta_pct?: number | null;
+    weather_total_pct: number;
+    weather_increase_delta_pct?: number | null;
+    weather_reduction_delta_pct?: number | null;
+    direction: "increase" | "decrease" | "neutral";
+    actual_delta_pct?: number | null;
+    actual_increase_delta_pct?: number | null;
+    actual_reduction_delta_pct?: number | null;
+    actual_direction?: "increase" | "decrease" | "neutral";
+    residual_delta_pct?: number | null;
+    residual_direction?: "increase" | "decrease" | "neutral";
+    residual_contributor?: string;
+    actual_vs_weather_alignment?: "aligned" | "opposite" | "weak_signal" | "na";
+    actual_vs_weather_explanation?: string;
+    temperature_effective_coeff?: number | null;
+    temperature_increase_coeff?: number | null;
+    temperature_reduction_coeff?: number | null;
+    weight_confidence?: number | null;
+    regime_confidence?: number | null;
+  };
+  drivers: {
+    weather_pct: number;
+    daytype_pct: number;
+    holiday_pct: number;
+    manual_pct: number;
+  };
+  net_pct: number;
+  final_mw: number;
+};
+
+export type ChartBlockPoint = {
+  block: number;
+  timeLabel: string;
+  baseline: number;
+  adjusted: number;
+  actual: number | null;
+  weatherLayer: number;
+  daytypeLayer: number;
+  holidayLayer: number;
+  manualLayer: number;
+  weatherPct: number;
+  daytypePct: number;
+  holidayPct: number;
+  manualPct: number;
+  tempExogPct: number;
+  humExogPct: number;
+  precipExogPct: number;
+  windExogPct: number;
+  weatherTotalExogPct: number;
+  weatherIncreaseDeltaPct: number;
+  weatherReductionDeltaPct: number;
+  tempIncreaseDeltaPct: number;
+  tempReductionDeltaPct: number;
+  actualIncreaseDeltaPct: number | null;
+  actualReductionDeltaPct: number | null;
+  tempIncreaseCoeff: number | null;
+  tempReductionCoeff: number | null;
+  weatherDirection: "increase" | "decrease" | "neutral";
+  dominantExog: "temperature" | "humidity" | "precipitation" | "wind" | "mixed";
+  actualDeltaPct: number | null;
+  actualDirection: "increase" | "decrease" | "neutral";
+  residualDeltaPct: number | null;
+  residualDirection: "increase" | "decrease" | "neutral";
+  residualContributor: string;
+  actualWeatherAlignment: "aligned" | "opposite" | "weak_signal" | "na";
+  actualWeatherExplanation: string;
+  weightConfidence: number | null;
+  regimeConfidence: number | null;
+};
