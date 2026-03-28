@@ -9,7 +9,7 @@ const timeLabels = blocks96.map(blockToTime);
 
 /* ─── Styles ─── */
 const S = {
-  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: 4 },
+  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4 },
   card: { background: '#1A191E', borderRadius: 10, border: '1px solid #2A292F', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#A0A5B8', padding: '10px 14px', borderBottom: '1px solid #2A292F' },
   badge: (color) => ({ fontSize: 8, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: `${color}18`, color }),

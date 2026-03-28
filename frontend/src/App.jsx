@@ -2525,7 +2525,7 @@ export default function App() {
 
       {
         active === 'weather_analysis' && (
-          <main className="page" style={{ overflow: 'auto' }}>
+          <main className="page page-full weather-page">
             <WeatherDeepPage
               effectiveDate={effectiveDate}
               dayAheadData={dayAhead}
@@ -2997,7 +2997,7 @@ export default function App() {
 
       {
         active === 'monitor' && (
-          <main className="page">
+          <main className="page page-full">
             <section className="hero">
               <div>
                 <h1>Model Performance Monitor</h1>
@@ -3115,7 +3115,7 @@ export default function App() {
 
       {
         active === 'settings' && (
-          <main className="page">
+          <main className="page page-full">
             <section className="hero">
               <div>
                 <h1>Settings</h1>

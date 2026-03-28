@@ -36,7 +36,7 @@ const buildHistogram = (values = [], binCount = 10) => {
 
 /* ─── Styles ─── */
 const S = {
-  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: '100%', display: 'flex', flexDirection: 'column', gap: 2 },
+  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 2 },
   kpiRow: { display: 'flex', gap: 8, padding: '10px 16px 6px', flexWrap: 'wrap' },
   kpi: { flex: '1 1 0', minWidth: 130, padding: '12px 14px', background: '#1A191E', borderRadius: 8, border: '1px solid #2A292F' },
   kpiLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: '#6B7186', marginBottom: 4 },

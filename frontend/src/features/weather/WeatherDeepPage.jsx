@@ -110,6 +110,24 @@ function MetricCard({ label, value, unit, sub, delta, color, wide }) {
   );
 }
 
+function DetailOverlay({ open, title, subtitle, onClose, children }) {
+  if (!open) return null;
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content fp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h3>{title}</h3>
+            {subtitle && <p className="fp-modal-subtitle">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: C._muted, cursor: 'pointer', fontSize: 18 }}>×</button>
+        </div>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Gauge SVG ─── */
 function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
   const pct = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
@@ -145,6 +163,7 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
   const [showNormal, setShowNormal] = useState(true);
   const [showLoad, setShowLoad] = useState(true);
   const [expandedFactor, setExpandedFactor] = useState(null);
+  const [activePanel, setActivePanel] = useState(null);
   // Multi-date comparison for DoD
   const [dodDates, setDodDates] = useState([]);
   const [dodDateData, setDodDateData] = useState({}); // { date: { temperature: [...96], humidity: [...96], ... } }
@@ -467,11 +486,165 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
     dod: dodChartOption,
   };
 
+  const attributionPanel = (
+    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+      <div style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, overflow: 'hidden' }}>
+        {(() => {
+          const base = (loadBaseline.reduce((s, v) => s + (Number(v) || 0), 0) / Math.max(1, loadBaseline.filter(Number.isFinite).length)) || 4500;
+          const factors = [
+            { id: 'temp', name: 'Temperature', val: computed.avgTemp, unit: '°C', thresh: '>28°C', mw: computed.mwTemp, blockKey: 'temp' },
+            { id: 'hum', name: 'Humidity', val: computed.avgHum, unit: '%', thresh: '>60%', mw: computed.mwHum, blockKey: 'hum' },
+            { id: 'cloud', name: 'Cloud Cover', val: computed.avgCloud, unit: '%', thresh: 'Any', mw: computed.mwCloud, blockKey: 'cloud' },
+            { id: 'rain', name: 'Rain', val: rainMetrics?.total_mm != null ? rainMetrics.total_mm : computed.totalPrecip, unit: 'mm', thresh: '>0', mw: computed.mwRain, blockKey: 'rain' },
+          ];
+          return (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Factor', 'Avg Value', 'Threshold', 'Daily MW Impact', '% of Base', ''].map(h => (
+                    <th key={h} style={{ fontSize: 9, color: C._muted, textTransform: 'uppercase', letterSpacing: 1, padding: '10px 12px', borderBottom: `1px solid var(--outline)`, textAlign: 'left' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {factors.map(r => (
+                  <React.Fragment key={r.id}>
+                    <tr onClick={() => setExpandedFactor(expandedFactor === r.id ? null : r.id)} style={{ cursor: 'pointer', background: expandedFactor === r.id ? `${C._accent}08` : 'transparent', transition: 'background 0.15s' }}>
+                      <td style={{ fontSize: 11, fontWeight: 600, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{r.name}</td>
+                      <td style={{ fontSize: 11, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{fmt(r.val, r.val > 0 && r.val < 0.01 ? 4 : r.val < 1 ? 3 : 1)} {r.unit}</td>
+                      <td style={{ fontSize: 10, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, color: C._muted }}>{r.thresh}</td>
+                      <td style={{ fontSize: 12, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, fontWeight: 700, color: r.mw >= 0 ? C._red : C._green }}>{sgn(r.mw)} MW</td>
+                      <td style={{ fontSize: 11, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{((r.mw / base) * 100).toFixed(2)}%</td>
+                      <td style={{ fontSize: 10, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, color: C._accent }}>{expandedFactor === r.id ? '▼ hide blocks' : '▶ per block'}</td>
+                    </tr>
+                    {expandedFactor === r.id && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: 0 }}>
+                          <div style={{ maxHeight: 300, overflowY: 'auto', background: `${C._border}11` }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                              <thead>
+                                <tr>
+                                  {['Block', 'Time', `Raw ${r.unit}`, 'MW Impact'].map(h => (
+                                    <th key={h} style={{ fontSize: 8, color: C._muted, textTransform: 'uppercase', letterSpacing: 1, padding: '5px 10px', borderBottom: `1px solid ${C._border}33`, textAlign: 'left', position: 'sticky', top: 0, background: C._surface }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {computed.blockMW.filter((_, i) => i % 4 === 0).map(bm => (
+                                  <tr key={bm.block}>
+                                    <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>{bm.block}</td>
+                                    <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>{bm.time}</td>
+                                    <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>
+                                      {fmt(r.blockKey === 'temp' ? bm.rawTemp : r.blockKey === 'hum' ? bm.rawHum : r.blockKey === 'cloud' ? bm.rawCloud : bm.rawPrecip)}
+                                    </td>
+                                    <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11`, fontWeight: 600, color: bm[r.blockKey] >= 0 ? C._red : C._green }}>
+                                      {sgn(bm[r.blockKey])} MW
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} style={{ fontSize: 11, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: C._accent }}>
+                    NET{computed.compoundMult !== 1 ? ` (×${computed.compoundMult.toFixed(2)} compound)` : ''}
+                  </td>
+                  <td style={{ fontSize: 14, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: computed.netMW >= 0 ? C._red : C._green }}>{sgn(computed.netMW)} MW</td>
+                  <td colSpan={2} style={{ fontSize: 11, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: C._accent }}>
+                    {((computed.netMW / base) * 100).toFixed(2)}%
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          );
+        })()}
+      </div>
+
+      <div style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 2, color: C._accent, fontWeight: 700 }}>Recommended Adjustment</div>
+        <div style={{ textAlign: 'center', padding: '12px 0' }}>
+          <div style={{ fontSize: 36, fontWeight: 700, color: computed.netMW >= 0 ? C.red : C.green, lineHeight: 1.1 }}>
+            {sgn(computed.netMW)} MW
+          </div>
+          <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>for next forecast cycle</div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+          {[{ label: 'P10', mult: 0.7, color: C._green }, { label: 'P50', mult: 1.0, color: C._accent }, { label: 'P90', mult: 1.4, color: C._red }].map((b, i) => (
+            <div key={i} style={{ textAlign: 'center', flex: 1, padding: '8px 4px', background: `${b.color}10`, borderRadius: 8, border: `1px solid ${b.color}22` }}>
+              <div style={{ fontSize: 8, color: C._muted, textTransform: 'uppercase', letterSpacing: 1 }}>{b.label}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: b.color }}>{sgn(computed.netMW * b.mult)} MW</div>
+            </div>
+          ))}
+        </div>
+
+        {computed.compounds.length > 0 && (
+          <div style={{ marginTop: 4 }}>
+            {computed.compounds.map((c, i) => (
+              <div key={i} style={{ fontSize: 10, padding: '4px 10px', marginBottom: 4, background: `${C._red}12`, border: `1px solid ${C._red}22`, borderRadius: 6, color: C._red }}>
+                {c.name} ×{c.mult} — {c.desc}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {sensitivity && (
+          <div style={{ marginTop: 4, fontSize: 10, color: C._muted }}>
+            <div>Cooling: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.cooling_sensitivity)} MW/°C</span></div>
+            <div>Heating: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.heating_sensitivity)} MW/°C</span></div>
+            <div>Humidity amp: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.humidity_amplification)}×</span></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const peakStressPanel = peakWindows ? (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+      {Object.entries(peakWindows).map(([name, data]) => {
+        const stress = data.stress_status;
+        const stressColor = stress === 'Heat Stress' ? C._red : stress === 'Cold Stress' ? C._cyan : C._green;
+        return (
+          <div key={name} style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{name}</span>
+              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 10px', borderRadius: 20, background: `${stressColor}18`, color: stressColor }}>{stress}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+              <div><span style={{ color: C._muted }}>Temp</span> <span style={{ fontWeight: 600 }}>{fmt(data.temp_avg)}°C</span></div>
+              <div><span style={{ color: C._muted }}>Δ</span> <span style={{ color: data.temp_delta > 0 ? C._red : C._green, fontWeight: 600 }}>{sgn(data.temp_delta)}°C</span></div>
+              <div><span style={{ color: C._muted }}>Hum</span> <span style={{ fontWeight: 600 }}>{fmt(data.hum_avg, 0)}%</span></div>
+              <div><span style={{ color: C._muted }}>Δ</span> <span style={{ color: data.hum_delta > 0 ? C._red : C._green, fontWeight: 600 }}>{sgn(data.hum_delta)}%</span></div>
+              <div style={{ gridColumn: '1 / -1' }}><span style={{ color: C._muted }}>Precip</span> <span style={{ fontWeight: 600 }}>{fmt(data.precip_total)} mm</span></div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  ) : <div style={{ color: C._muted, fontSize: 12 }}>No peak stress analysis available.</div>;
+
+  const rainPanel = rainMetrics ? (
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <MetricCard label="Total Rainfall" value={fmt(rainMetrics.total_mm)} unit="mm" color={C._purple} />
+      <MetricCard label="Max Intensity" value={fmt(rainMetrics.max_intensity)} unit="mm/15m" color={C._cyan} />
+      <MetricCard label="Rain Duration" value={fmt(rainMetrics.rain_hours, 0)} unit="hours" color={C._accent2} />
+      <MetricCard label="Load Impact" value={fmt(rainMetrics.load_impact_mw, 0)} unit="MW"
+        color={rainMetrics.load_impact_mw < 0 ? C._green : C._red} />
+    </div>
+  ) : <div style={{ color: C._muted, fontSize: 12 }}>No rain and cloud intelligence available.</div>;
+
   /* ═══════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════ */
   return (
-    <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.text, minHeight: '100%' }}>
+    <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.text, minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
       {/* ═══ CONTROLS BAR ═══ */}
       <div style={{ padding: '12px 20px', background: C.card, borderBottom: `1px solid var(--outline)`, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -543,6 +716,19 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
         ))}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>Detail Panels</span>
+        <button onClick={() => setActivePanel('attribution')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: `${C._accent}10`, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+          Open MW Attribution
+        </button>
+        <button onClick={() => setActivePanel('peak')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+          Open Peak Stress
+        </button>
+        <button onClick={() => setActivePanel('rain')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+          Open Rain & Cloud
+        </button>
+      </div>
+
       <Section title="Weather Analysis Charts">
         <div style={{ background: C.surface, borderRadius: 12, border: `1px solid var(--outline)`, overflow: 'hidden' }}>
           {/* Date selector for Multi-Day Compare */}
@@ -573,179 +759,22 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
             </div>
           )}
           <div style={{ padding: 8 }}>
-            <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: 380, width: '100%' }} notMerge={true} />
+            <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: 420, width: '100%' }} notMerge={true} />
           </div>
         </div>
       </Section>
 
-      {/* ═══ MW ATTRIBUTION ═══ */}
-      <Section title="MW Attribution & Adjustment">
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-          {/* Attribution Table — click row to expand per-block */}
-          <div style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, overflow: 'hidden' }}>
-            {(() => {
-              const base = (loadBaseline.reduce((s, v) => s + (Number(v) || 0), 0) / Math.max(1, loadBaseline.filter(Number.isFinite).length)) || 4500;
-              const factors = [
-                { id: 'temp', name: 'Temperature', val: computed.avgTemp, unit: '°C', thresh: '>28°C', mw: computed.mwTemp, blockKey: 'temp' },
-                { id: 'hum', name: 'Humidity', val: computed.avgHum, unit: '%', thresh: '>60%', mw: computed.mwHum, blockKey: 'hum' },
-                { id: 'cloud', name: 'Cloud Cover', val: computed.avgCloud, unit: '%', thresh: 'Any', mw: computed.mwCloud, blockKey: 'cloud' },
-                { id: 'rain', name: 'Rain', val: rainMetrics?.total_mm != null ? rainMetrics.total_mm : computed.totalPrecip, unit: 'mm', thresh: '>0', mw: computed.mwRain, blockKey: 'rain' },
-              ];
-              return (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      {['Factor', 'Avg Value', 'Threshold', 'Daily MW Impact', '% of Base', ''].map(h => (
-                        <th key={h} style={{ fontSize: 9, color: C._muted, textTransform: 'uppercase', letterSpacing: 1, padding: '10px 12px', borderBottom: `1px solid var(--outline)`, textAlign: 'left' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {factors.map(r => (
-                      <React.Fragment key={r.id}>
-                        <tr onClick={() => setExpandedFactor(expandedFactor === r.id ? null : r.id)} style={{ cursor: 'pointer', background: expandedFactor === r.id ? `${C._accent}08` : 'transparent', transition: 'background 0.15s' }}>
-                          <td style={{ fontSize: 11, fontWeight: 600, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{r.name}</td>
-                          <td style={{ fontSize: 11, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{fmt(r.val, r.val > 0 && r.val < 0.01 ? 4 : r.val < 1 ? 3 : 1)} {r.unit}</td>
-                          <td style={{ fontSize: 10, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, color: C._muted }}>{r.thresh}</td>
-                          <td style={{ fontSize: 12, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, fontWeight: 700, color: r.mw >= 0 ? C._red : C._green }}>{sgn(r.mw)} MW</td>
-                          <td style={{ fontSize: 11, padding: '10px 12px', borderBottom: `1px solid ${C._border}22` }}>{((r.mw / base) * 100).toFixed(2)}%</td>
-                          <td style={{ fontSize: 10, padding: '10px 12px', borderBottom: `1px solid ${C._border}22`, color: C._accent }}>{expandedFactor === r.id ? '▼ hide blocks' : '▶ per block'}</td>
-                        </tr>
-                        {expandedFactor === r.id && (
-                          <tr>
-                            <td colSpan={6} style={{ padding: 0 }}>
-                              <div style={{ maxHeight: 300, overflowY: 'auto', background: `${C._border}11` }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                  <thead>
-                                    <tr>
-                                      {['Block', 'Time', `Raw ${r.unit}`, 'MW Impact'].map(h => (
-                                        <th key={h} style={{ fontSize: 8, color: C._muted, textTransform: 'uppercase', letterSpacing: 1, padding: '5px 10px', borderBottom: `1px solid ${C._border}33`, textAlign: 'left', position: 'sticky', top: 0, background: C._surface }}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {computed.blockMW.filter((_, i) => i % 4 === 0).map(bm => (
-                                      <tr key={bm.block}>
-                                        <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>{bm.block}</td>
-                                        <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>{bm.time}</td>
-                                        <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11` }}>
-                                          {fmt(r.blockKey === 'temp' ? bm.rawTemp : r.blockKey === 'hum' ? bm.rawHum : r.blockKey === 'cloud' ? bm.rawCloud : bm.rawPrecip)}
-                                        </td>
-                                        <td style={{ fontSize: 10, padding: '3px 10px', borderBottom: `1px solid ${C._border}11`, fontWeight: 600, color: bm[r.blockKey] >= 0 ? C._red : C._green }}>
-                                          {sgn(bm[r.blockKey])} MW
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={3} style={{ fontSize: 11, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: C._accent }}>
-                        NET{computed.compoundMult !== 1 ? ` (×${computed.compoundMult.toFixed(2)} compound)` : ''}
-                      </td>
-                      <td style={{ fontSize: 14, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: computed.netMW >= 0 ? C._red : C._green }}>{sgn(computed.netMW)} MW</td>
-                      <td colSpan={2} style={{ fontSize: 11, fontWeight: 700, padding: '10px 12px', borderTop: `2px solid ${C._accent}`, color: C._accent }}>
-                        {((computed.netMW / base) * 100).toFixed(2)}%
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              );
-            })()}
-          </div>
+      <DetailOverlay open={activePanel === 'attribution'} title="MW Attribution & Adjustment" subtitle="Moved into a detail panel to preserve the single-screen weather layout" onClose={() => setActivePanel(null)}>
+        {attributionPanel}
+      </DetailOverlay>
 
-          {/* Adjustment Recommendation */}
-          <div style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 2, color: C._accent, fontWeight: 700 }}>Recommended Adjustment</div>
-            <div style={{ textAlign: 'center', padding: '12px 0' }}>
-              <div style={{ fontSize: 36, fontWeight: 700, color: computed.netMW >= 0 ? C.red : C.green, lineHeight: 1.1 }}>
-                {sgn(computed.netMW)} MW
-              </div>
-              <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>for next forecast cycle</div>
-            </div>
+      <DetailOverlay open={activePanel === 'peak'} title="Peak Window Stress Analysis" subtitle="Peak-period weather stress and deltas" onClose={() => setActivePanel(null)}>
+        {peakStressPanel}
+      </DetailOverlay>
 
-            {/* P10/P50/P90 */}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-              {[{ label: 'P10', mult: 0.7, color: C._green }, { label: 'P50', mult: 1.0, color: C._accent }, { label: 'P90', mult: 1.4, color: C._red }].map((b, i) => (
-                <div key={i} style={{ textAlign: 'center', flex: 1, padding: '8px 4px', background: `${b.color}10`, borderRadius: 8, border: `1px solid ${b.color}22` }}>
-                  <div style={{ fontSize: 8, color: C._muted, textTransform: 'uppercase', letterSpacing: 1 }}>{b.label}</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: b.color }}>{sgn(computed.netMW * b.mult)} MW</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Compounds */}
-            {computed.compounds.length > 0 && (
-              <div style={{ marginTop: 4 }}>
-                {computed.compounds.map((c, i) => (
-                  <div key={i} style={{ fontSize: 10, padding: '4px 10px', marginBottom: 4, background: `${C._red}12`, border: `1px solid ${C._red}22`, borderRadius: 6, color: C._red }}>
-                    {c.name} ×{c.mult} — {c.desc}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Sensitivity from backend */}
-            {sensitivity && (
-              <div style={{ marginTop: 4, fontSize: 10, color: C._muted }}>
-                <div>Cooling: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.cooling_sensitivity)} MW/°C</span></div>
-                <div>Heating: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.heating_sensitivity)} MW/°C</span></div>
-                <div>Humidity amp: <span style={{ color: C._text, fontWeight: 600 }}>{fmt(sensitivity.humidity_amplification)}×</span></div>
-              </div>
-            )}
-          </div>
-        </div>
-      </Section>
-
-      {/* ═══ PEAK WINDOW STRESS ═══ */}
-      {peakWindows && (
-        <Section title="Peak Window Stress Analysis">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-            {Object.entries(peakWindows).map(([name, data]) => {
-              const stress = data.stress_status;
-              const stressColor = stress === 'Heat Stress' ? C._red : stress === 'Cold Stress' ? C._cyan : C._green;
-              return (
-                <div key={name} style={{ background: C.surface, borderRadius: 10, border: `1px solid var(--outline)`, padding: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{name}</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 10px', borderRadius: 20, background: `${stressColor}18`, color: stressColor }}>{stress}</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
-                    <div><span style={{ color: C._muted }}>Temp</span> <span style={{ fontWeight: 600 }}>{fmt(data.temp_avg)}°C</span></div>
-                    <div><span style={{ color: C._muted }}>Δ</span> <span style={{ color: data.temp_delta > 0 ? C._red : C._green, fontWeight: 600 }}>{sgn(data.temp_delta)}°C</span></div>
-                    <div><span style={{ color: C._muted }}>Hum</span> <span style={{ fontWeight: 600 }}>{fmt(data.hum_avg, 0)}%</span></div>
-                    <div><span style={{ color: C._muted }}>Δ</span> <span style={{ color: data.hum_delta > 0 ? C._red : C._green, fontWeight: 600 }}>{sgn(data.hum_delta)}%</span></div>
-                    <div style={{ gridColumn: '1 / -1' }}><span style={{ color: C._muted }}>Precip</span> <span style={{ fontWeight: 600 }}>{fmt(data.precip_total)} mm</span></div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* ═══ RAIN & CLOUD DETAILS ═══ */}
-      {rainMetrics && (
-        <Section title="Rain & Cloud Intelligence" defaultOpen={false}>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <MetricCard label="Total Rainfall" value={fmt(rainMetrics.total_mm)} unit="mm" color={C._purple} />
-            <MetricCard label="Max Intensity" value={fmt(rainMetrics.max_intensity)} unit="mm/15m" color={C._cyan} />
-            <MetricCard label="Rain Duration" value={fmt(rainMetrics.rain_hours, 0)} unit="hours" color={C._accent2} />
-            <MetricCard label="Load Impact" value={fmt(rainMetrics.load_impact_mw, 0)} unit="MW"
-              color={rainMetrics.load_impact_mw < 0 ? C._green : C._red} />
-          </div>
-        </Section>
-      )}
-
-
-
+      <DetailOverlay open={activePanel === 'rain'} title="Rain & Cloud Intelligence" subtitle="Rainfall intensity, duration, and load impact" onClose={() => setActivePanel(null)}>
+        {rainPanel}
+      </DetailOverlay>
     </div>
   );
 }
