@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
@@ -13,6 +14,15 @@ except ImportError:
         from india_intelligence import compute_india_adjustments
     except ImportError:
         compute_india_adjustments = None
+
+try:
+    from .hybrid import HybridForecastConfig, HybridForecastingEngine
+except Exception:
+    try:
+        from hybrid import HybridForecastConfig, HybridForecastingEngine
+    except Exception:
+        HybridForecastConfig = None
+        HybridForecastingEngine = None
 
 try:
     from xgboost import XGBRegressor
@@ -349,6 +359,24 @@ DEFAULT_CONFIG = {
     "pattern_weight": 0.12,
     "trend_weight": 0.12,
     "forecast_blend": {"hybrid": 0.20, "bias_applied": 0.80, "weather_baseline": 0.0},
+    "forecast_shrinkage": {
+        "offpeak_weight": 0.50,
+        "peak_weight": 0.25,
+        "known_blocks_bonus": 0.20,
+        "peak_start_block": 48,
+        "peak_end_block": 72,
+    },
+    "hybrid_ai": {
+        "enabled": True,
+        "lookback_days": 7,
+        "min_history_days": 21,
+        "training_days": 60,
+        "blend_weight": 0.35,
+        "min_blend_weight": 0.10,
+        "max_blend_weight": 0.45,
+        "sequence_epochs": 60,
+        "random_state": 42,
+    },
     "rain_coeffs": {"winter": 20.0, "spring": 18.0, "summer": 15.0, "fall": 18.0},
     "min_actual_blocks": 24,
     "max_actual_blocks": 60,
@@ -377,6 +405,9 @@ DEFAULT_CONFIG = {
     "weather_divergence_threshold": 1.5,
     "calibrate_behaviour_from_data": True,
     "behaviour_calibration_days": 90,
+    "behaviour_cyclic_harmonics": 4,
+    "behaviour_cyclic_blend": 0.55,
+    "behaviour_cyclic_smoothing": 5,
     "cdd_hdd_bases": {
         "north":   {"cdd": 24.0, "hdd": 15.0},
         "south":   {"cdd": 28.0, "hdd": 20.0},
@@ -389,6 +420,26 @@ DEFAULT_CONFIG = {
 _IMPACT_MIN = -0.40
 _IMPACT_MAX = 0.50
 _BLOCK_COUNT = 96
+logger = logging.getLogger(__name__)
+
+SHORT_TERM_MODEL_FEATURES = [
+    "temperature", "humidity", "precipitation",
+    "CDD", "HDD", "temp_roll_3h", "temp_roll_6h", "wbgt",
+    "cdh_24h", "cdh_48h", "cdh_72h",
+    "apparent_temperature", "cloud_cover", "sunshine_duration",
+    "direct_radiation", "wind_speed_10m",
+    "solar_index", "solar_proxy_mw",
+    "tb_sin", "tb_cos", "is_weekend", "season_idx",
+    "hour_cos", "dow_sin", "dow_cos", "block_sin", "block_cos",
+    "is_peak_hour", "is_night", "is_business_hour",
+    "temp_squared", "temp_cubed", "temperature_sin",
+    "lag_1", "lag_7", "lag_block_1", "lag_block_4",
+    "rolling_4", "rolling_12",
+    "load_lag_1d", "load_lag_2d", "load_lag_3d",
+    "load_lag_7d", "load_rolling_7d", "load_trend_3d",
+    "load_x_cdd", "load_x_humidity", "cdd_squared",
+    "wbgt_x_load", "temp_momentum_3d",
+]
 
 # ── Indian State → Climate Region Mapping ──────────────────────────
 INDIAN_STATE_REGIONS = {
@@ -834,13 +885,82 @@ STATE_BEHAVIOUR_PROFILES: Dict[tuple, list] = {
 
 # ── Calibrated behaviour cache ───────────────────────────────────
 _CALIBRATED_BEHAVIOUR: Dict[tuple, np.ndarray] = {}
+_CALIBRATED_BEHAVIOUR_META: Dict[tuple, Dict[str, Any]] = {}
+
+
+def _cyclic_block_distance(block: float, center: float, block_count: int = _BLOCK_COUNT) -> float:
+    raw = abs(float(block) - float(center))
+    return float(min(raw, float(block_count) - raw))
+
+
+def _circular_smooth(values: np.ndarray, window: int = 5) -> np.ndarray:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size == 0:
+        return arr
+    size = int(max(1, window))
+    if size <= 1 or arr.size == 1:
+        return arr.copy()
+    if size % 2 == 0:
+        size += 1
+    radius = size // 2
+    smoothed = np.zeros_like(arr, dtype=float)
+    for shift in range(-radius, radius + 1):
+        smoothed += np.roll(arr, shift)
+    return smoothed / float((2 * radius) + 1)
+
+
+def _build_cyclic_time_basis(blocks: np.ndarray, harmonics: int = 4) -> np.ndarray:
+    blk = np.asarray(blocks, dtype=float).reshape(-1)
+    angle = (2.0 * np.pi * (blk - 1.0)) / float(_BLOCK_COUNT)
+    cols = [np.ones_like(angle)]
+    for harmonic in range(1, int(max(1, harmonics)) + 1):
+        cols.append(np.sin(harmonic * angle))
+        cols.append(np.cos(harmonic * angle))
+    return np.column_stack(cols)
+
+
+def _fit_cyclic_behaviour_curve(
+    blocks: np.ndarray,
+    residuals: np.ndarray,
+    weights: np.ndarray,
+    harmonics: int = 4,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    blk = np.asarray(blocks, dtype=float).reshape(-1)
+    y = np.asarray(residuals, dtype=float).reshape(-1)
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    mask = np.isfinite(blk) & np.isfinite(y) & np.isfinite(w) & (w > 0)
+    if int(np.sum(mask)) < max(12, (2 * int(max(1, harmonics))) + 1):
+        return np.zeros(_BLOCK_COUNT, dtype=float), {
+            "method": "cyclic_fourier",
+            "harmonics": int(max(1, harmonics)),
+            "samples": int(np.sum(mask)),
+            "fitted": False,
+        }
+
+    X = _build_cyclic_time_basis(blk[mask], harmonics=harmonics)
+    sqrt_w = np.sqrt(np.clip(w[mask], 1e-9, None))
+    Xw = X * sqrt_w[:, None]
+    yw = y[mask] * sqrt_w
+    beta, *_ = np.linalg.lstsq(Xw, yw, rcond=None)
+    pred = _build_cyclic_time_basis(np.arange(1, _BLOCK_COUNT + 1), harmonics=harmonics) @ beta
+    return np.asarray(pred, dtype=float), {
+        "method": "cyclic_fourier",
+        "harmonics": int(max(1, harmonics)),
+        "samples": int(np.sum(mask)),
+        "fitted": True,
+    }
 
 
 def _calibrate_behaviour_profiles(df: pd.DataFrame, region: str, cfg: dict) -> Dict[tuple, np.ndarray]:
-    """Learn MW profiles from historical (actual - 7-day rolling baseline) residuals per day-type."""
+    """Learn cyclic 96-block MW profiles from historical residuals per day-type."""
     cal_days = int(cfg.get("behaviour_calibration_days", 90))
+    harmonics = int(max(1, cfg.get("behaviour_cyclic_harmonics", 4) or 4))
+    cyclic_blend = float(np.clip(float(cfg.get("behaviour_cyclic_blend", 0.55) or 0.55), 0.0, 1.0))
+    smooth_window = int(max(1, cfg.get("behaviour_cyclic_smoothing", 5) or 5))
     climate_region = INDIAN_STATE_REGIONS.get(region.lower().strip(), region.lower().strip())
     result: Dict[tuple, np.ndarray] = {}
+    global _CALIBRATED_BEHAVIOUR_META
+    _CALIBRATED_BEHAVIOUR_META = {}
 
     if df.empty or "total_drawal" not in df.columns or "date" not in df.columns:
         return result
@@ -888,27 +1008,53 @@ def _calibrate_behaviour_profiles(df: pd.DataFrame, region: str, cfg: dict) -> D
 
     work["ext_day_type"] = work.apply(_row_day_type, axis=1)
 
-    # Group by (season, ext_day_type) and compute recency-weighted median per block (v3.0)
+    # Group by (season, ext_day_type) and learn a cyclic profile from data.
     for (ssn, dt), grp in work.groupby(["season", "ext_day_type"]):
         if len(grp) < 3:
             continue
-        # Weighted mean per block using recency weights
+
         def _weighted_mean(sub):
             w = sub["_recency_weight"].values
             r = sub["residual"].values
             return float(np.average(r, weights=w)) if len(w) > 0 and w.sum() > 0 else float(np.mean(r))
-        profile = grp.groupby("time_block").apply(_weighted_mean, include_groups=False)
-        if len(profile) != 96:
+
+        profile = (
+            grp.groupby("time_block")
+            .apply(_weighted_mean, include_groups=False)
+            .reindex(range(1, _BLOCK_COUNT + 1))
+        )
+        if profile.isna().all():
             continue
-        arr = profile.values.astype(float)
-        # Gaussian smooth (kernel=5)
-        from scipy.ndimage import uniform_filter1d
-        arr = uniform_filter1d(arr, size=5, mode="nearest")
-        # Proportional clip: ±8% of state peak load (v3.0, was fixed ±150/200)
+
+        empirical = profile.interpolate(limit_direction="both").ffill().bfill().to_numpy(dtype=float)
+        cyclic_curve, cyclic_diag = _fit_cyclic_behaviour_curve(
+            blocks=grp["time_block"].to_numpy(dtype=float),
+            residuals=grp["residual"].to_numpy(dtype=float),
+            weights=grp["_recency_weight"].to_numpy(dtype=float),
+            harmonics=harmonics,
+        )
+        if not bool(cyclic_diag.get("fitted")):
+            cyclic_curve = empirical.copy()
+
+        day_count = int(grp["date"].astype(str).nunique()) if "date" in grp.columns else 0
+        data_blend = float(np.clip(cyclic_blend + (0.20 if day_count < 8 else 0.0) - (0.10 if day_count >= 20 else 0.0), 0.25, 0.85))
+        arr = (data_blend * cyclic_curve) + ((1.0 - data_blend) * empirical)
+        arr = _circular_smooth(arr, window=smooth_window)
+
         state_peak = float(grp["total_drawal"].quantile(0.95)) if "total_drawal" in grp.columns else 5000.0
-        clip_bound = max(0.08 * state_peak, 150.0)  # floor at 150 MW for small states
+        clip_bound = max(0.08 * state_peak, 150.0)
         arr = np.clip(arr, -clip_bound, clip_bound)
-        result[(climate_region, ssn, dt)] = arr
+        key = (climate_region, ssn, dt)
+        result[key] = arr
+        _CALIBRATED_BEHAVIOUR_META[key] = {
+            "source": "calibrated_cyclic_data",
+            "harmonics": harmonics,
+            "day_count": day_count,
+            "blend_weight_cyclic": round(float(data_blend), 3),
+            "smoothing_window": smooth_window,
+            "clip_bound_mw": round(float(clip_bound), 2),
+            "fit": cyclic_diag,
+        }
 
     return result
 
@@ -931,7 +1077,13 @@ def _human_behaviour_adjustment(
     # Priority 1: Calibrated profiles from historical data
     cal_key = (climate_region, season, day_type)
     if _CALIBRATED_BEHAVIOUR and cal_key in _CALIBRATED_BEHAVIOUR:
-        return _CALIBRATED_BEHAVIOUR[cal_key] * weight, f"Calibrated({climate_region}/{season}/{day_type})"
+        meta = _CALIBRATED_BEHAVIOUR_META.get(cal_key, {})
+        harmonics = meta.get("harmonics")
+        label = f"CalibratedCyclic({climate_region}/{season}/{day_type}"
+        if harmonics is not None:
+            label += f"/h{int(harmonics)}"
+        label += ")"
+        return _CALIBRATED_BEHAVIOUR[cal_key] * weight, label
 
     # Priority 2: State-specific hardcoded profiles (v3.0)
     state_key = (state_name, season, day_type)
@@ -968,10 +1120,12 @@ def _human_behaviour_adjustment(
         sigma = max(width / 2.5, 2.0)  # smooth falloff
         for b in range(96):
             block = b + 1  # 1-indexed
-            gauss = np.exp(-0.5 * ((block - center) / sigma) ** 2)
+            dist = _cyclic_block_distance(block, center, block_count=_BLOCK_COUNT)
+            gauss = np.exp(-0.5 * (dist / sigma) ** 2)
             adjustment[b] += mw_boost * gauss
 
     adjustment *= weight
+    adjustment = _circular_smooth(adjustment, window=5)
     profile_label = " + ".join(labels)
     return adjustment, profile_label
 
@@ -1348,8 +1502,8 @@ def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df["hour_cos"]  = np.cos(2 * np.pi * hour / 24)
     df["dow_sin"]   = np.sin(2 * np.pi * dow / 7)
     df["dow_cos"]   = np.cos(2 * np.pi * dow / 7)
-    df["block_sin"] = np.sin(2 * np.pi * tb / 96)
-    df["block_cos"] = np.cos(2 * np.pi * tb / 96)
+    df["block_sin"] = np.sin(2 * np.pi * (tb - 1.0) / _BLOCK_COUNT)
+    df["block_cos"] = np.cos(2 * np.pi * (tb - 1.0) / _BLOCK_COUNT)
 
     # ── period flags ──
     df["is_peak_hour"]     = hour.isin([7, 8, 9, 18, 19, 20]).astype(int)
@@ -1366,20 +1520,143 @@ def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _prepare_training(df: pd.DataFrame) -> pd.DataFrame:
+def _get_short_term_feature_columns(data: pd.DataFrame) -> List[str]:
+    return [feature for feature in SHORT_TERM_MODEL_FEATURES if feature in data.columns]
+
+
+def _build_load_anchor(
+    baseline_hist: np.ndarray,
+    actual: Optional[np.ndarray] = None,
+    actual_blocks: int = 0,
+) -> np.ndarray:
+    anchor = np.asarray(baseline_hist, dtype=float).reshape(-1).copy()
+    if anchor.size < _BLOCK_COUNT:
+        anchor = np.pad(anchor, (0, _BLOCK_COUNT - anchor.size), mode="edge")
+    elif anchor.size > _BLOCK_COUNT:
+        anchor = anchor[:_BLOCK_COUNT]
+
+    actual_vec = np.asarray(actual if actual is not None else [], dtype=float).reshape(-1)
+    observed = int(np.clip(actual_blocks, 0, min(anchor.size, actual_vec.size)))
+    if observed > 0:
+        anchor[:observed] = actual_vec[:observed]
+    return anchor
+
+
+def _prepare_inference_frame(
+    history_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    load_anchor: Optional[np.ndarray] = None,
+) -> pd.DataFrame:
+    history = history_df.copy() if history_df is not None else pd.DataFrame()
+    target = target_df.copy()
+
+    if history.empty:
+        history = pd.DataFrame()
+    else:
+        history["load_feature_source"] = pd.to_numeric(history.get("total_drawal"), errors="coerce")
+
+    target["load_feature_source"] = pd.to_numeric(target.get("total_drawal"), errors="coerce")
+    if load_anchor is not None:
+        anchor = np.asarray(load_anchor, dtype=float).reshape(-1)
+        if anchor.size < len(target):
+            anchor = np.pad(anchor, (0, len(target) - anchor.size), mode="edge")
+        elif anchor.size > len(target):
+            anchor = anchor[:len(target)]
+        target["load_feature_source"] = anchor
+
+    target["_is_target_row"] = 1
+    if history.empty:
+        combined = target.copy()
+    else:
+        history["_is_target_row"] = 0
+        union_cols = sorted(set(history.columns).union(target.columns))
+        history = history.reindex(columns=union_cols)
+        target = target.reindex(columns=union_cols)
+        usable_cols = [
+            col for col in union_cols
+            if not (history[col].isna().all() and target[col].isna().all())
+        ]
+        combined = pd.concat(
+            [history[usable_cols], target[usable_cols]],
+            ignore_index=True,
+            sort=False,
+        )
+    prepared = _prepare_training(combined, load_source_col="load_feature_source")
+    return prepared[prepared["_is_target_row"] == 1].copy()
+
+
+def _coerce_day_to_96_blocks(day_df: pd.DataFrame, fill_load: bool = False) -> pd.DataFrame:
+    if day_df is None or day_df.empty:
+        return day_df.copy() if isinstance(day_df, pd.DataFrame) else pd.DataFrame()
+
+    work = day_df.copy()
+    date_value = str(work["date"].astype(str).iloc[0]) if "date" in work.columns and not work.empty else None
+    work["time_block"] = pd.to_numeric(work.get("time_block"), errors="coerce")
+    work = work.dropna(subset=["time_block"])
+    work["time_block"] = work["time_block"].astype(int)
+    work = work[work["time_block"].between(1, _BLOCK_COUNT)]
+    if work.empty:
+        return work
+
+    numeric_cols = [col for col in work.columns if col != "date"]
+    for col in numeric_cols:
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+
+    grouped = work.groupby("time_block", as_index=False)[numeric_cols].mean()
+    grouped = grouped.set_index("time_block").reindex(range(1, _BLOCK_COUNT + 1))
+    grouped.index.name = "time_block"
+    grouped = grouped.reset_index()
+    if date_value is not None:
+        grouped["date"] = date_value
+
+    for col in grouped.columns:
+        if col in {"date", "time_block", "total_drawal"}:
+            continue
+        grouped[col] = grouped[col].interpolate(limit_direction="both").ffill().bfill()
+
+    if "total_drawal" in grouped.columns and fill_load:
+        grouped["total_drawal"] = grouped["total_drawal"].interpolate(limit_direction="both").ffill().bfill()
+
+    ordered_cols = [col for col in day_df.columns if col in grouped.columns]
+    remaining_cols = [col for col in grouped.columns if col not in ordered_cols]
+    return grouped[ordered_cols + remaining_cols]
+
+
+def _prepare_training(df: pd.DataFrame, load_source_col: str = "total_drawal") -> pd.DataFrame:
     df = df.copy()
+    if "date" in df.columns:
+        df["date"] = df["date"].astype(str)
+
     cols_to_clean = [
-        "temperature", "humidity", "precipitation", 
-        "apparent_temperature", "cloud_cover", "sunshine_duration", 
-        "direct_radiation", "wind_speed_10m",
-        "total_drawal", "time_block"
+        "temperature", "humidity", "precipitation",
+        "apparent_temperature", "cloud_cover", "sunshine_duration",
+        "direct_radiation", "wind_speed_10m", "time_block",
     ]
     for col in cols_to_clean:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].interpolate(limit_direction="both").ffill().bfill()
-            df[col] = df[col].fillna(0)
-            
+            df[col] = df[col].interpolate(limit_direction="both").ffill().bfill().fillna(0.0)
+
+    if "total_drawal" in df.columns:
+        df["total_drawal"] = pd.to_numeric(df["total_drawal"], errors="coerce")
+
+    if load_source_col in df.columns:
+        load_source = pd.to_numeric(df[load_source_col], errors="coerce")
+    elif "total_drawal" in df.columns:
+        load_source = pd.to_numeric(df["total_drawal"], errors="coerce")
+    else:
+        load_source = pd.Series(0.0, index=df.index, dtype=float)
+
+    if load_source_col == "total_drawal":
+        load_source = load_source.interpolate(limit_direction="both").ffill().bfill()
+    else:
+        fallback = pd.to_numeric(df.get("total_drawal"), errors="coerce") if "total_drawal" in df.columns else pd.Series(np.nan, index=df.index)
+        load_source = load_source.where(load_source.notna(), fallback)
+        load_source = load_source.ffill().bfill()
+
+    df["load_feature_source"] = load_source.fillna(0.0)
+    df = df.sort_values(["date", "time_block"]).reset_index(drop=True)
+
     # --- V2 UPGRADE: Nonlinear & Lag Features ---
     if "temperature" in df.columns:
         # Regional CDD/HDD bases (default north)
@@ -1441,19 +1718,26 @@ def _prepare_training(df: pd.DataFrame) -> pd.DataFrame:
         df["solar_proxy_mw"] = rad * 0.001
 
     # Lagged load features (strongly predictive for short-term autocorrelation)
-    if "total_drawal" in df.columns:
-        df = df.sort_values(["date", "time_block"]).reset_index(drop=True)
-        df["load_lag_1d"] = df["total_drawal"].shift(96)
-        df["load_lag_2d"] = df["total_drawal"].shift(192)      # 2 days ago (v3.0)
-        df["load_lag_3d"] = df["total_drawal"].shift(288)      # 3 days ago (v3.0)
-        df["load_lag_7d"] = df["total_drawal"].shift(96 * 7)
-        df["load_rolling_7d"] = df.groupby("time_block")["total_drawal"].transform(
+    if "load_feature_source" in df.columns:
+        load_series = df["load_feature_source"]
+        df["lag_1"] = load_series.shift(_BLOCK_COUNT)
+        df["lag_7"] = load_series.shift(_BLOCK_COUNT * 7)
+        df["lag_block_1"] = load_series.shift(1)
+        df["lag_block_4"] = load_series.shift(4)
+        df["rolling_4"] = load_series.shift(1).rolling(window=4, min_periods=1).mean()
+        df["rolling_12"] = load_series.shift(1).rolling(window=12, min_periods=1).mean()
+
+        df["load_lag_1d"] = df["lag_1"]
+        df["load_lag_2d"] = load_series.shift(_BLOCK_COUNT * 2)
+        df["load_lag_3d"] = load_series.shift(_BLOCK_COUNT * 3)
+        df["load_lag_7d"] = df["lag_7"]
+        df["load_rolling_7d"] = df.groupby("time_block")["load_feature_source"].transform(
             lambda x: x.shift(1).rolling(7, min_periods=1).mean()
         )
         # 3-day load trend: slope of last 3 days' daily average (v3.0)
-        daily_avg = df.groupby("date")["total_drawal"].transform("mean")
+        daily_avg = df.groupby("date")["load_feature_source"].transform("mean")
         df["load_trend_3d"] = (
-            daily_avg - daily_avg.shift(288)  # today avg - 3d ago avg
+            daily_avg - daily_avg.shift(_BLOCK_COUNT * 3)
         )
 
     # ── Multiplicative weather × load interaction features (v3.0) ────
@@ -1844,24 +2128,7 @@ def _estimate_feature_effects(model: Any, data: pd.DataFrame, features: List[str
 
 def _train_weather_model(df: pd.DataFrame, tune: bool = True, tune_iters: int = 12) -> Tuple[Any, pd.DataFrame, Dict[str, float]]:
     data = _prepare_training(df)
-    features = [
-        "temperature", "humidity", "precipitation",
-        "CDD", "HDD", "temp_roll_3h", "temp_roll_6h", "wbgt",
-        "cdh_24h", "cdh_48h", "cdh_72h",
-        "apparent_temperature", "cloud_cover", "sunshine_duration",
-        "direct_radiation", "wind_speed_10m",
-        "solar_index", "solar_proxy_mw",
-        "tb_sin", "tb_cos", "is_weekend", "season_idx",
-        "hour_cos", "dow_sin", "dow_cos", "block_sin", "block_cos",
-        "is_peak_hour", "is_night", "is_business_hour",
-        "temp_squared", "temp_cubed", "temperature_sin",
-        "load_lag_1d", "load_lag_2d", "load_lag_3d",
-        "load_lag_7d", "load_rolling_7d", "load_trend_3d",
-        "load_x_cdd", "load_x_humidity", "cdd_squared",
-        "wbgt_x_load", "temp_momentum_3d",
-    ]
-    # Drop features that don't exist in this dataframe (graceful for older data)
-    features = [f for f in features if f in data.columns]
+    features = _get_short_term_feature_columns(data)
     data = data.dropna(subset=features + ["total_drawal"])
     X = data[features]
     y = data["total_drawal"].to_numpy()
@@ -1906,37 +2173,39 @@ def _train_weather_model(df: pd.DataFrame, tune: bool = True, tune_iters: int = 
     return model, data, effects
 
 
-def _weather_baseline(model: Any, df: pd.DataFrame, effects: Dict[str, float]) -> Tuple[np.ndarray, Dict[str, float]]:
-    data = _prepare_training(df)
-    features = [
-        "temperature", "humidity", "precipitation",
-        "CDD", "HDD", "temp_roll_3h", "temp_roll_6h", "wbgt",
-        "cdh_24h", "cdh_48h", "cdh_72h",
-        "apparent_temperature", "cloud_cover", "sunshine_duration",
-        "direct_radiation", "wind_speed_10m",
-        "solar_index", "solar_proxy_mw",
-        "tb_sin", "tb_cos", "is_weekend", "season_idx",
-        "hour_cos", "dow_sin", "dow_cos", "block_sin", "block_cos",
-        "is_peak_hour", "is_night", "is_business_hour",
-        "temp_squared", "temp_cubed", "temperature_sin",
-        "load_lag_1d", "load_lag_2d", "load_lag_3d",
-        "load_lag_7d", "load_rolling_7d", "load_trend_3d",
-        "load_x_cdd", "load_x_humidity", "cdd_squared",
-        "wbgt_x_load", "temp_momentum_3d",
+def _weather_baseline(
+    model: Any,
+    history_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    effects: Dict[str, float],
+    load_anchor: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, Dict[str, float]]:
+    data = _prepare_inference_frame(history_df=history_df, target_df=target_df, load_anchor=load_anchor)
+    features = _get_short_term_feature_columns(data)
+    X = data.reindex(columns=features).copy()
+
+    history_features = _prepare_training(history_df) if history_df is not None and not history_df.empty else pd.DataFrame()
+    fill_values = {}
+    if not history_features.empty:
+        for feature in features:
+            if feature in history_features.columns and history_features[feature].notna().any():
+                fill_values[feature] = float(history_features[feature].median(skipna=True))
+
+    load_cols = [
+        "lag_1", "lag_7", "lag_block_1", "lag_block_4", "rolling_4", "rolling_12",
+        "load_lag_1d", "load_lag_2d", "load_lag_3d", "load_lag_7d",
+        "load_rolling_7d", "load_trend_3d", "load_x_cdd",
+        "load_x_humidity", "wbgt_x_load",
     ]
-    # Drop features that don't exist in this dataframe (graceful for older data)
-    features = [f for f in features if f in data.columns]
-    X = data[features].copy()
-    # Lagged load features are NaN for single-day target_df (no history to shift).
-    # Fill with the mean of known actual load — NOT 0, which would drag predictions down.
-    load_cols = ["load_lag_1d", "load_lag_2d", "load_lag_3d", "load_lag_7d",
-                 "load_rolling_7d", "load_trend_3d", "load_x_cdd",
-                 "load_x_humidity", "wbgt_x_load"]
-    load_mean = float(data["total_drawal"].mean()) if "total_drawal" in data.columns and data["total_drawal"].notna().any() else 0.0
+    anchor_mean = float(np.nanmean(load_anchor)) if load_anchor is not None and len(load_anchor) else 0.0
     for col in load_cols:
         if col in X.columns:
-            X[col] = X[col].fillna(load_mean)
-    X = X.fillna(0)
+            X[col] = X[col].fillna(fill_values.get(col, anchor_mean))
+
+    for feature in features:
+        if feature in X.columns:
+            X[feature] = X[feature].fillna(fill_values.get(feature, 0.0))
+
     preds = model.predict(X)
     contributions = {
         "temperature": float(effects.get("temperature", 0.0)),
@@ -3408,9 +3677,11 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
 
     baseline_hist, similar_days = _similar_day_baseline(df, target_date, cfg)
 
-    target_df = df[df["date"] == target_date].sort_values("time_block")
+    target_df = _coerce_day_to_96_blocks(df[df["date"] == target_date], fill_load=False)
     if target_df.empty:
         raise ValueError("Target date not available")
+    if int(target_df["time_block"].nunique()) != _BLOCK_COUNT:
+        raise ValueError(f"Target date {target_date} does not contain {_BLOCK_COUNT} aligned blocks")
 
     season = _season(target_date)
     day_type = _day_type(target_date)
@@ -3448,12 +3719,20 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     if train_df.empty:
         train_df = df[df["date"] != target_date]
 
-    weather_model, _, weather_effects = _train_weather_model(
+    weather_model, weather_training_frame, weather_effects = _train_weather_model(
         train_df,
         tune=bool(cfg.get("weather_tune", True)),
         tune_iters=int(cfg.get("weather_tune_iters", 12)),
     )
-    weather_pred, weather_coefs = _weather_baseline(weather_model, target_df, weather_effects)
+    actual = target_df["total_drawal"].to_numpy(dtype=float)
+    load_anchor = _build_load_anchor(baseline_hist=baseline_hist, actual=actual, actual_blocks=actual_blocks)
+    weather_pred, weather_coefs = _weather_baseline(
+        model=weather_model,
+        history_df=train_df,
+        target_df=target_df,
+        effects=weather_effects,
+        load_anchor=load_anchor,
+    )
 
     baseline_weather_df = df[df["date"].isin(similar_days["date"].tolist())] if not similar_days.empty else train_df
     weather_dev = _compute_weather_deviation(target_df, baseline_weather_df)
@@ -3593,7 +3872,6 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     cal_holiday_factor = calendar_factors.get("holiday", np.ones(96))
     cal_transition_factor = calendar_factors.get("transition", np.ones(96))
 
-    actual = target_df["total_drawal"].to_numpy()
     actual_full = actual.copy()
     actual_partial = actual[:actual_blocks]
     safe_baseline = np.maximum(baseline_hist, 1.0)
@@ -3661,9 +3939,12 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     # ── Component 4: Boundary Correction (anchor to actual level) ──────
     # How much actual deviates from baseline in recent blocks
     boundary_window = min(12, actual_blocks)
-    recent_actual = actual_partial[-boundary_window:]
-    recent_baseline = baseline_hist[actual_blocks - boundary_window:actual_blocks]
-    boundary_bias_mw = float(np.median(recent_actual - recent_baseline))
+    if boundary_window > 0:
+        recent_actual = actual_partial[-boundary_window:]
+        recent_baseline = baseline_hist[actual_blocks - boundary_window:actual_blocks]
+        boundary_bias_mw = float(np.median(recent_actual - recent_baseline))
+    else:
+        boundary_bias_mw = 0.0
 
     # Decay the boundary correction — near blocks trust it more, far blocks trust model
     boundary_correction = np.zeros(96, dtype=float)
@@ -3751,11 +4032,54 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     stitched = forecast.copy()
     stitched[:actual_blocks] = actual_partial
     taper_len = min(4, 96 - actual_blocks)
-    if taper_len > 0:
+    if taper_len > 0 and actual_blocks > 0 and len(actual_partial) > 0:
         for t in range(taper_len):
             b = actual_blocks + t
             w = (t + 1) / (taper_len + 1)  # 0.2, 0.4, 0.6, 0.8
             stitched[b] = actual_partial[-1] * (1.0 - w) + forecast[b] * w
+
+    shrink_cfg = cfg.get("forecast_shrinkage", {}) if isinstance(cfg.get("forecast_shrinkage", {}), dict) else {}
+    offpeak_weight = float(np.clip(float(shrink_cfg.get("offpeak_weight", 0.50)), 0.0, 1.0))
+    peak_weight = float(np.clip(float(shrink_cfg.get("peak_weight", 0.25)), 0.0, 1.0))
+    known_blocks_bonus = float(np.clip(float(shrink_cfg.get("known_blocks_bonus", 0.20)), 0.0, 0.5))
+    peak_start_idx = int(np.clip(int(shrink_cfg.get("peak_start_block", 48)) - 1, 0, _BLOCK_COUNT - 1))
+    peak_end_idx = int(np.clip(int(shrink_cfg.get("peak_end_block", 72)), peak_start_idx + 1, _BLOCK_COUNT))
+
+    shrink_weights = np.full(_BLOCK_COUNT, offpeak_weight, dtype=float)
+    shrink_weights[peak_start_idx:peak_end_idx] = peak_weight
+    if actual_blocks > 0:
+        progress = float(np.clip(actual_blocks / _BLOCK_COUNT, 0.0, 1.0))
+        shrink_weights = np.clip(shrink_weights + (known_blocks_bonus * progress), 0.0, 1.0)
+    shrink_weights[:actual_blocks] = 1.0
+
+    stitched_raw = stitched.copy()
+    stitched = (shrink_weights * stitched_raw) + ((1.0 - shrink_weights) * hybrid)
+    stitched[:actual_blocks] = actual_partial
+    stitched_pre_hybrid_ai = stitched.copy()
+
+    hybrid_ai_result = None
+    hybrid_ai_cfg = cfg.get("hybrid_ai", {}) if isinstance(cfg.get("hybrid_ai", {}), dict) else {}
+    if bool(hybrid_ai_cfg.get("enabled", True)) and HybridForecastingEngine is not None and HybridForecastConfig is not None:
+        try:
+            hybrid_engine = HybridForecastingEngine(
+                HybridForecastConfig(
+                    lookback_days=int(hybrid_ai_cfg.get("lookback_days", 7)),
+                    min_history_days=int(hybrid_ai_cfg.get("min_history_days", 21)),
+                    training_days=int(hybrid_ai_cfg.get("training_days", 60)),
+                    blend_weight=float(hybrid_ai_cfg.get("blend_weight", 0.35)),
+                    min_blend_weight=float(hybrid_ai_cfg.get("min_blend_weight", 0.10)),
+                    max_blend_weight=float(hybrid_ai_cfg.get("max_blend_weight", 0.45)),
+                    random_state=int(hybrid_ai_cfg.get("random_state", 42)),
+                    sequence_epochs=int(hybrid_ai_cfg.get("sequence_epochs", 60)),
+                )
+            )
+            hybrid_ai_result = hybrid_engine.run(df=df, target_date=target_date, fallback_forecast=stitched_pre_hybrid_ai)
+            if hybrid_ai_result is not None:
+                stitched = np.asarray(hybrid_ai_result.forecast, dtype=float)
+                stitched[:actual_blocks] = actual_partial
+        except Exception as exc:
+            logger.warning("Hybrid forecasting engine failed for %s: %s", target_date, exc)
+            hybrid_ai_result = None
 
     baseline_vec = np.asarray(stitched, dtype=float)
     weather_base = np.divide(
@@ -3892,12 +4216,22 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     sigma_floor = np.maximum(np.abs(net_contribution_mw) * 0.08, 1.0)
     sigma_block = np.maximum(sigma_block, sigma_floor)
     z_val = 1.2816
-    p50 = final_load
+    p50 = stitched.copy()
     p10 = np.maximum(p50 - (z_val * sigma_block), 0.0)
     p90 = p50 + (z_val * sigma_block)
+    if hybrid_ai_result is not None:
+        p50 = np.asarray(hybrid_ai_result.forecast, dtype=float)
+        p10 = np.asarray(hybrid_ai_result.p10, dtype=float)
+        p90 = np.asarray(hybrid_ai_result.p90, dtype=float)
+        p50[:actual_blocks] = actual_partial
+        p10[:actual_blocks] = actual_partial
+        p90[:actual_blocks] = actual_partial
     uncertainty_width_mw = p90 - p10
     uncertainty_width_pct = (uncertainty_width_mw / np.maximum(p50, 1e-6)) * 100.0
     forecast_confidence = np.clip(1.0 - (uncertainty_width_pct / 100.0), 0.05, 0.99)
+    if hybrid_ai_result is not None:
+        forecast_confidence = np.asarray(hybrid_ai_result.confidence, dtype=float)
+        forecast_confidence[:actual_blocks] = 0.99
 
     weather_sens = np.abs(weather_scaled)
     calendar_sens = np.abs(daytype_scaled) + np.abs(holiday_scaled)
@@ -4151,11 +4485,35 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "region": hb_region,
             "human_behaviour_profile": hb_profile_label,
             "human_behaviour_weight": hb_weight,
-            "behaviour_source": "Calibrated" if (_CALIBRATED_BEHAVIOUR and (INDIAN_STATE_REGIONS.get(hb_region.lower().strip(), hb_region.lower().strip()), season, hb_day_type) in _CALIBRATED_BEHAVIOUR) else "Hardcoded",
+            "behaviour_source": (
+                "CalibratedCyclicData"
+                if (_CALIBRATED_BEHAVIOUR and (INDIAN_STATE_REGIONS.get(hb_region.lower().strip(), hb_region.lower().strip()), season, hb_day_type) in _CALIBRATED_BEHAVIOUR)
+                else "Hardcoded"
+            ),
+            "hybrid_ai_engine": hybrid_ai_result.metadata if hybrid_ai_result is not None else {"enabled": False},
+            "hybrid_ai_explanation": hybrid_ai_result.explanation if hybrid_ai_result is not None else "Hybrid engine unavailable; fallback forecast retained.",
+            "human_behaviour_learning": _CALIBRATED_BEHAVIOUR_META.get(
+                (INDIAN_STATE_REGIONS.get(hb_region.lower().strip(), hb_region.lower().strip()), season, hb_day_type),
+                {"source": "hardcoded_profiles"},
+            ),
+            "forecast_shrinkage": {
+                "offpeak_weight": round(float(offpeak_weight), 3),
+                "peak_weight": round(float(peak_weight), 3),
+                "known_blocks_bonus": round(float(known_blocks_bonus), 3),
+                "peak_blocks": [int(peak_start_idx + 1), int(peak_end_idx)],
+            },
             "target_day_type_extended": hb_day_type if 'hb_day_type' in dir() else day_type,
             "holiday_flags": target_holiday_flags,
             "weather_divergence_gate": float(np.mean(divergence_gate)) if 'divergence_gate' in dir() else None,
             "avg_temp_divergence_c": float(avg_temp_divergence) if 'avg_temp_divergence' in dir() else None,
+            "model_scope": "global",
+            "feature_schema": {
+                "cross_day_lags": ["lag_1", "lag_7"],
+                "intraday_lags": ["lag_block_1", "lag_block_4"],
+                "rolling_windows": ["rolling_4", "rolling_12"],
+                "time_encoding": ["block_sin", "block_cos"],
+            },
+            "feature_count": int(len(_get_short_term_feature_columns(weather_training_frame))),
             "similarity_weights": cfg.get("similarity_weights"),
             "require_rain_match": bool(cfg.get("require_rain_match", True)),
             "similarity_profile_source": similarity_profile.get("source"),
@@ -4232,11 +4590,19 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 "direct_radiation": (rad_scaled * selection_mask * 100.0).tolist(),
                 "weather_total": (weather_scaled * selection_mask * 100.0).tolist(),
             },
+            "forecast_raw_before_shrinkage": stitched_raw.tolist(),
+            "forecast_after_shrinkage_before_hybrid_ai": stitched_pre_hybrid_ai.tolist(),
+            "hybrid_ai_forecast": (
+                np.asarray(hybrid_ai_result.forecast, dtype=float).tolist()
+                if hybrid_ai_result is not None
+                else stitched_pre_hybrid_ai.tolist()
+            ),
             "forecast": stitched.tolist(),
             "final_load": final_load.tolist(),
             "selection_mask": selection_mask.tolist(),
             "actual": actual_full.tolist(),
         },
+        "explanation": hybrid_ai_result.explanation if hybrid_ai_result is not None else "Forecast generated by statistical fallback pipeline.",
         "bias_factor": round(bias_factor, 4),
         "trend_curve": trend_full.tolist(),
         "rain_adjustment": rain_impact.tolist(),

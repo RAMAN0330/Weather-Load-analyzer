@@ -21,8 +21,8 @@ try:
         run_block_driver_weight_delta_engine,
         compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
+        SHORT_TERM_MODEL_FEATURES,
     )
-    from .backtester import run_backtest
     from .backtester import run_backtest
 except ImportError:
     # Support running as a script without package context
@@ -33,6 +33,7 @@ except ImportError:
         run_block_driver_weight_delta_engine,
         compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
+        SHORT_TERM_MODEL_FEATURES,
     )
     from backtester import run_backtest
 
@@ -56,6 +57,14 @@ _BASELINE_WINDOW_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _HISTORY_METRICS_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _DR_ACCURACY_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _DAYAHEAD_SERIES_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_API_WEATHER_ENGINE_FEATURES = [
+    feature for feature in (
+        "temperature", "humidity", "precipitation",
+        "lag_1", "lag_7", "lag_block_1", "lag_block_4",
+        "rolling_4", "rolling_12", "block_sin", "block_cos",
+    )
+    if feature in SHORT_TERM_MODEL_FEATURES
+]
 
 
 def _clear_runtime_caches() -> None:
@@ -2835,7 +2844,7 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
         "weather_engine": {
             "enabled": bool(use_weather_engine),
             "momentum_lambda": float(momentum_lambda),
-            "features": ["temperature", "humidity", "precipitation", "lag_1_load", "lag_96_load"],
+            "features": _API_WEATHER_ENGINE_FEATURES,
             "mode": "elastic_net_weather_lag_dod_momentum" if use_weather_engine else "fallback_regime",
         },
         "partial_day_bias_correction": bias_correction,
@@ -3525,28 +3534,32 @@ def v2_dayahead(payload: dict):
         "sensitivity": weather_sensitivity
     }
 
-    response = {
-        "metadata": {
-            "requested_date": requested,
-            "effective_date": resolved,
-            "date_available": exact,
-            "baseline_days": baseline_days,
-            "day_type": _day_type_label(resolved),
-            "calendar_config": calendar_config,
-            "best_baseline_window": baseline_window_stats.get("best_baseline_window"),
-            "best_mape": baseline_window_stats.get("best_mape"),
-            "baseline_window_mapes": baseline_window_stats.get("window_mapes", []),
-            "selected_window_baseline_mape": next(
-                (x.get("baseline_mape") for x in baseline_window_stats.get("window_mapes", []) if x.get("window_days") == int(baseline_days)),
-                None
-            ),
-            "weather_engine": {
-                "enabled": str(series.get("weather_engine_mode", "")).startswith("elastic_net_weather_lag"),
-                "mode": series.get("weather_engine_mode", "adaptive_weather_fallback"),
-                "momentum_lambda": float(series.get("momentum_lambda", 0.45)),
-                "features": ["temperature", "humidity", "precipitation", "lag_1_load", "lag_96_load"],
-            },
+    response_metadata = {
+        "requested_date": requested,
+        "effective_date": resolved,
+        "date_available": exact,
+        "baseline_days": baseline_days,
+        "day_type": _day_type_label(resolved),
+        "calendar_config": calendar_config,
+        "best_baseline_window": baseline_window_stats.get("best_baseline_window"),
+        "best_mape": baseline_window_stats.get("best_mape"),
+        "baseline_window_mapes": baseline_window_stats.get("window_mapes", []),
+        "selected_window_baseline_mape": next(
+            (x.get("baseline_mape") for x in baseline_window_stats.get("window_mapes", []) if x.get("window_days") == int(baseline_days)),
+            None
+        ),
+        "weather_engine": {
+            "enabled": str(series.get("weather_engine_mode", "")).startswith("elastic_net_weather_lag"),
+            "mode": series.get("weather_engine_mode", "adaptive_weather_fallback"),
+            "momentum_lambda": float(series.get("momentum_lambda", 0.45)),
+            "features": _API_WEATHER_ENGINE_FEATURES,
         },
+    }
+    response_metadata.update(dayahead_result.get("metadata", {}))
+    response_metadata["baseline_window_mapes"] = baseline_window_stats.get("window_mapes", [])
+
+    response = {
+        "metadata": response_metadata,
         "kpis": kpis,
         "kpis_full": kpis_full,
         "kpi_groups": {
@@ -3613,13 +3626,25 @@ def v2_dayahead(payload: dict):
         "forecast_uncertainty": dayahead_result.get("forecast_uncertainty", []),
         "slot_sensitivity_profile": dayahead_result.get("slot_sensitivity_profile", []),
         "similar_days": dayahead_result.get("similar_days", []),
-        "metadata": {
-            **dayahead_result.get("metadata", {}),
-            "baseline_window_mapes": baseline_window_stats.get("window_mapes", [])
-        }
+        "explanation": dayahead_result.get("explanation") or response_metadata.get("hybrid_ai_explanation"),
     }
     # ensure JSON-serializable
     return _json_safe(response)
+
+
+@app.get("/forecast")
+def forecast_get(date: Optional[str] = None, baseline_days: int = 7, region: str = "punjab"):
+    return v2_dayahead({
+        "date": date,
+        "baseline_days": baseline_days,
+        "region": region,
+    })
+
+
+@app.post("/forecast/run")
+def forecast_run(payload: dict):
+    payload = payload or {}
+    return v2_dayahead(payload)
 
 @app.post("/api/v2/live")
 def v2_live(payload: dict = None):
@@ -3735,7 +3760,7 @@ def v2_live(payload: dict = None):
                 result["metadata"]["weather_engine"] = {
                     "enabled": True,
                     "momentum_lambda": float(live_momentum_lambda),
-                    "features": ["temperature", "humidity", "precipitation", "lag_1_load", "lag_96_load"],
+                    "features": _API_WEATHER_ENGINE_FEATURES,
                     "mode": "elastic_net_weather_lag_dod_momentum",
                 }
 
@@ -3826,7 +3851,7 @@ def v2_live(payload: dict = None):
         result["metadata"]["weather_engine"] = {
             "enabled": bool(enable_live_post_engine and isinstance(weather_engine_live, dict)),
             "momentum_lambda": float(live_momentum_lambda),
-            "features": ["temperature", "humidity", "precipitation", "lag_1_load", "lag_96_load"],
+            "features": _API_WEATHER_ENGINE_FEATURES,
             "mode": str(
                 result.get("series", {}).get("weather_engine_mode", "fallback_post_engine_disabled")
                 if not enable_live_post_engine
