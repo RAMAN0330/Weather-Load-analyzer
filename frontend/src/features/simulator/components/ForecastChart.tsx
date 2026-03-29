@@ -1,10 +1,12 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
+  Area,
   Brush,
   CartesianGrid,
   ComposedChart,
   Legend,
   Line,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,7 +16,7 @@ import { useSimulatorStore } from "../store";
 import type { ChartBlockPoint } from "../types";
 import { blockTimeLabel } from "../utils";
 
-const chartMargins = { top: 16, right: 20, left: 10, bottom: 12 };
+const chartMargins = { top: 16, right: 20, left: 10, bottom: 8 };
 const round3 = (v: number) => Math.round((Number(v) || 0) * 1000) / 1000;
 const signedPct = (v: number) => `${v >= 0 ? "+" : ""}${round3(v).toFixed(3)}%`;
 const signedPctMaybe = (v: number | null | undefined) => (v == null || !Number.isFinite(Number(v)) ? "--" : signedPct(Number(v)));
@@ -68,6 +70,14 @@ export const ForecastChart: React.FC = () => {
   const [anchorBlock, setAnchorBlock] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
 
+  const selectedRange = useMemo(() => {
+    if (!selectedBlocks.length) return null;
+    return {
+      start: Math.min(...selectedBlocks),
+      end: Math.max(...selectedBlocks),
+    };
+  }, [selectedBlocks]);
+
   const data = useMemo<ChartBlockPoint[]>(() => {
     return blocks.map((b) => {
       const base = b.baseline_mw;
@@ -117,7 +127,7 @@ export const ForecastChart: React.FC = () => {
         timeLabel: blockTimeLabel(b.block_number),
         baseline: base,
         adjusted: b.final_mw,
-        actual: (b.actual_mw == null || !Number.isFinite(Number(b.actual_mw))) ? null : Number(b.actual_mw),
+        actual: (b.actual_mw == null || !Number.isFinite(Number(b.actual_mw)) || Number(b.actual_mw) <= 0) ? null : Number(b.actual_mw),
         weatherLayer,
         daytypeLayer,
         holidayLayer,
@@ -203,11 +213,11 @@ export const ForecastChart: React.FC = () => {
     if (!active || !payload?.length || !payload[0]?.payload) return null;
     const p = payload[0].payload;
     return (
-      <div style={{ background: "#2b2d31", border: "1px solid rgba(240, 221, 199, 0.16)", borderRadius: 10, padding: "10px 12px", color: "#f0e7da" }}>
+      <div style={{ background: "#1A191E", border: "1px solid #2A292F", borderRadius: 12, padding: "12px 14px", color: "#ECEEF3", boxShadow: "0 18px 30px rgba(0,0,0,0.24)" }}>
         <div style={{ fontWeight: 700, marginBottom: 4 }}>
           Block {label} ({blockTimeLabel(Number(label))})
         </div>
-        <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "#A0A5B8", marginBottom: 8 }}>
           Season: {dateInfo.season} | Day: {dateInfo.calendarDay}
         </div>
         <div style={{ fontSize: 12 }}>Baseline: {p.baseline.toFixed(2)} MW</div>
@@ -238,51 +248,126 @@ export const ForecastChart: React.FC = () => {
           Bias Correction: {partialBias?.applied ? `Applied (${(partialBias?.avg_correction_pct ?? 0).toFixed(3)}%)` : "Not applied"}
         </div>
         {p.actualWeatherExplanation && (
-          <div style={{ fontSize: 12, marginTop: 4, color: "#e1bd9f" }}>{p.actualWeatherExplanation}</div>
+          <div style={{ fontSize: 12, marginTop: 6, color: "#F07825" }}>{p.actualWeatherExplanation}</div>
         )}
       </div>
     );
   };
 
   return (
-    <div className="sim-chart-wrap" ref={plotRef} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
-      <ResponsiveContainer width="100%" height={440}>
+    <div
+      className="sim-chart-wrap"
+      ref={plotRef}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      style={{
+        height: "100%",
+        minHeight: 0,
+        width: "100%",
+        minWidth: 0,
+        flex: "1 1 auto",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          flex: "1 1 auto",
+          minHeight: 0,
+          width: "100%",
+          minWidth: 0,
+          overflow: "hidden",
+          borderRadius: 8,
+          background: "linear-gradient(180deg, rgba(26, 25, 30, 0.38), rgba(20, 20, 24, 0.14))",
+          padding: "12px 12px 6px",
+        }}
+      >
+        <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={chartMargins} onClick={(state) => {
           const b = state?.activeLabel;
           if (!b) return;
           setSelectedBlock(Number(b));
         }}>
-          <CartesianGrid stroke="rgba(240, 221, 199, 0.14)" vertical={false} />
-          <XAxis dataKey="block" tick={{ fill: "#b9ab96", fontSize: 11 }} />
-          <YAxis tick={{ fill: "#b9ab96", fontSize: 11 }} width={56} />
+          <defs>
+            <linearGradient id="simAdjustedFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#F07825" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="#F07825" stopOpacity={0.02} />
+            </linearGradient>
+            <linearGradient id="simActualFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#5B9FE4" stopOpacity={0.12} />
+              <stop offset="100%" stopColor="#5B9FE4" stopOpacity={0.01} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="rgba(42, 41, 47, 0.9)" strokeDasharray="4 6" vertical={false} />
+          {selectedRange && (
+            <ReferenceArea
+              x1={selectedRange.start}
+              x2={selectedRange.end}
+              strokeOpacity={0}
+              fill="rgba(240, 120, 37, 0.08)"
+            />
+          )}
+          <XAxis
+            dataKey="block"
+            tickFormatter={(value) => blockTimeLabel(Number(value))}
+            interval={11}
+            tick={{ fill: "#6B7186", fontSize: 10 }}
+            axisLine={{ stroke: "#2A292F" }}
+            tickLine={{ stroke: "#2A292F" }}
+            minTickGap={18}
+          />
+          <YAxis
+            tick={{ fill: "#6B7186", fontSize: 10 }}
+            width={60}
+            axisLine={false}
+            tickLine={false}
+          />
           <Tooltip content={renderTooltip} />
-          <Legend />
+          <Legend wrapperStyle={{ paddingBottom: 10, color: "#A0A5B8", fontSize: 11 }} />
           <Brush dataKey="block" height={24} onChange={(range) => {
             const s = Number(range?.startIndex ?? 0) + 1;
             const e = Number(range?.endIndex ?? 0) + 1;
             if (s > 0 && e > 0) setRangeSelection(s, e);
-          }} />
+          }} travellerWidth={10} stroke="#2A292F" fill="rgba(26,25,30,0.95)" />
 
-          <Line dataKey="baseline" name="Baseline Forecast" stroke="#c8b39b" strokeDasharray="5 5" dot={false} strokeWidth={2} />
-          <Line dataKey="actual" name="Actual" stroke="#d2a46f" dot={false} strokeWidth={2} connectNulls={false} />
+          <Area
+            dataKey="adjusted"
+            name="Adjusted Forecast"
+            type="monotone"
+            stroke="none"
+            fill="url(#simAdjustedFill)"
+            isAnimationActive={false}
+            legendType="none"
+          />
+          <Area
+            dataKey="actual"
+            name="Actual"
+            type="monotone"
+            stroke="none"
+            fill="url(#simActualFill)"
+            isAnimationActive={false}
+            connectNulls={false}
+            legendType="none"
+          />
+          <Line dataKey="baseline" name="Baseline Forecast" stroke="#A0A5B8" strokeDasharray="6 5" dot={false} strokeWidth={1.8} isAnimationActive={false} />
+          <Line dataKey="actual" name="Actual" stroke="#5B9FE4" dot={false} strokeWidth={2.2} connectNulls={false} isAnimationActive={false} />
           <Line
             dataKey="adjusted"
             name="Adjusted Forecast"
-            stroke="#4f7d5c"
+            stroke="#F07825"
             dot={(props: any) => {
               const { key, ...rest } = props;
               return <DraggableDot key={key} {...rest} />;
             }}
             strokeWidth={2.5}
+            isAnimationActive={false}
           />
         </ComposedChart>
-      </ResponsiveContainer>
-
-      <div className="sim-selection-note">
-        {selectedBlocks.length > 1
-          ? `Selected blocks: ${selectedBlocks[0]} to ${selectedBlocks[selectedBlocks.length - 1]} (${selectedBlocks.length})`
-          : `Selected block: ${selectedBlocks[0] ?? "--"}`}
+        </ResponsiveContainer>
       </div>
+
     </div>
   );
 };

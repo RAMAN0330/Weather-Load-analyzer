@@ -24,8 +24,8 @@ export const BlockGridEditorModal: React.FC<Props> = ({ open, onClose, selection
       <div className="sim-modal sim-grid-modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-header">
           <div>
-            <h3>Table Grid Editor</h3>
-            <span>Inline block editing with residual and confidence diagnostics</span>
+            <h3>Block Grid Editor</h3>
+            <span>Directly tune block drivers while keeping residuals, exogenous weather, and confidence signals in view.</span>
           </div>
           <div className="sim-panel-actions">
             {selectionLabel ? <span className="sim-hint-chip">{selectionLabel}</span> : null}

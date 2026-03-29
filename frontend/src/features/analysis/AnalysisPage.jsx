@@ -37,25 +37,100 @@ const CAPACITY = 6500;
 
 /* ─── Inline Styles ─── */
 const S = {
-  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 2 },
-  kpiRow: { display: 'flex', gap: 8, padding: '10px 16px 6px' },
-  kpi: (accent) => ({ flex: '1 1 0', padding: '12px 14px', background: '#1A191E', borderRadius: 8, border: '1px solid #2A292F', position: 'relative', overflow: 'hidden', ...(accent ? { borderLeft: `3px solid ${accent}` } : {}) }),
+  page: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: '#ECEEF3',
+    minHeight: 0,
+    height: '100%',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    padding: '8px 0 16px',
+  },
+  kpiGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 12,
+    padding: '0 16px',
+  },
+  kpi: (accent) => ({
+    minHeight: 132,
+    padding: '16px 18px',
+    background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+    borderRadius: 14,
+    border: '1px solid #2A292F',
+    position: 'relative',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    gap: 8,
+    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    ...(accent ? { boxShadow: `inset 0 0 0 1px ${accent}22, 0 18px 40px rgba(0, 0, 0, 0.18)` } : {}),
+  }),
   kpiLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: '#6B7186', marginBottom: 4 },
-  kpiVal: (c) => ({ fontSize: 26, fontWeight: 700, color: c || '#ECEEF3', lineHeight: 1.15 }),
+  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#ECEEF3', lineHeight: 1.08 }),
   kpiUnit: { fontSize: 11, fontWeight: 400, opacity: 0.5 },
-  kpiSub: { fontSize: 9, color: '#6B7186', marginTop: 3 },
+  kpiSub: { fontSize: 10, color: '#6B7186', marginTop: 3, lineHeight: 1.45 },
   kpiSpark: { position: 'absolute', bottom: 8, right: 12, opacity: 0.25 },
-  mainGrid: { display: 'grid', gridTemplateColumns: '1fr 420px', gap: 8, padding: '0 16px', minHeight: 420 },
-  card: { background: '#1A191E', borderRadius: 10, border: '1px solid #2A292F', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-  cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: '#A0A5B8', padding: '10px 14px 0' },
-  weatherGrid: { display: 'grid', gridTemplateColumns: '180px 1fr', gap: 8, padding: '0 16px 12px' },
-  tabBar: { display: 'inline-flex', gap: 3, padding: '4px 6px', background: '#1A191E', border: '1px solid #2A292F', borderRadius: 999 },
-  tab: (active) => ({ flex: '0 0 auto', padding: '6px 14px', fontSize: 9, fontWeight: 600, letterSpacing: 0.5, cursor: 'pointer', border: 'none', fontFamily: 'inherit', borderRadius: 999, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#6B7186', transition: 'all 0.15s' }),
-  pill: (active) => ({ fontSize: 9, padding: '3px 10px', borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#6B7186', textTransform: 'capitalize' }),
+  workspace: {
+    margin: '0 16px',
+    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    borderRadius: 16,
+    border: '1px solid #2A292F',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+  },
+  workspaceHeader: {
+    padding: '18px 20px 14px',
+    borderBottom: '1px solid #2A292F',
+  },
+  tabBar: {
+    display: 'inline-flex',
+    gap: 4,
+    padding: 5,
+    background: '#141419',
+    border: '1px solid #2A292F',
+    borderRadius: 999,
+    flexWrap: 'wrap',
+  },
+  tab: (active) => ({ flex: '0 0 auto', padding: '8px 16px', fontSize: 10, fontWeight: 600, letterSpacing: 0.3, cursor: 'pointer', border: '1px solid transparent', fontFamily: 'inherit', borderRadius: 999, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#A0A5B8', transition: 'all 0.15s' }),
+  pill: (active) => ({ fontSize: 9, padding: '6px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : '#1A191E', color: active ? '#F07825' : '#6B7186', textTransform: 'capitalize' }),
+  badge: (color) => ({ fontSize: 9, fontWeight: 700, padding: '5px 10px', borderRadius: 999, background: `${color}18`, color, border: `1px solid ${color}33` }),
+  actionBtn: { fontSize: 10, fontWeight: 700, padding: '8px 14px', borderRadius: 999, border: '1px solid #2A292F', background: '#1A191E', color: '#ECEEF3', cursor: 'pointer', fontFamily: 'inherit' },
+  workspaceGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1.5fr) minmax(320px, 0.82fr)',
+    gap: 14,
+    padding: '14px 16px',
+    alignItems: 'start',
+  },
+  card: {
+    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    borderRadius: 14,
+    border: '1px solid #2A292F',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  cardHeader: {
+    padding: '14px 16px',
+    borderBottom: '1px solid #2A292F',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: '#A0A5B8' },
+  weatherGrid: { display: 'grid', gridTemplateColumns: 'minmax(220px, 0.72fr) minmax(0, 1.28fr)', gap: 14, padding: '0 16px 16px' },
   th: { fontSize: 8, color: '#6B7186', textTransform: 'uppercase', letterSpacing: 1, padding: '8px 10px', borderBottom: '1px solid #2A292F', textAlign: 'left', fontWeight: 600 },
   td: { fontSize: 10, padding: '6px 10px', borderBottom: '1px solid #2A292F22' },
-  badge: (color) => ({ fontSize: 8, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: `${color}18`, color }),
-  sectionLabel: (color) => ({ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: color || '#F07825', padding: '8px 16px 2px' }),
+  miniLabel: { fontSize: 9, color: '#6B7186', letterSpacing: 1.2, textTransform: 'uppercase' },
 };
 
 /* ─── ECharts base ─── */
@@ -145,6 +220,24 @@ function ArcGauge({ value, sublabel, size = 90 }) {
   );
 }
 
+function DetailOverlay({ open, title, subtitle, onClose, children, contentStyle, bodyStyle }) {
+  if (!open) return null;
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content fp-modal" style={contentStyle} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h3>{title}</h3>
+            {subtitle ? <div className="modal-subtitle">{subtitle}</div> : null}
+          </div>
+          <button type="button" className="close-btn" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body" style={bodyStyle}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
@@ -153,6 +246,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   const [clock, setClock] = useState(new Date());
   const [chartTab, setChartTab] = useState('load_curve');
   const [weatherOverlay, setWeatherOverlay] = useState('temperature');
+  const [activePanel, setActivePanel] = useState(null);
 
   useEffect(() => { const id = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(id); }, []);
 
@@ -202,6 +296,52 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   const rhoCloud = computeSpearmanRho(clouds, loads);
   const rhoPrecip = computeSpearmanRho(precips, loads);
   const rhoRain = computeSpearmanRho(precips, loads);
+  const strongestWeatherSignal = useMemo(() => {
+    const signals = [
+      { label: 'Temperature', value: rhoTemp, color: '#F07825' },
+      { label: 'Humidity', value: rhoHum, color: '#45b7d1' },
+      { label: 'Cloud', value: rhoCloud, color: '#636e72' },
+      { label: 'Precip', value: rhoPrecip, color: '#C084FC' },
+    ];
+    return signals.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0];
+  }, [rhoTemp, rhoHum, rhoCloud, rhoPrecip]);
+  const correlationMatrix = useMemo(() => {
+    const rTH = computeSpearmanRho(temps, hums);
+    const rTP = computeSpearmanRho(temps, precips);
+    const rTC = computeSpearmanRho(temps, clouds);
+    const rHP = computeSpearmanRho(hums, precips);
+    const rHC = computeSpearmanRho(hums, clouds);
+    const rPC = computeSpearmanRho(precips, clouds);
+    return [
+      { l: 'Load', vals: [1, rhoTemp, rhoHum, rhoPrecip, rhoRain, rhoCloud] },
+      { l: 'Temp', vals: [rhoTemp, 1, rTH, rTP, rTP, rTC] },
+      { l: 'Humidity', vals: [rhoHum, rTH, 1, rHP, rHP, rHC] },
+      { l: 'Precip', vals: [rhoPrecip, rTP, rHP, 1, 1, rPC] },
+      { l: 'Rain', vals: [rhoRain, rTP, rHP, 1, 1, rPC] },
+      { l: 'Cloud', vals: [rhoCloud, rTC, rHC, rPC, rPC, 1] },
+    ];
+  }, [temps, hums, precips, clouds, rhoTemp, rhoHum, rhoPrecip, rhoRain, rhoCloud]);
+  const correlationHighlights = useMemo(() => {
+    const loadLinks = [
+      { label: 'Temperature', value: rhoTemp, color: '#F07825' },
+      { label: 'Humidity', value: rhoHum, color: '#45b7d1' },
+      { label: 'Precipitation', value: rhoPrecip, color: '#C084FC' },
+      { label: 'Rain', value: rhoRain, color: '#FBBF24' },
+      { label: 'Cloud', value: rhoCloud, color: '#7B8CDE' },
+    ];
+    const strongestPositive = loadLinks.filter((item) => item.value > 0).sort((a, b) => b.value - a.value)[0] || loadLinks[0];
+    const strongestNegative = loadLinks.filter((item) => item.value < 0).sort((a, b) => a.value - b.value)[0] || loadLinks[0];
+    const pairCandidates = [];
+    correlationMatrix.forEach((row, rowIdx) => {
+      row.vals.forEach((value, colIdx) => {
+        if (colIdx <= rowIdx || value === 1) return;
+        const labels = ['Load', 'Temp', 'Humidity', 'Precip', 'Rain', 'Cloud'];
+        pairCandidates.push({ pair: `${labels[rowIdx]} ↔ ${labels[colIdx]}`, value });
+      });
+    });
+    const strongestPair = pairCandidates.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0];
+    return { strongestPositive, strongestNegative, strongestPair };
+  }, [rhoTemp, rhoHum, rhoPrecip, rhoRain, rhoCloud, correlationMatrix]);
 
   /* ─── TOD groups ─── */
   const todGroups = useMemo(() => TOD_DEFS.map(tod => {
@@ -359,7 +499,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
       ) : (
         <>
           {/* ─── KPI CARDS ─── */}
-          <div style={S.kpiRow}>
+          <div style={S.kpiGrid}>
             <div style={S.kpi()}>
               <div style={S.kpiLabel}>Day Energy</div>
               <div style={S.kpiVal('#F07825')}>{fmt(dayEnergy, 0)} <span style={S.kpiUnit}>MWh</span></div>
@@ -386,187 +526,302 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
               <div style={S.kpiVal('#FBBF24')}>{fmt(maxRamp)} <span style={S.kpiUnit}>MW/15m</span></div>
               <div style={S.kpiSub}>at {blockToTime(maxRampIdx)} • {fmt(maxRamp * 4, 0)} MW/hr</div>
             </div>
-          </div>
-
-          {/* ─── CHART TABS (floating) ─── */}
-          <div style={{ display: 'flex', alignItems: 'center', padding: '0 16px' }}>
-            <div style={S.tabBar}>
-              {TABS.map(t => <button key={t.id} onClick={() => setChartTab(t.id)} style={S.tab(chartTab === t.id)}>{t.l}</button>)}
+            <div style={S.kpi()}>
+              <div style={S.kpiLabel}>Capacity Stress</div>
+              <div style={S.kpiVal(healthBadge.c)}>{healthPct.toFixed(1)} <span style={S.kpiUnit}>%</span></div>
+              <div style={S.kpiSub}>
+                <span style={S.badge(healthBadge.c)}>{healthBadge.l}</span>
+                <span style={{ marginLeft: 8 }}>{fmt(CAPACITY - peakLoad)} MW headroom to capacity</span>
+              </div>
             </div>
-            <div style={{ fontSize: 9, color: '#6B7186', marginLeft: 'auto' }}>Solid: Today | Dashed: Yesterday</div>
           </div>
 
-          {/* ─── MAIN: Chart + TOD side by side ─── */}
-          <div style={S.mainGrid}>
-            {/* Chart card */}
-            <div style={S.card}>
-              {chartTab === 'weather_overlay' && (
-                <div style={{ padding: '6px 12px', borderBottom: '1px solid #2A292F', display: 'flex', gap: 5 }}>
-                  {['temperature', 'humidity', 'cloud', 'precipitation'].map(k => (
+          <div style={S.workspace}>
+            <div style={S.workspaceHeader}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div style={S.tabBar}>
+                  {TABS.map(t => <button key={t.id} onClick={() => setChartTab(t.id)} style={S.tab(chartTab === t.id)}>{t.l}</button>)}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                  {chartTab === 'weather_overlay' && ['temperature', 'humidity', 'cloud', 'precipitation'].map(k => (
                     <button key={k} onClick={() => setWeatherOverlay(k)} style={S.pill(weatherOverlay === k)}>{k}</button>
                   ))}
+                  <span style={S.badge(currentTod.color)}>{currentTod.name}</span>
+                  <span style={S.badge('#5B9FE4')}>{shiftLabel}</span>
+                  <span style={S.badge('#F07825')}>{timeLeft} left</span>
+                  <button type="button" style={S.actionBtn} onClick={() => setActivePanel('weather')}>Open Weather</button>
+                  <button type="button" style={S.actionBtn} onClick={() => setActivePanel('correlations')}>Open Correlations</button>
+                  {anomalies.length > 0 ? <button type="button" style={S.actionBtn} onClick={() => setActivePanel('anomalies')}>Open All Anomalies</button> : null}
                 </div>
-              )}
-              <div style={{ flex: 1, padding: '4px 6px' }}>
-                <ReactECharts option={chartOpts[chartTab]?.()} style={{ height: '100%', minHeight: 350 }} notMerge />
               </div>
             </div>
 
-            {/* TOD Performance */}
-            <div style={S.card}>
-              <div style={{ fontSize: 10, fontWeight: 700, padding: '10px 12px', borderBottom: '1px solid #2A292F', letterSpacing: 1, color: '#A0A5B8' }}>TOD Performance</div>
-              <div style={{ flex: 1, overflow: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      {['PERIOD', 'BLKS', 'AVG MW', 'PEAK', 'ENERGY', 'STATUS'].map(h => (
-                        <th key={h} style={S.th}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {todGroups.map(t => {
-                      const isCur = t.name === currentTod.name;
-                      return (
-                        <tr key={t.name} style={{ background: isCur ? '#F0782508' : 'transparent' }}>
-                          <td style={{ ...S.td, fontWeight: 700, color: t.color, borderLeft: isCur ? `3px solid ${t.color}` : '3px solid transparent', whiteSpace: 'nowrap' }}>{t.name}</td>
-                          <td style={S.td}>{t.blocks}</td>
-                          <td style={{ ...S.td, fontWeight: 600 }}>{fmt(t.avgLoad)}</td>
-                          <td style={S.td}>{fmt(t.peakMw)}</td>
-                          <td style={S.td}>{fmt(t.energy)}</td>
-                          <td style={S.td}><span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>{t.status}</span></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              {/* TOD Energy Share bar */}
-              <div style={{ padding: '8px 12px', borderTop: '1px solid #2A292F' }}>
-                <div style={{ fontSize: 8, color: '#6B7186', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>TOD Energy Share</div>
-                <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden' }}>
-                  {todGroups.map(t => {
-                    const pct = dayEnergy > 0 ? (t.energy / dayEnergy) * 100 : 0;
-                    return <div key={t.name} style={{ width: `${pct}%`, background: t.color, opacity: 0.85 }} title={`${t.name}: ${pct.toFixed(1)}%`} />;
-                  })}
+            <div style={S.workspaceGrid}>
+              {/* Chart card */}
+              <div style={S.card}>
+                <div style={S.cardHeader}>
+                  <div>
+                    <div style={S.cardTitle}>Analysis Curve</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#A0A5B8' }}>
+                    Solid: Today | Dashed: Yesterday
+                  </div>
+                </div>
+                <div style={{ flex: 1, padding: '10px 10px 14px', minHeight: 430 }}>
+                  <ReactECharts option={chartOpts[chartTab]?.()} style={{ height: '100%', minHeight: 400 }} notMerge />
                 </div>
               </div>
-              {/* Anomalies inline */}
-              {anomalies.length > 0 && (
-                <div style={{ borderTop: '1px solid #2A292F' }}>
-                  <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: '#F87171', letterSpacing: 1, textTransform: 'uppercase' }}>Anomalies Detected ({anomalies.length})</span>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={S.card}>
+                  <div style={S.cardHeader}>
+                    <div style={S.cardTitle}>TOD Performance</div>
+                    <span style={S.badge(currentTod.color)}>Current: {currentTod.name}</span>
                   </div>
-                  <div style={{ maxHeight: 120, overflow: 'auto' }}>
+                  <div style={{ flex: 1, overflow: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
                         <tr>
-                          {['Block', 'Load', 'Reason', ''].map(h => <th key={h} style={{ ...S.th, padding: '4px 10px' }}>{h}</th>)}
+                          {['PERIOD', 'BLKS', 'AVG MW', 'PEAK', 'ENERGY', 'STATUS'].map(h => (
+                            <th key={h} style={S.th}>{h}</th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {anomalies.slice(0, 10).map((a, i) => (
-                          <tr key={i}>
-                            <td style={{ ...S.td, fontWeight: 600, padding: '3px 10px' }}>{a.block}</td>
-                            <td style={{ ...S.td, padding: '3px 10px' }}>{fmt(a.load)}</td>
-                            <td style={{ ...S.td, color: '#A0A5B8', fontSize: 8, padding: '3px 10px' }}>{a.reason}</td>
-                            <td style={{ ...S.td, padding: '3px 10px' }}><span style={S.badge('#F87171')}>{a.severity}</span></td>
-                          </tr>
-                        ))}
+                        {todGroups.map(t => {
+                          const isCur = t.name === currentTod.name;
+                          return (
+                            <tr key={t.name} style={{ background: isCur ? '#F0782508' : 'transparent' }}>
+                              <td style={{ ...S.td, fontWeight: 700, color: t.color, borderLeft: isCur ? `3px solid ${t.color}` : '3px solid transparent', whiteSpace: 'nowrap' }}>{t.name}</td>
+                              <td style={S.td}>{t.blocks}</td>
+                              <td style={{ ...S.td, fontWeight: 600 }}>{fmt(t.avgLoad)}</td>
+                              <td style={S.td}>{fmt(t.peakMw)}</td>
+                              <td style={S.td}>{fmt(t.energy)}</td>
+                              <td style={S.td}><span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>{t.status}</span></td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ─── WEATHER INTELLIGENCE ─── */}
-          <div style={S.sectionLabel()}>Weather Intelligence</div>
-          <div style={S.weatherGrid}>
-            {/* Weather Snapshot */}
-            <div style={S.card}>
-              <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <WeatherIcon condition={weatherCond} size={36} />
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700 }}>{weatherCond}</div>
-                    <div style={{ fontSize: 8, color: '#6B7186' }}>Block {snapBlock + 1} • {blockToTime(snapBlock)}</div>
+                  <div style={{ padding: '10px 12px 12px', borderTop: '1px solid #2A292F' }}>
+                    <div style={S.miniLabel}>TOD Energy Share</div>
+                    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginTop: 6 }}>
+                      {todGroups.map(t => {
+                        const pct = dayEnergy > 0 ? (t.energy / dayEnergy) * 100 : 0;
+                        return <div key={t.name} style={{ width: `${pct}%`, background: t.color, opacity: 0.85 }} title={`${t.name}: ${pct.toFixed(1)}%`} />;
+                      })}
+                    </div>
                   </div>
                 </div>
-                {[
-                  { l: 'Temperature', v: `${weatherAgg.tempNow.toFixed(1)}°C`, c: '#F07825' },
-                  { l: 'Feels Like', v: `${feelsLike.toFixed(1)}°C`, c: '#F07825' },
-                  { l: 'Temp Range', v: `${weatherAgg.tempMin.toFixed(1)}–${weatherAgg.tempMax.toFixed(1)}°C`, c: '#F07825' },
-                  { l: 'Humidity', v: `${weatherAgg.humNow.toFixed(1)}%`, c: '#45b7d1' },
-                  { l: 'Precipitation', v: (() => { const p = weatherAgg.precipNow; return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2); })() + ' mm', c: '#C084FC' },
-                  { l: 'Rain (Total)', v: (() => { const p = weatherAgg.precipTotal; return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2); })() + ' mm', c: '#C084FC' },
-                  { l: 'Cloud', v: `${weatherAgg.cloudNow.toFixed(0)}%`, c: '#636e72' },
-                ].map((r, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                    <span style={{ color: '#6B7186' }}>{r.l}</span>
-                    <span style={{ color: r.c, fontWeight: 600 }}>{r.v}</span>
+
+                {anomalies.length > 0 && (
+                  <div style={S.card}>
+                    <div style={S.cardHeader}>
+                      <div style={S.cardTitle}>Anomalies</div>
+                      <span style={S.badge('#F87171')}>{anomalies.length} flagged</span>
+                    </div>
+                    <div style={{ maxHeight: 190, overflow: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr>
+                            {['Block', 'Load', 'Reason', ''].map(h => <th key={h} style={{ ...S.th, padding: '6px 10px' }}>{h}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {anomalies.slice(0, 10).map((a, i) => (
+                            <tr key={i}>
+                              <td style={{ ...S.td, fontWeight: 600, padding: '6px 10px' }}>{a.block}</td>
+                              <td style={{ ...S.td, padding: '6px 10px' }}>{fmt(a.load)}</td>
+                              <td style={{ ...S.td, color: '#A0A5B8', fontSize: 9, padding: '6px 10px' }}>{a.reason}</td>
+                              <td style={{ ...S.td, padding: '6px 10px' }}><span style={S.badge('#F87171')}>{a.severity}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
             </div>
-
-            {/* Spearman Correlations */}
-            <div style={S.card}>
-              <div style={{ fontSize: 10, fontWeight: 700, padding: '10px 14px', borderBottom: '1px solid #2A292F', letterSpacing: 1, color: '#A0A5B8' }}>Spearman Rank Correlations (ρ)</div>
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-around', padding: '8px 6px', flexWrap: 'wrap' }}>
-                <ArcGauge value={rhoTemp} sublabel="Temp → Load" />
-                <ArcGauge value={rhoHum} sublabel="Hum → Load" />
-                <ArcGauge value={rhoCloud} sublabel="Cloud → Load" />
-                <ArcGauge value={rhoPrecip} sublabel="Precip → Load" />
-                <ArcGauge value={rhoRain} sublabel="Rain → Load" />
-              </div>
-              {/* Cross-correlation matrix */}
-              <div style={{ padding: '0 14px 10px' }}>
-                <div style={{ fontSize: 8, color: '#6B7186', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Cross-Correlation Matrix</div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
-                  <thead>
-                    <tr>
-                      {['', 'LOAD', 'TEMP', 'HUMIDITY', 'PRECIP', 'RAIN', 'CLOUD'].map(h => (
-                        <th key={h} style={{ padding: '3px 6px', color: '#6B7186', fontWeight: 600, textAlign: 'center', borderBottom: '1px solid #2A292F22' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const rTH = computeSpearmanRho(temps, hums);
-                      const rTP = computeSpearmanRho(temps, precips);
-                      const rTC = computeSpearmanRho(temps, clouds);
-                      const rHP = computeSpearmanRho(hums, precips);
-                      const rHC = computeSpearmanRho(hums, clouds);
-                      const rPC = computeSpearmanRho(precips, clouds);
-                      return [
-                        { l: 'Load',   vals: [1,       rhoTemp, rhoHum,  rhoPrecip, rhoRain, rhoCloud] },
-                        { l: 'Temp',   vals: [rhoTemp, 1,       rTH,     rTP,       rTP,     rTC] },
-                        { l: 'Humidity', vals: [rhoHum, rTH,    1,       rHP,       rHP,     rHC] },
-                        { l: 'Precip', vals: [rhoPrecip, rTP,   rHP,     1,         1,       rPC] },
-                        { l: 'Rain',   vals: [rhoRain, rTP,     rHP,     1,         1,       rPC] },
-                        { l: 'Cloud',  vals: [rhoCloud, rTC,    rHC,     rPC,       rPC,     1] },
-                      ];
-                    })().map((row, ri) => (
-                      <tr key={ri}>
-                        <td style={{ padding: '3px 6px', fontWeight: 600, color: '#A0A5B8' }}>{row.l}</td>
-                        {row.vals.map((v, ci) => {
-                          const abs = Math.abs(v);
-                          const bg = v === 1 ? '#F0782515' : abs > 0.5 ? '#34D39910' : abs > 0.3 ? '#FBBF2408' : 'transparent';
-                          return <td key={ci} style={{ padding: '3px 6px', textAlign: 'center', color: '#ECEEF3', background: bg }}>{v.toFixed(2)}</td>;
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
           </div>
-
         </>
       )}
+
+      <DetailOverlay open={activePanel === 'tod'} title="TOD Performance" subtitle="Period-level average load, peak, energy share, and status" onClose={() => setActivePanel(null)}>
+        <div style={{ overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['PERIOD', 'BLKS', 'AVG MW', 'PEAK', 'ENERGY', 'STATUS'].map(h => (
+                  <th key={h} style={S.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {todGroups.map(t => {
+                const isCur = t.name === currentTod.name;
+                return (
+                  <tr key={t.name} style={{ background: isCur ? '#F0782508' : 'transparent' }}>
+                    <td style={{ ...S.td, fontWeight: 700, color: t.color, borderLeft: isCur ? `3px solid ${t.color}` : '3px solid transparent', whiteSpace: 'nowrap' }}>{t.name}</td>
+                    <td style={S.td}>{t.blocks}</td>
+                    <td style={{ ...S.td, fontWeight: 600 }}>{fmt(t.avgLoad)}</td>
+                    <td style={S.td}>{fmt(t.peakMw)}</td>
+                    <td style={S.td}>{fmt(t.energy)}</td>
+                    <td style={S.td}><span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>{t.status}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ paddingTop: 14 }}>
+          <div style={S.miniLabel}>TOD Energy Share</div>
+          <div style={{ display: 'flex', height: 10, borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
+            {todGroups.map(t => {
+              const pct = dayEnergy > 0 ? (t.energy / dayEnergy) * 100 : 0;
+              return <div key={t.name} style={{ width: `${pct}%`, background: t.color, opacity: 0.9 }} title={`${t.name}: ${pct.toFixed(1)}%`} />;
+            })}
+          </div>
+        </div>
+      </DetailOverlay>
+
+      <DetailOverlay open={activePanel === 'anomalies'} title="Anomaly Flags" subtitle="Blocks where load drifted beyond the period distribution" onClose={() => setActivePanel(null)}>
+        {anomalies.length ? (
+          <div style={{ overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Block', 'Load', 'Reason', 'Severity'].map(h => <th key={h} style={S.th}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {anomalies.map((a, i) => (
+                  <tr key={i}>
+                    <td style={{ ...S.td, fontWeight: 600 }}>{a.block}</td>
+                    <td style={S.td}>{fmt(a.load)}</td>
+                    <td style={{ ...S.td, color: '#A0A5B8' }}>{a.reason}</td>
+                    <td style={S.td}><span style={S.badge('#F87171')}>{a.severity}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <div style={{ color: '#6B7186', fontSize: 12 }}>No anomalies detected for the current day.</div>}
+      </DetailOverlay>
+
+      <DetailOverlay open={activePanel === 'weather'} title="Weather Snapshot" subtitle={`Block ${snapBlock + 1} • ${blockToTime(snapBlock)} • ${weatherCond}`} onClose={() => setActivePanel(null)}>
+        <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
+          <div style={{ ...S.card, minHeight: 220 }}>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, flex: 1 }}>
+              <WeatherIcon condition={weatherCond} size={48} />
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{weatherCond}</div>
+              <div style={{ fontSize: 11, color: '#6B7186' }}>{dateStr}</div>
+            </div>
+          </div>
+          <div style={{ ...S.card, minHeight: 220 }}>
+            <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[
+                { l: 'Temperature', v: `${weatherAgg.tempNow.toFixed(1)}°C`, c: '#F07825' },
+                { l: 'Feels Like', v: `${feelsLike.toFixed(1)}°C`, c: '#F07825' },
+                { l: 'Temp Range', v: `${weatherAgg.tempMin.toFixed(1)}–${weatherAgg.tempMax.toFixed(1)}°C`, c: '#F07825' },
+                { l: 'Humidity', v: `${weatherAgg.humNow.toFixed(1)}%`, c: '#45b7d1' },
+                { l: 'Precipitation', v: (() => { const p = weatherAgg.precipNow; return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2); })() + ' mm', c: '#C084FC' },
+                { l: 'Rain (Total)', v: (() => { const p = weatherAgg.precipTotal; return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2); })() + ' mm', c: '#C084FC' },
+                { l: 'Cloud', v: `${weatherAgg.cloudNow.toFixed(0)}%`, c: '#636e72' },
+                { l: 'Avg Humidity', v: `${weatherAgg.humAvg.toFixed(1)}%`, c: '#45b7d1' },
+              ].map((r, i) => (
+                <div key={i} style={{ background: '#201F25', border: '1px solid #2A292F', borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={S.miniLabel}>{r.l}</div>
+                  <div style={{ marginTop: 8, fontSize: 18, fontWeight: 700, color: r.c }}>{r.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </DetailOverlay>
+
+      <DetailOverlay
+        open={activePanel === 'correlations'}
+        title="Weather Correlations"
+        subtitle="Spearman rank relationships between weather variables and load"
+        onClose={() => setActivePanel(null)}
+        contentStyle={{ width: 'min(96vw, 1680px)', maxWidth: 1680, maxHeight: '92vh', borderRadius: 18 }}
+        bodyStyle={{ overflow: 'hidden', padding: 20 }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div style={{ background: 'linear-gradient(180deg, rgba(33, 32, 39, 0.96), rgba(24, 23, 28, 0.96))', border: '1px solid #2A292F', borderRadius: 16, padding: '16px 18px', boxShadow: '0 18px 36px rgba(0,0,0,0.18)' }}>
+              <div style={S.miniLabel}>Strongest Positive</div>
+              <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, color: correlationHighlights.strongestPositive.color }}>{correlationHighlights.strongestPositive.label}</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>ρ +{Math.abs(correlationHighlights.strongestPositive.value).toFixed(2)} with load</div>
+            </div>
+            <div style={{ background: 'linear-gradient(180deg, rgba(33, 32, 39, 0.96), rgba(24, 23, 28, 0.96))', border: '1px solid #2A292F', borderRadius: 16, padding: '16px 18px', boxShadow: '0 18px 36px rgba(0,0,0,0.18)' }}>
+              <div style={S.miniLabel}>Strongest Negative</div>
+              <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, color: '#F87171' }}>{correlationHighlights.strongestNegative.label}</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>ρ {correlationHighlights.strongestNegative.value.toFixed(2)} with load</div>
+            </div>
+            <div style={{ background: 'radial-gradient(circle at top right, rgba(240, 120, 37, 0.14), transparent 50%), linear-gradient(180deg, rgba(33, 32, 39, 0.98), rgba(24, 23, 28, 0.96))', border: '1px solid #2A292F', borderRadius: 16, padding: '16px 18px', boxShadow: '0 18px 36px rgba(0,0,0,0.22)' }}>
+              <div style={S.miniLabel}>Dominant Pair</div>
+              <div style={{ marginTop: 10, fontSize: 20, fontWeight: 700, color: '#ECEEF3' }}>{correlationHighlights.strongestPair?.pair || '--'}</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>Absolute ρ {Math.abs(correlationHighlights.strongestPair?.value || 0).toFixed(2)} across the matrix</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 12 }}>
+            {[
+              { key: 'temp', label: 'Temp → Load', value: rhoTemp, color: '#F07825' },
+              { key: 'hum', label: 'Hum → Load', value: rhoHum, color: '#45b7d1' },
+              { key: 'cloud', label: 'Cloud → Load', value: rhoCloud, color: '#7B8CDE' },
+              { key: 'precip', label: 'Precip → Load', value: rhoPrecip, color: '#C084FC' },
+              { key: 'rain', label: 'Rain → Load', value: rhoRain, color: '#FBBF24' },
+            ].map((item) => (
+              <div key={item.key} style={{ background: 'linear-gradient(180deg, rgba(31, 30, 36, 0.96), rgba(23, 22, 27, 0.96))', border: '1px solid #2A292F', borderRadius: 16, padding: '14px 12px 10px', boxShadow: '0 14px 28px rgba(0,0,0,0.14)' }}>
+                <ArcGauge value={item.value} sublabel={item.label} size={92} />
+              </div>
+            ))}
+          </div>
+          <div style={{ background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(21, 20, 26, 0.98))', border: '1px solid #2A292F', borderRadius: 18, padding: 16, boxShadow: '0 22px 42px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div style={{ ...S.cardTitle, padding: 0 }}>Correlation Heatmap</div>
+              <span style={S.badge(Math.abs(correlationHighlights.strongestPair?.value || 0) > 0.7 ? '#34D399' : '#FBBF24')}>
+                Matrix View
+              </span>
+            </div>
+            <div style={{ overflow: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 6, fontSize: 10 }}>
+                <thead>
+                  <tr>
+                    {['', 'LOAD', 'TEMP', 'HUMIDITY', 'PRECIP', 'RAIN', 'CLOUD'].map(h => (
+                      <th key={h} style={{ padding: '8px 10px', color: '#7F859A', fontWeight: 700, textAlign: 'center', letterSpacing: 1, fontSize: 9 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {correlationMatrix.map((row, ri) => (
+                    <tr key={ri}>
+                      <td style={{ padding: '10px 10px', fontWeight: 700, color: '#AEB3C5' }}>{row.l}</td>
+                      {row.vals.map((v, ci) => {
+                        const abs = Math.abs(v);
+                        const bg = v === 1
+                          ? 'rgba(240, 120, 37, 0.16)'
+                          : v > 0
+                            ? `rgba(52, 211, 153, ${Math.min(0.1 + abs * 0.22, 0.3)})`
+                            : `rgba(248, 113, 113, ${Math.min(0.08 + abs * 0.22, 0.28)})`;
+                        const color = v === 1 ? '#F3B27B' : v > 0 ? '#BDF4DC' : '#FFC0BA';
+                        return (
+                          <td key={ci} style={{ padding: '14px 10px', textAlign: 'center', color, background: bg, border: '1px solid rgba(255,255,255,0.04)', borderRadius: 12, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)' }}>
+                            <div style={{ fontSize: 17, fontWeight: 700 }}>{v.toFixed(2)}</div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </DetailOverlay>
     </div>
   );
 }

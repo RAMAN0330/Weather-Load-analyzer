@@ -109,8 +109,30 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
   };
 
   const selected = useMemo(() => blocks.filter((b) => selectedBlocks.includes(b.block_number)), [blocks, selectedBlocks]);
+  const totalBlocks = blocks.length || 96;
+  const selectionRanges = useMemo(() => toBlockRanges(selectedBlocks), [selectedBlocks]);
+  const inferredSelectionMode = useMemo<"all" | "range" | "single">(() => {
+    if (selectedBlocks.length >= totalBlocks) return "all";
+    if (selectedBlocks.length <= 1) return "single";
+    return "range";
+  }, [selectedBlocks, totalBlocks]);
 
   const selectedDate = propSelectedDate || dataDate || "";
+
+  useEffect(() => {
+    setSelectionMode(inferredSelectionMode);
+    if (!selectedBlocks.length) return;
+    if (selectedBlocks.length === 1) {
+      setSingleBlock(selectedBlocks[0]);
+      setRangeStart(selectedBlocks[0]);
+      setRangeEnd(selectedBlocks[0]);
+      return;
+    }
+    const sorted = [...selectedBlocks].sort((a, b) => a - b);
+    setRangeStart(sorted[0]);
+    setRangeEnd(sorted[sorted.length - 1]);
+    setSingleBlock(sorted[0]);
+  }, [inferredSelectionMode, selectedBlocks]);
 
   const handleRunCommand = async () => {
     setCommandBusy(true);
@@ -148,6 +170,12 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
   };
 
   if (part === "selection") {
+    const selectionSummary = inferredSelectionMode === "all"
+      ? "Whole-day scope across all 96 blocks"
+      : inferredSelectionMode === "single"
+        ? `Focused on block ${singleBlock} • ${blockTimeLabel(singleBlock)}-${blockEndLabel(singleBlock)}`
+        : formatBlockWindows(selectedBlocks);
+
     return (
       <div className="glass-panel p-4 flex flex-col gap-4">
         <div
@@ -165,6 +193,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
           <div className="flex bg-black/20 p-1 rounded-lg border border-[var(--outline)]">
             {(["all", "range", "single"] as const).map(m => (
               <button
+                type="button"
                 key={m}
                 className={`flex-1 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${selectionMode === m ? 'bg-[var(--accent)] text-black shadow-lg shadow-[var(--accent)]/20' : 'text-[var(--muted)]'}`}
                 onClick={() => {
@@ -177,6 +206,21 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
                 {m}
               </button>
             ))}
+          </div>
+
+          <div className="rounded-lg border border-[var(--outline)] bg-white/[0.03] px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Current Scope</span>
+              <span className="text-[10px] font-bold text-[var(--accent)]">{selectedBlocks.length || totalBlocks} Blocks</span>
+            </div>
+            <div className="mt-1 text-[11px] text-[var(--text-secondary)] leading-5">
+              {selectionSummary}
+            </div>
+            {selectionRanges.length > 1 ? (
+              <div className="mt-2 text-[10px] text-[var(--muted)]">
+                Multi-window selection: {selectionRanges.map((range) => range.blockLabel).join(", ")}
+              </div>
+            ) : null}
           </div>
 
           {selectionMode === "range" && (
@@ -512,4 +556,3 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
 
   return null;
 };
-

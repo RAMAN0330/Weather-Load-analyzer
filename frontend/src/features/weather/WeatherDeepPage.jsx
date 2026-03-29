@@ -67,14 +67,31 @@ const classifyRegime = (tempAvg, hum, rain, cloud) => {
 const ecBase = () => ({
   backgroundColor: 'transparent',
   textStyle: { color: C._sub, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 },
-  grid: { top: 40, right: 24, bottom: 36, left: 56, containLabel: false },
+  grid: { top: 62, right: 28, bottom: 72, left: 56, containLabel: true },
   tooltip: {
     trigger: 'axis', backgroundColor: C._card, borderColor: C._border, borderWidth: 1,
     textStyle: { color: C._text, fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" },
   },
-  legend: { textStyle: { color: C._sub, fontSize: 10 }, top: 4, right: 8, itemWidth: 14, itemHeight: 3 },
-  xAxis: { type: 'category', axisLine: { lineStyle: { color: C._border } }, axisLabel: { color: C._muted, fontSize: 9 }, splitLine: { show: false } },
-  yAxis: { type: 'value', axisLine: { show: false }, axisLabel: { color: C._muted, fontSize: 9 }, splitLine: { lineStyle: { color: C._border, type: 'dashed', opacity: 0.3 } } },
+  legend: {
+    textStyle: { color: C._sub, fontSize: 10 },
+    top: 10,
+    left: 'center',
+    itemWidth: 14,
+    itemHeight: 3,
+  },
+  xAxis: {
+    type: 'category',
+    axisLine: { lineStyle: { color: C._border } },
+    axisLabel: { color: C._muted, fontSize: 9, margin: 16 },
+    splitLine: { show: false },
+  },
+  yAxis: {
+    type: 'value',
+    nameGap: 22,
+    axisLine: { show: false },
+    axisLabel: { color: C._muted, fontSize: 9 },
+    splitLine: { lineStyle: { color: C._border, type: 'dashed', opacity: 0.3 } },
+  },
 });
 
 /* ─── Collapsible Section ─── */
@@ -95,17 +112,34 @@ function Section({ title, children, defaultOpen = true, accent }) {
 function MetricCard({ label, value, unit, sub, delta, color, wide }) {
   const dColor = delta > 0 ? C.red : delta < 0 ? C.green : C.muted;
   return (
-    <div className="metric-card" style={{ flex: wide ? '1 1 220px' : '1 1 160px', minWidth: 140, padding: '14px 16px', background: C.surface, borderRadius: 10, border: `1px solid var(--outline)` }}>
-      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C.muted, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: color || C.text, lineHeight: 1.1 }}>
-        {value} {unit && <span style={{ fontSize: 11, fontWeight: 500, opacity: 0.6 }}>{unit}</span>}
-      </div>
-      {delta != null && Number.isFinite(delta) && (
-        <div style={{ fontSize: 10, color: dColor, marginTop: 4, fontWeight: 600 }}>
-          {delta >= 0 ? '▲' : '▼'} {sgn(delta)} vs yesterday
+    <div
+      className="metric-card"
+      style={{
+        flex: wide ? '1 1 240px' : '1 1 200px',
+        minWidth: 180,
+        minHeight: 124,
+        padding: '16px 18px',
+        background: 'linear-gradient(180deg, rgba(32, 31, 37, 0.96), rgba(26, 25, 30, 0.98))',
+        borderRadius: 14,
+        border: `1px solid var(--outline)`,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C.muted }}>{label}</div>
+      <div>
+        <div style={{ fontSize: 28, fontWeight: 700, color: color || C.text, lineHeight: 1.05 }}>
+          {value} {unit && <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.6 }}>{unit}</span>}
         </div>
-      )}
-      {sub && <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>{sub}</div>}
+        {delta != null && Number.isFinite(delta) && (
+          <div style={{ fontSize: 10, color: dColor, marginTop: 6, fontWeight: 600 }}>
+            {delta >= 0 ? '▲' : '▼'} {sgn(delta)} vs yesterday
+          </div>
+        )}
+      </div>
+      {sub ? <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.45 }}>{sub}</div> : <div />}
     </div>
   );
 }
@@ -644,41 +678,10 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
      RENDER
      ═══════════════════════════════════════════════════════════════ */
   return (
-    <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.text, minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-
-      {/* ═══ CONTROLS BAR ═══ */}
-      <div style={{ padding: '12px 20px', background: C.card, borderBottom: `1px solid var(--outline)`, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C.muted }}>Feature</span>
-          <select value={weatherFeature} onChange={e => setWeatherFeature(e.target.value)}
-            style={{ background: C.surface, border: `1px solid var(--outline)`, color: C.text, fontSize: 11, padding: '5px 12px', borderRadius: 8, fontFamily: 'inherit', cursor: 'pointer' }}>
-            {WEATHER_FEATURES.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12 }}>
-          {[{ label: 'Normal Overlay', val: showNormal, set: setShowNormal }, { label: 'Load Overlay', val: showLoad, set: setShowLoad }].map((t, i) => (
-            <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: C.muted, cursor: 'pointer' }}>
-              <div onClick={() => t.set(!t.val)} style={{ width: 34, height: 18, borderRadius: 9, background: t.val ? C.accent : 'var(--outline)', transition: 'background 0.2s', position: 'relative', cursor: 'pointer' }}>
-                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: t.val ? 18 : 2, transition: 'left 0.2s' }} />
-              </div>
-              {t.label}
-            </label>
-          ))}
-        </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          {computed.regime && (
-            <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 12px', borderRadius: 20, background: `${computed.regime.color}18`, color: computed.regime.color, border: `1px solid ${computed.regime.color}33` }}>
-              {computed.regime.name}
-            </span>
-          )}
-          <span style={{ fontSize: 10, color: C.muted }}>{effectiveDate} • {selectedRegion || 'ODISHA'}</span>
-        </div>
-      </div>
+    <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.text, minHeight: 0, height: '100%', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 14, padding: '10px 16px 14px' }}>
 
       {/* ═══ TOP METRICS ═══ */}
-      <div style={{ padding: '16px 20px', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
         <MetricCard label="Avg Temperature" value={fmt(computed.avgTemp)} unit="°C" color={C._accent}
           delta={dodMaxTemp?.change} sub={`Range: ${fmt(computed.minTemp)} – ${fmt(computed.maxTemp)}°C`} />
         <MetricCard label="Avg Humidity" value={`${fmt(computed.avgHum, 0)}`} unit="%" color={C._cyan}
@@ -699,70 +702,104 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
       </div>
 
       {/* ═══ MAIN CHART AREA ═══ */}
-      {/* ─── Chart tab bar (floating, outside section) ─── */}
-      <div style={{ display: 'inline-flex', gap: 3, padding: '4px 6px', background: '#1A191E', border: '1px solid #2A292F', borderRadius: 999, margin: '4px 16px 4px' }}>
-        {CHART_TABS.map(t => (
-          <button key={t.id} onClick={() => setChartTab(t.id)}
-            style={{
-              flex: '0 0 auto', padding: '6px 14px', border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: 0.5,
-              borderRadius: 999,
-              background: chartTab === t.id ? '#F0782518' : 'transparent',
-              color: chartTab === t.id ? '#F07825' : C.muted,
-              transition: 'all 0.15s',
-            }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <div style={{ background: C.card, borderRadius: 18, border: `1px solid var(--outline)`, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 16px 12px', borderBottom: `1px solid var(--outline)` }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C.muted }}>Feature</span>
+              <select value={weatherFeature} onChange={e => setWeatherFeature(e.target.value)}
+                style={{ background: C.surface, border: `1px solid var(--outline)`, color: C.text, fontSize: 11, padding: '6px 12px', borderRadius: 999, fontFamily: 'inherit', cursor: 'pointer' }}>
+                {WEATHER_FEATURES.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+              </select>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>Detail Panels</span>
-        <button onClick={() => setActivePanel('attribution')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: `${C._accent}10`, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Open MW Attribution
-        </button>
-        <button onClick={() => setActivePanel('peak')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Open Peak Stress
-        </button>
-        <button onClick={() => setActivePanel('rain')} style={{ fontSize: 10, fontWeight: 600, padding: '6px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Open Rain & Cloud
-        </button>
-      </div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                {[{ label: 'Normal Overlay', val: showNormal, set: setShowNormal }, { label: 'Load Overlay', val: showLoad, set: setShowLoad }].map((t, i) => (
+                  <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: C.muted, cursor: 'pointer' }}>
+                    <div onClick={() => t.set(!t.val)} style={{ width: 34, height: 18, borderRadius: 9, background: t.val ? C.accent : 'var(--outline)', transition: 'background 0.2s', position: 'relative', cursor: 'pointer' }}>
+                      <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: t.val ? 18 : 2, transition: 'left 0.2s' }} />
+                    </div>
+                    {t.label}
+                  </label>
+                ))}
+              </div>
+            </div>
 
-      <Section title="Weather Analysis Charts">
-        <div style={{ background: C.surface, borderRadius: 12, border: `1px solid var(--outline)`, overflow: 'hidden' }}>
-          {/* Date selector for Multi-Day Compare */}
-          {chartTab === 'dod' && (
-            <div style={{ padding: '8px 14px', borderBottom: `1px solid var(--outline)`, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>Add Date:</span>
-              <input
-                type="date"
-                onChange={(e) => { addDodDate(e.target.value); e.target.value = ''; }}
-                style={{ background: C._surface, border: `1px solid ${C._border}`, color: C._text, fontSize: 11, padding: '4px 10px', borderRadius: 6, fontFamily: 'inherit', cursor: 'pointer' }}
-              />
-              {dodLoading && <span style={{ fontSize: 10, color: C._accent }}>Loading...</span>}
-              {/* Current date pill */}
-              <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: `${C._accent}20`, color: C._accent, border: `1px solid ${C._accent}33` }}>
-                {effectiveDate || 'Current'} (primary)
-              </span>
-              {/* Comparison date pills */}
-              {dodDates.map(d => (
-                <span key={d} style={{ fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: `${C._accent2}15`, color: C._accent2, border: `1px solid ${C._accent2}33`, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {d}
-                  {!dodDateData[d] && <span style={{ color: C._warn, fontSize: 9 }}>(loading)</span>}
-                  <button onClick={() => removeDodDate(d)} style={{ background: 'none', border: 'none', color: C._red, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {computed.regime && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: `${computed.regime.color}18`, color: computed.regime.color, border: `1px solid ${computed.regime.color}33` }}>
+                  {computed.regime.name}
                 </span>
-              ))}
-              {dodDates.length > 0 && (
-                <button onClick={() => { setDodDates([]); }} style={{ fontSize: 9, background: 'transparent', border: `1px solid ${C._border}`, color: C._muted, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit' }}>Clear All</button>
+              )}
+              <span style={{ fontSize: 10, color: C.muted }}>{effectiveDate} • {selectedRegion || 'ODISHA'}</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0, flex: '1 1 520px' }}>
+              <div style={{ display: 'inline-flex', gap: 3, padding: '5px', background: '#1A191E', border: '1px solid #2A292F', borderRadius: 999, flexWrap: 'wrap' }}>
+                {CHART_TABS.map(t => (
+                  <button key={t.id} onClick={() => setChartTab(t.id)}
+                    style={{
+                      flex: '0 0 auto', padding: '7px 14px', border: 'none', cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: 0.5,
+                      borderRadius: 999,
+                      background: chartTab === t.id ? '#F0782518' : 'transparent',
+                      color: chartTab === t.id ? '#F07825' : C.muted,
+                      transition: 'all 0.15s',
+                    }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {chartTab === 'dod' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                  <input
+                    type="date"
+                    onChange={(e) => { addDodDate(e.target.value); e.target.value = ''; }}
+                    style={{ background: C._surface, border: `1px solid ${C._border}`, color: C._text, fontSize: 11, padding: '8px 12px', borderRadius: 999, fontFamily: 'inherit', cursor: 'pointer' }}
+                  />
+                  {dodLoading && <span style={{ fontSize: 10, color: C._accent }}>Loading...</span>}
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '5px 10px', borderRadius: 20, background: `${C._accent}20`, color: C._accent, border: `1px solid ${C._accent}33` }}>
+                    {effectiveDate || 'Current'} (primary)
+                  </span>
+                  {dodDates.map(d => (
+                    <span key={d} style={{ fontSize: 10, fontWeight: 600, padding: '5px 10px', borderRadius: 20, background: `${C._accent2}15`, color: C._accent2, border: `1px solid ${C._accent2}33`, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {d}
+                      {!dodDateData[d] && <span style={{ color: C._warn, fontSize: 9 }}>(loading)</span>}
+                      <button onClick={() => removeDodDate(d)} style={{ background: 'none', border: 'none', color: C._red, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
+                    </span>
+                  ))}
+                  {dodDates.length > 0 && (
+                    <button onClick={() => { setDodDates([]); }} style={{ fontSize: 9, background: 'transparent', border: `1px solid ${C._border}`, color: C._muted, padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit' }}>Clear All</button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-          <div style={{ padding: 8 }}>
-            <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: 420, width: '100%' }} notMerge={true} />
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>Detail Panels</span>
+              <button onClick={() => setActivePanel('attribution')} style={{ fontSize: 10, fontWeight: 600, padding: '7px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: `${C._accent}10`, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Open MW Attribution
+              </button>
+              <button onClick={() => setActivePanel('peak')} style={{ fontSize: 10, fontWeight: 600, padding: '7px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Open Peak Stress
+              </button>
+              <button onClick={() => setActivePanel('rain')} style={{ fontSize: 10, fontWeight: 600, padding: '7px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Open Rain & Cloud
+              </button>
+            </div>
           </div>
         </div>
-      </Section>
+
+        <div style={{ padding: '10px 12px 16px', background: 'linear-gradient(180deg, rgba(32, 31, 37, 0.96), rgba(26, 25, 30, 0.96))', flex: 1, minHeight: 0, display: 'flex' }}>
+          <div style={{ background: 'rgba(36, 35, 42, 0.9)', border: `1px solid ${C._border}`, borderRadius: 14, padding: '10px 10px 18px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)', display: 'flex', flex: 1, minHeight: 0 }}>
+            <div style={{ height: '100%', width: '100%', minHeight: 320 }}>
+              <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: '100%', width: '100%' }} notMerge={true} />
+            </div>
+          </div>
+        </div>
+      </div>
 
       <DetailOverlay open={activePanel === 'attribution'} title="MW Attribution & Adjustment" subtitle="Moved into a detail panel to preserve the single-screen weather layout" onClose={() => setActivePanel(null)}>
         {attributionPanel}

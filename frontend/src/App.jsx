@@ -8,6 +8,8 @@ import AnalysisPage from './features/analysis/AnalysisPage';
 import WeatherAnalysisPanel from './components/WeatherAnalysis/WeatherAnalysisPanel';
 import WeatherDeepPage from './features/weather/WeatherDeepPage';
 import LoadAnalysisPage from './features/load/LoadAnalysisPage';
+import OptimizerPage from './features/optimizer/OptimizerPage';
+import SettingsPage from './features/settings/SettingsPage';
 import CommandStrip from './components/CommandStrip';
 import AlertRibbon from './components/AlertRibbon';
 import WeatherStrip from './components/WeatherStrip';
@@ -1120,7 +1122,7 @@ export default function App() {
       const pre = preRes.data;
       if (pre.dayahead && !pre.dayahead.error) setDayAhead(pre.dayahead);
       if (pre.benchmarks && !pre.benchmarks.error) setBenchmarkData(pre.benchmarks);
-      if (pre.momentum && !pre.momentum.error) setMomentumChange(pre.momentum.data || pre.momentum);
+      if (pre.momentum && !pre.momentum.error) setMomentumChange(pre.momentum);
       if (pre.analysis && !pre.analysis.error) setAnalysis(pre.analysis);
     } catch (e) {
       console.error('Initialize failed:', e);
@@ -2525,430 +2527,27 @@ export default function App() {
 
       {
         active === 'weather_analysis' && (
-          <main className="page page-full weather-page">
-            <WeatherDeepPage
-              effectiveDate={effectiveDate}
-              dayAheadData={dayAhead}
-              dayAheadSeries={dayAheadSeries}
-              liveData={live}
-              selectedRegion={selectedRegion}
-            />
-          </main>
+          <WeatherDeepPage
+            effectiveDate={effectiveDate}
+            dayAheadData={dayAhead}
+            dayAheadSeries={dayAheadSeries}
+            liveData={live}
+            selectedRegion={selectedRegion}
+          />
         )
       }
 
-      {
-        active === 'optimizer' && (
-          <>
-          <div className="decision-tabs optimizer-tabs">
-            {OPTIMIZER_TABS.map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.key}
-                  className={`tab-btn ${optimizerTab === tab.key ? 'active' : ''}`}
-                  onClick={() => setOptimizerTab(tab.key)}
-                >
-                  <Icon size={16} />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <main className="page page-full">
-            {optimizerTab === 'window' && (
-              <>
-                {/* Decision Metrics — Window Selection */}
-                {(() => {
-                  const bestRow = baselineWindowMapes.length > 0
-                    ? [...baselineWindowMapes].sort((a, b) => Number(a.baseline_mape) - Number(b.baseline_mape))[0]
-                    : null;
-                  const bestWindow = bestRow ? Number(bestRow.window_days) : null;
-                  const bestMape = bestRow ? Number(bestRow.baseline_mape) : null;
-                  const currentMape = dayAhead?.metadata?.selected_window_baseline_mape;
-                  const mapeGap = (currentMape != null && bestMape != null) ? (Number(currentMape) - bestMape) : null;
-                  const stabilitySpread = optimizerStability ? (optimizerStability.max - optimizerStability.min) : null;
-                  const isStable = stabilitySpread != null && stabilitySpread < 1.0;
-                  const windowAction = mapeGap != null && mapeGap > 0.3
-                    ? `Switch to ${bestWindow}D window to save ${fmt(mapeGap)}% MAPE`
-                    : 'Current window is near-optimal';
-                  return (
-                    <div className="metric-grid cols-5" style={{padding: '0 0 8px'}}>
-                      <div className="metric-card">
-                        <div className="metric-label">Best Window</div>
-                        <div className="metric-value" style={{color: 'var(--accent)'}}>{bestWindow ?? '--'}<span className="unit">D</span></div>
-                        <div className="metric-sub">MAPE {bestMape != null ? fmt(bestMape) + '%' : '--'}</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Current Window</div>
-                        <div className="metric-value">{baselineDays}<span className="unit">D</span></div>
-                        <div className="metric-sub">MAPE {currentMape != null ? fmt(currentMape) + '%' : '--'}</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">MAPE Gap</div>
-                        <div className="metric-value" style={{color: mapeGap != null && mapeGap > 0.3 ? 'var(--danger)' : 'var(--accent)'}}>{mapeGap != null ? (mapeGap > 0 ? '+' : '') + fmt(mapeGap) + '%' : '--'}</div>
-                        <div className="metric-sub">vs best window</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Stability</div>
-                        <div className="metric-value" style={{color: isStable ? 'var(--accent)' : 'var(--warning)'}}>{stabilitySpread != null ? fmt(stabilitySpread) + '%' : '--'}</div>
-                        <div className="metric-sub">{isStable ? 'Stable across windows' : 'Sensitive to window'}</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Action</div>
-                        <div className="metric-sub" style={{fontSize: 12, fontWeight: 600, color: 'var(--text)', marginTop: 6}}>{windowAction}</div>
-                      </div>
-                    </div>
-                  );
-                })()}
-                <div className="grid-stacked optimizer-window-section">
-                  <div className="panel chart-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h3>Accuracy Curve</h3>
-                        <span>MAPE vs. window length (best window highlighted)</span>
-                      </div>
-                    </div>
-                    {optimizerAccuracyOption
-                      ? (
-                        <div className="chart-body chart-body--compact optimizer-accuracy">
-                          <ReactECharts option={optimizerAccuracyOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                        </div>
-                      )
-                      : <div className="chart-empty">No accuracy history available.</div>}
-                  </div>
-
-                  <div className="optimizer-window-side" style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px'}}>
-                    <div className="panel">
-                      <div className="panel-header">
-                        <div>
-                          <h3>Stability Band</h3>
-                          <span>Interquartile MAPE range across windows</span>
-                        </div>
-                      </div>
-                      {optimizerStability ? (() => {
-                        const span = Math.max(optimizerStability.max - optimizerStability.min, 1e-6);
-                        const left = ((optimizerStability.q1 - optimizerStability.min) / span) * 100;
-                        const width = ((optimizerStability.q3 - optimizerStability.q1) / span) * 100;
-                        const median = ((optimizerStability.median - optimizerStability.min) / span) * 100;
-                        return (
-                          <div className="stability-band">
-                            <div className="stability-track">
-                              <div className="stability-range" style={{ left: `${left}%`, width: `${width}%` }} />
-                              <div className="stability-marker" style={{ left: `${median}%` }} />
-                            </div>
-                            <div className="stability-labels">
-                              <span>Min <strong>{fmt(optimizerStability.min)}%</strong></span>
-                              <span>Median <strong>{fmt(optimizerStability.median)}%</strong></span>
-                              <span>Max <strong>{fmt(optimizerStability.max)}%</strong></span>
-                            </div>
-                          </div>
-                        );
-                      })() : <div className="chart-empty">No stability data available.</div>}
-                    </div>
-
-                    <div className="kpi-card baseline-window-card optimizer-baseline-card">
-                      <div className="kpi-title">BASELINE WINDOW (MAPE OPTIMIZED)</div>
-                      <div className="flex gap-4 items-center">
-                        <input
-                          type="range"
-                          min="1"
-                          max="30"
-                          className="flex-1"
-                          value={baselineDays}
-                          onChange={(e) => setBaselineDays(Number(e.target.value))}
-                        />
-                        <span className="text-xl font-bold">{baselineDays} Days</span>
-                      </div>
-                      <div className="kpi-subtitle mt-2">
-                        {dayAhead?.metadata?.selected_window_baseline_mape != null
-                          ? `Current Window Baseline MAPE: ${fmt(dayAhead.metadata.selected_window_baseline_mape)}%`
-                          : 'Select window to evaluate metrics'}
-                      </div>
-
-                      <div className="calendar-options mt-6">
-                        {baselineWindowMapes.map((row) => {
-                          const windowDays = Number(row.window_days);
-                          const windowLabel = Number.isFinite(windowDays) ? windowDays : row.window_days;
-                          return (
-                            <button
-                              key={`bw-${row.window_days}`}
-                              type="button"
-                              className={`calendar-pill ${baselineDays === windowDays ? 'active' : ''}`}
-                              onClick={() => {
-                                if (Number.isFinite(windowDays)) setBaselineDays(windowDays);
-                              }}
-                              title={`Select ${windowLabel}-day window`}
-                            >
-                              {windowLabel}D • {fmt(row.baseline_mape)}%
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {optimizerTab === 'pattern' && (
-              <>
-              {/* Decision Metrics — Pattern Fit */}
-              {(() => {
-                const residuals = optimizerResiduals.filter(Number.isFinite);
-                const stats = optimizerResidualStats;
-                const actual = dayAheadSeries?.actual || [];
-                const baseline = dayAheadSeries?.baseline || [];
-                const forecast = dayAheadSeries?.forecast || [];
-
-                // Bias direction
-                const bias = stats?.mean ?? 0;
-                const biasDir = bias > 10 ? 'Under-forecasting' : bias < -10 ? 'Over-forecasting' : 'Well-centered';
-
-                // Worst time window
-                const windows = [
-                  { name: 'Morning (5-10h)', s: 20, e: 40 },
-                  { name: 'Midday (10-17h)', s: 40, e: 68 },
-                  { name: 'Evening (17-23h)', s: 68, e: 92 },
-                  { name: 'Night (23-5h)', s: 92, e: 20 },
-                ];
-                let worstWindow = '--', worstMAE = 0;
-                windows.forEach(w => {
-                  let blocks;
-                  if (w.s < w.e) {
-                    blocks = residuals.slice(w.s, w.e);
-                  } else {
-                    blocks = [...residuals.slice(w.s), ...residuals.slice(0, w.e)];
-                  }
-                  const mae = blocks.length > 0 ? blocks.reduce((s, v) => s + Math.abs(v), 0) / blocks.length : 0;
-                  if (mae > worstMAE) { worstMAE = mae; worstWindow = w.name; }
-                });
-
-                // Ramp alignment
-                const ramp = optimizerRampSeries;
-                let rampMAE = 0;
-                if (ramp?.rampError) {
-                  const validRamp = ramp.rampError.filter(Number.isFinite);
-                  rampMAE = validRamp.length > 0 ? validRamp.reduce((s, v) => s + Math.abs(v), 0) / validRamp.length : 0;
-                }
-
-                // Peak timing error
-                const peakErr = optimizerPeakError;
-                const peakTimingOff = optimizerPeakMarkers?.actual && optimizerPeakMarkers?.baseline
-                  ? Math.abs(optimizerPeakMarkers.actual.block - optimizerPeakMarkers.baseline.block)
-                  : null;
-
-                return (
-                  <div className="metric-grid cols-5" style={{padding: '0 0 8px'}}>
-                    <div className="metric-card">
-                      <div className="metric-label">Residual MAE</div>
-                      <div className="metric-value" style={{color: 'var(--accent)'}}>{stats ? fmt(stats.mae) : '--'} <span className="unit">MW</span></div>
-                      <div className="metric-sub">Avg |actual - baseline|</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-label">Bias Direction</div>
-                      <div className="metric-value" style={{fontSize: 16, color: Math.abs(bias) > 10 ? 'var(--warning)' : 'var(--accent)'}}>{biasDir}</div>
-                      <div className="metric-sub">Mean residual {bias > 0 ? '+' : ''}{fmt(bias)} MW</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-label">Worst Window</div>
-                      <div className="metric-value" style={{fontSize: 16, color: 'var(--danger)'}}>{worstWindow}</div>
-                      <div className="metric-sub">MAE {fmt(worstMAE)} MW</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-label">Ramp Alignment</div>
-                      <div className="metric-value" style={{color: rampMAE > 20 ? 'var(--danger)' : 'var(--accent)'}}>{fmt(rampMAE)} <span className="unit">MW</span></div>
-                      <div className="metric-sub">Avg ramp mismatch/blk</div>
-                    </div>
-                    <div className="metric-card">
-                      <div className="metric-label">Peak Timing</div>
-                      <div className="metric-value" style={{color: peakTimingOff != null && peakTimingOff > 4 ? 'var(--danger)' : 'var(--accent)'}}>{peakTimingOff != null ? peakTimingOff : '--'} <span className="unit">blks</span></div>
-                      <div className="metric-sub">{peakErr ? `${fmt(peakErr.errorMw)} MW gap at peak` : 'Peak block offset'}</div>
-                    </div>
-                  </div>
-                );
-              })()}
-              <div className="grid-stacked">
-                <div className="panel chart-panel">
-                  <div className="panel-header">
-                    <div>
-                      <h3>Pattern Fit</h3>
-                      <span>Actual vs. evaluated baseline with residual bands</span>
-                    </div>
-                    <div className="chip-group">
-                      <span className="chip baseline">Baseline</span>
-                      <span className="chip actual">Actual</span>
-                    </div>
-                  </div>
-                  <LoadChart
-                    blocks={dayAheadSeries?.blocks || []}
-                    baseline={dayAheadSeries?.baseline || []}
-                    actual={dayAheadSeries?.actual || []}
-                    showForecast={false}
-                    dateLabel={dayAhead?.metadata?.effective_date || date || ''}
-                    peakMarkers={optimizerPeakMarkers}
-                    residuals={optimizerResiduals}
-                    residualThreshold={optimizerResidualThreshold}
-                  />
-                </div>
-
-                <div className="panel chart-panel">
-                  <div className="panel-header">
-                    <div>
-                      <h3>Ramp Slope Comparison</h3>
-                      <span>Block-to-block ramp alignment (MW/15min)</span>
-                    </div>
-                  </div>
-                  {optimizerRampComparisonOption
-                    ? (
-                      <div className="chart-body chart-body--compact">
-                        <ReactECharts option={optimizerRampComparisonOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                      </div>
-                    )
-                    : <div className="chart-empty">No ramp data available.</div>}
-                </div>
-              </div>
-              </>
-            )}
-
-            {optimizerTab === 'errors' && (
-              <>
-                {/* Decision Metrics — Error Diagnostics */}
-                {(() => {
-                  const stats = optimizerResidualStats;
-                  const residuals = optimizerResiduals.filter(Number.isFinite);
-                  const peakErr = optimizerPeakError;
-
-                  // Outlier blocks (> 2 std)
-                  const threshold2std = stats ? stats.std * 2 : Infinity;
-                  const outlierCount = residuals.filter(r => Math.abs(r) > threshold2std).length;
-                  const outlierPct = residuals.length > 0 ? (outlierCount / residuals.length) * 100 : 0;
-
-                  // Systematic bias blocks (consecutive same-sign residuals > 8 blocks = 2 hours)
-                  let maxConsec = 0, curConsec = 0, lastSign = 0;
-                  residuals.forEach(r => {
-                    const s = r > 0 ? 1 : -1;
-                    if (s === lastSign) { curConsec++; } else { curConsec = 1; lastSign = s; }
-                    if (curConsec > maxConsec) maxConsec = curConsec;
-                  });
-                  const hasSystematicBias = maxConsec >= 8;
-
-                  // Error concentration — morning vs evening
-                  const morningErr = residuals.slice(20, 40);
-                  const eveningErr = residuals.slice(68, 92);
-                  const morningMAE = morningErr.length > 0 ? morningErr.reduce((s, v) => s + Math.abs(v), 0) / morningErr.length : 0;
-                  const eveningMAE = eveningErr.length > 0 ? eveningErr.reduce((s, v) => s + Math.abs(v), 0) / eveningErr.length : 0;
-                  const errorConc = morningMAE > eveningMAE ? 'Morning ramp' : 'Evening peak';
-
-                  // Overall error grade
-                  const mape = dayAhead?.kpis?.mape;
-                  const grade = mape != null ? (mape < 1.5 ? 'A' : mape < 3 ? 'B' : mape < 5 ? 'C' : 'D') : '--';
-                  const gradeColor = grade === 'A' ? 'text-[var(--accent)]' : grade === 'B' ? 'text-[var(--warning)]' : 'text-[var(--danger)]';
-
-                  return (
-                    <div className="metric-grid cols-5" style={{padding: '0 0 8px'}}>
-                      <div className="metric-card">
-                        <div className="metric-label">Error Grade</div>
-                        <div className="metric-value" style={{fontSize: 28, color: grade === 'A' ? 'var(--accent)' : grade === 'B' ? 'var(--warning)' : 'var(--danger)'}}>{grade}</div>
-                        <div className="metric-sub">MAPE {mape != null ? fmt(mape) + '%' : '--'}</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">MAE / Std</div>
-                        <div className="metric-value" style={{fontSize: 18}}>{stats ? fmt(stats.mae) : '--'} / {stats ? fmt(stats.std) : '--'}</div>
-                        <div className="metric-sub">MW mean abs / spread</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Outlier Blocks</div>
-                        <div className="metric-value" style={{color: outlierPct > 5 ? 'var(--danger)' : 'var(--accent)'}}>{outlierCount} <span className="unit">({fmt(outlierPct)}%)</span></div>
-                        <div className="metric-sub">&gt;2σ threshold</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Systematic Bias</div>
-                        <div className="metric-value" style={{fontSize: 14, color: hasSystematicBias ? 'var(--danger)' : 'var(--accent)'}}>{hasSystematicBias ? `${maxConsec} consecutive blocks` : 'None detected'}</div>
-                        <div className="metric-sub">Same-sign run ≥2hrs</div>
-                      </div>
-                      <div className="metric-card">
-                        <div className="metric-label">Error Hotspot</div>
-                        <div className="metric-value" style={{fontSize: 14, color: 'var(--warning)'}}>{errorConc}</div>
-                        <div className="metric-sub">AM {fmt(morningMAE)} / PM {fmt(eveningMAE)} MW</div>
-                      </div>
-                    </div>
-                  );
-                })()}
-                <div className="grid-two">
-                  <div className="panel chart-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h3>Residual Histogram</h3>
-                        <span>{optimizerResidualStats ? `MAE ${fmt(optimizerResidualStats.mae)} MW` : 'Distribution of baseline residuals'}</span>
-                      </div>
-                    </div>
-                    {optimizerResidualHistogramOption
-                      ? (
-                        <div className="chart-body chart-body--compact">
-                          <ReactECharts option={optimizerResidualHistogramOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                        </div>
-                      )
-                      : <div className="chart-empty">No residuals available.</div>}
-                  </div>
-
-                  <div className="panel chart-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h3>Block-wise Error Heatmap</h3>
-                        <span>Absolute error intensity by block</span>
-                      </div>
-                    </div>
-                    {optimizerErrorHeatmapOption
-                      ? (
-                        <div className="chart-body chart-body--compact">
-                          <ReactECharts option={optimizerErrorHeatmapOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                        </div>
-                      )
-                      : <div className="chart-empty">No error heatmap available.</div>}
-                  </div>
-                </div>
-
-                <div className="grid-two">
-                  <div className="panel chart-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h3>Peak MW Error Bar</h3>
-                        <span>{optimizerPeakError ? `Peak Block ${optimizerPeakError.block} • Error ${fmt(optimizerPeakError.errorMw)} MW` : 'Peak alignment gap'}</span>
-                      </div>
-                    </div>
-                    {optimizerPeakErrorOption
-                      ? (
-                        <div className="chart-body chart-body--compact">
-                          <ReactECharts option={optimizerPeakErrorOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                        </div>
-                      )
-                      : <div className="chart-empty">No peak error data.</div>}
-                  </div>
-
-                  <div className="panel chart-panel">
-                    <div className="panel-header">
-                      <div>
-                        <h3>Ramp Error Index</h3>
-                        <span>Absolute ramp mismatch by block</span>
-                      </div>
-                    </div>
-                    {optimizerRampErrorOption
-                      ? (
-                        <div className="chart-body chart-body--compact">
-                          <ReactECharts option={optimizerRampErrorOption} className="chart-fit" style={{ height: '100%', width: '100%' }} />
-                        </div>
-                      )
-                      : <div className="chart-empty">No ramp error data.</div>}
-                  </div>
-                </div>
-              </>
-            )}
-          </main>
-          </>
-        )
-      }
+      {active === 'optimizer' && (
+        <OptimizerPage
+          dayAheadData={dayAhead}
+          dayAheadSeries={dayAheadSeries}
+          baselineWindowMapes={baselineWindowMapes}
+          baselineDays={baselineDays}
+          setBaselineDays={setBaselineDays}
+          availableActualBlocks={availableActualBlocks}
+          effectiveDate={effectiveDate}
+        />
+      )}
 
       {active === 'simulator' && <SimulatorPage requestedDate={effectiveDate} baselineDays={baselineDays} />}
 
@@ -3115,59 +2714,15 @@ export default function App() {
 
       {
         active === 'settings' && (
-          <main className="page page-full">
-            <section className="hero">
-              <div>
-                <h1>Settings</h1>
-                <p>Configure alert thresholds and model preferences.</p>
-              </div>
-            </section>
-            <section className="panel">
-              <div className="settings-grid">
-                <div>
-                  <h4>Alert Thresholds</h4>
-                  <div className="setting-line">
-                    <span>Variance Warning</span>
-                    <strong>{settings?.alert_thresholds?.warning_pct || 5}%</strong>
-                  </div>
-                  <div className="setting-line">
-                    <span>Variance Critical</span>
-                    <strong>{settings?.alert_thresholds?.critical_pct || 10}%</strong>
-                  </div>
-                </div>
-                <div>
-                  <h4>Baseline Preferences</h4>
-                  <div className="setting-line">
-                    <span>Default Window</span>
-                    <strong>{settings?.baseline_defaults?.window_days || baselineDays} days</strong>
-                  </div>
-                  <div className="setting-line">
-                    <span>Weather Similarity</span>
-                    <strong>{settings?.baseline_defaults?.weather_similarity ? 'Enabled' : 'Disabled'}</strong>
-                  </div>
-                </div>
-                <div>
-                  <h4>Tariffs</h4>
-                  <div className="setting-line">
-                    <span>Energy Price (per MWh)</span>
-                    <strong>{settings?.tariffs?.energy_price_per_mwh || 0}</strong>
-                  </div>
-                  <div className="setting-line">
-                    <span>Capacity Price (per MW)</span>
-                    <strong>{settings?.tariffs?.capacity_price_per_mw || 0}</strong>
-                  </div>
-                  <div className="setting-line">
-                    <span>Ancillary Price (per MW)</span>
-                    <strong>{settings?.tariffs?.ancillary_price_per_mw || 0}</strong>
-                  </div>
-                  <div className="setting-line">
-                    <span>Fuel Price (per MW)</span>
-                    <strong>{settings?.tariffs?.fuel_price_per_mw || 0}</strong>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </main>
+          <SettingsPage
+            settings={settings}
+            config={config}
+            effectiveDate={effectiveDate}
+            selectedRegion={selectedRegion}
+            baselineDays={baselineDays}
+            availableRegions={availableRegions}
+            apiBaseUrl={API_BASE}
+          />
         )
       }
       {/* Weather Strip & Forecast Table now inside ForecastPage */}

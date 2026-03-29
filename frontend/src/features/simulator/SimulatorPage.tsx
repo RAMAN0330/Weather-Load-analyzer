@@ -5,7 +5,6 @@ import { ScenarioCompareModal } from "./components/ScenarioCompareModal";
 import { BlockGridEditorModal } from "./components/BlockGridEditorModal";
 import { useSimulatorStore } from "./store";
 import { loadSimulatorDateOptionsApi } from "./simulatorDataService";
-import { blockTimeLabel } from "./utils";
 
 type Props = {
   requestedDate?: string;
@@ -19,18 +18,163 @@ const SIMULATOR_TABS = [
 
 type SimulatorTabId = typeof SIMULATOR_TABS[number]["id"];
 
+const S = {
+  page: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "#ECEEF3",
+    minHeight: 0,
+    height: "100%",
+    overflowX: "hidden" as const,
+    overflowY: "auto" as const,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 14,
+    padding: "8px 0 16px",
+  },
+  kpiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+    padding: "0 16px",
+  },
+  kpiCard: {
+    minHeight: 132,
+    padding: "16px 18px",
+    background: "linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))",
+    borderRadius: 14,
+    border: "1px solid #2A292F",
+    display: "flex",
+    flexDirection: "column" as const,
+    justifyContent: "space-between" as const,
+    gap: 8,
+    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.18)",
+  },
+  kpiLabel: {
+    fontSize: 9,
+    textTransform: "uppercase" as const,
+    letterSpacing: 1.5,
+    color: "#6B7186",
+  },
+  kpiValue: (color = "#ECEEF3") => ({
+    fontSize: 30,
+    lineHeight: 1.05,
+    fontWeight: 700,
+    color,
+  }),
+  kpiUnit: {
+    fontSize: 11,
+    fontWeight: 400,
+    opacity: 0.5,
+  },
+  kpiSub: {
+    fontSize: 10,
+    color: "#6B7186",
+    lineHeight: 1.45,
+  },
+  card: {
+    background: "linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))",
+    borderRadius: 16,
+    border: "1px solid #2A292F",
+    overflow: "hidden" as const,
+    display: "flex",
+    flexDirection: "column" as const,
+    boxShadow: "0 18px 40px rgba(0, 0, 0, 0.18)",
+  },
+  cardTitle: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 1.2,
+    color: "#A0A5B8",
+    textTransform: "uppercase" as const,
+  },
+  workspace: {
+    ...{
+      background: "linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))",
+      borderRadius: 16,
+      border: "1px solid #2A292F",
+      overflow: "visible" as const,
+      display: "flex",
+      flexDirection: "column" as const,
+      boxShadow: "0 18px 40px rgba(0, 0, 0, 0.18)",
+    },
+    margin: "0 16px",
+  },
+  tabBar: {
+    display: "inline-flex",
+    gap: 4,
+    padding: 5,
+    background: "#141419",
+    border: "1px solid #2A292F",
+    borderRadius: 999,
+    flexWrap: "wrap" as const,
+  },
+  tab: (active: boolean) => ({
+    padding: "8px 16px",
+    fontSize: 10,
+    fontWeight: 600,
+    borderRadius: 999,
+    border: "1px solid transparent",
+    background: active ? "rgba(240, 120, 37, 0.14)" : "transparent",
+    color: active ? "#F07825" : "#A0A5B8",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  }),
+  actionBtn: {
+    fontSize: 10,
+    fontWeight: 700,
+    padding: "8px 14px",
+    borderRadius: 999,
+    border: "1px solid #2A292F",
+    background: "#1A191E",
+    color: "#ECEEF3",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  miniBadge: (color: string) => ({
+    fontSize: 9,
+    fontWeight: 700,
+    padding: "4px 10px",
+    borderRadius: 999,
+    background: `${color}18`,
+    color,
+    border: `1px solid ${color}33`,
+  }),
+};
+
+const KpiCard = ({
+  label,
+  value,
+  unit,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: React.ReactNode;
+  unit?: string;
+  sub: string;
+  tone?: string;
+}) => (
+  <div style={S.kpiCard}>
+    <div style={S.kpiLabel}>{label}</div>
+    <div>
+      <span style={S.kpiValue(tone)}>{value}</span>
+      {unit ? <span style={S.kpiUnit}> {unit}</span> : null}
+    </div>
+    <div style={S.kpiSub}>{sub}</div>
+  </div>
+);
+
 export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7 }) => {
   const comparePayload = useSimulatorStore((s) => s.comparePayload);
   const closeCompare = useSimulatorStore((s) => s.closeCompare);
   const loadFromFileData = useSimulatorStore((s) => s.loadFromFileData);
   const blocks = useSimulatorStore((s) => s.blocks);
   const selectedBlocks = useSimulatorStore((s) => s.selectedBlocks);
-  const weightsSource = useSimulatorStore((s) => s.weightsSource);
-  const partialDayBiasCorrection = useSimulatorStore((s) => s.partialDayBiasCorrection);
   const dataDate = useSimulatorStore((s) => s.dataDate);
   const weatherDeltasByBlock = useSimulatorStore((s) => s.weatherDeltasByBlock);
   const [gridOpen, setGridOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<SimulatorTabId>("simulation");
+  const [overlayPanel, setOverlayPanel] = useState<string | null>(null);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
   const [calendarDraftDate, setCalendarDraftDate] = useState("");
   const [dateOptions, setDateOptions] = useState<string[]>([]);
@@ -223,89 +367,222 @@ export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7
       wind: round2(wind / n),
     };
   }, [selectedBlocks, scopeBlocks, weatherDeltasByBlock]);
+
+  const exogInsight = useMemo(() => {
+    if (!selected.length) return { weatherTotal: 0, weightConfidence: 0 };
+    const n = Math.max(1, selected.length);
+    const weatherTotal = selected.reduce(
+      (sum, block) => sum + Number(block.exog?.weather_total_pct ?? block.drivers.weather_pct ?? 0),
+      0
+    ) / n;
+    const weightConfidence = selected.reduce(
+      (sum, block) => sum + Number(block.exog?.weight_confidence || 0),
+      0
+    ) / n;
+    const round3 = (value: number) => Math.round((Number(value) || 0) * 1000) / 1000;
+    return {
+      weatherTotal: round3(weatherTotal),
+      weightConfidence: round3(weightConfidence),
+    };
+  }, [selected]);
+
+  const selectionCount = selectedBlocks.length || blocks.length;
+  const peakDeltaMw = Math.abs(netSummary.peakFinal.value - netSummary.peakBaseline.value);
+  const peakShiftBlocks = netSummary.peakFinal.block && netSummary.peakBaseline.block
+    ? netSummary.peakFinal.block - netSummary.peakBaseline.block
+    : 0;
+  const confidencePct = exogInsight.weightConfidence * 100;
+  const weatherTone = exogInsight.weatherTotal >= 0 ? "#F07825" : "#5B9FE4";
+  const weatherSignalLabel = exogInsight.weatherTotal >= 0 ? "Weather Uplift" : "Weather Drag";
+  const simulatorActionButtons = activeTab === "simulation"
+    ? [
+        { id: "adjustments", label: "Open Weather Adjustments" },
+        { id: "scenarios", label: "Open Quick Scenarios" },
+        { id: "patterns", label: "Open Pattern Windows" },
+      ]
+    : [
+        { id: "insights", label: "Open Analytic Insights" },
+        { id: "attribution", label: "Open Variance Attribution" },
+        { id: "adjustments", label: "Open Weather Adjustments" },
+      ];
+
   return (
     <>
-      <main className="page page-full">
-        <div className="sim-shell">
-          {/* Central Canvas: Visualization & Action (full width, no left sidebar) */}
-          <div className="sim-main-canvas" style={{ flex: 1 }}>
-            <header className="sim-top-kpi-bar glass-panel-light">
-              <div className="sim-kpi-item">
-                <span>Net Shift</span>
-                <strong className={netSummary.shift >= 0 ? "positive" : "negative"}>
-                  {netSummary.shift >= 0 ? "+" : ""}{netSummary.shift.toFixed(1)} MW
-                </strong>
-              </div>
-              <div className="sim-kpi-item">
-                <span>Energy Δ</span>
-                <strong>{netSummary.energy.toFixed(1)} MWh</strong>
-              </div>
-              <div className="sim-kpi-item">
-                <span>Peak Dev.</span>
-                <strong>{Math.abs(netSummary.peakFinal.value - netSummary.peakBaseline.value).toFixed(1)} MW</strong>
-              </div>
-              <div className="sim-kpi-item">
-                <span>Season</span>
-                <strong className="capitalize">{seasonLabel}</strong>
-              </div>
-            </header>
+      <main style={S.page}>
+        <div style={S.kpiGrid}>
+          <KpiCard
+            label="Net Shift"
+            value={`${netSummary.shift >= 0 ? "+" : ""}${netSummary.shift.toFixed(1)}`}
+            unit="MW"
+            sub={`${selectionCount} blocks in scope • baseline ${netSummary.baseline.toFixed(1)} MW`}
+            tone={netSummary.shift >= 0 ? "#34D399" : "#F87171"}
+          />
+          <KpiCard
+            label="Energy Delta"
+            value={netSummary.energy.toFixed(1)}
+            unit="MWh"
+            sub={`Final energy impact from current edits across selected scope`}
+            tone={Math.abs(netSummary.energy) <= 25 ? "#34D399" : "#FBBF24"}
+          />
+          <KpiCard
+            label="Peak Delta"
+            value={peakDeltaMw.toFixed(1)}
+            unit="MW"
+            sub={`Peak moved ${peakShiftBlocks > 0 ? "+" : ""}${peakShiftBlocks} blocks from baseline`}
+            tone={peakDeltaMw <= 40 ? "#34D399" : peakDeltaMw <= 90 ? "#FBBF24" : "#F87171"}
+          />
+          <KpiCard
+            label={weatherSignalLabel}
+            value={`${exogInsight.weatherTotal >= 0 ? "+" : ""}${Math.abs(exogInsight.weatherTotal).toFixed(2)}`}
+            unit="%"
+            sub={`Average exogenous weather pressure across selected blocks`}
+            tone={weatherTone}
+          />
+          <KpiCard
+            label="Weight Confidence"
+            value={confidencePct.toFixed(1)}
+            unit="%"
+            sub={`${seasonLabel} regime • ${calendarContextLabel}`}
+            tone={confidencePct >= 70 ? "#34D399" : confidencePct >= 45 ? "#FBBF24" : "#F87171"}
+          />
+          <KpiCard
+            label="Scenario Scope"
+            value={selectionCount}
+            unit="blocks"
+            sub={selectionLabel}
+            tone="#ECEEF3"
+          />
+        </div>
 
-            <div className="sim-forecast-panel p-0 overflow-hidden">
-              <div className="p-3 border-b border-[var(--outline)] flex justify-between items-center">
-                <div>
-                  <h3 className="text-sm font-bold tracking-tight">Scenario Simulator</h3>
-                  <span className="text-[10px] text-[var(--muted)]">Baseline vs Adjusted vs Actual (96 blocks)</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-[var(--muted)] uppercase tracking-widest bg-white/5 px-2 py-1 rounded">Shift + Drag to Select</span>
-                </div>
+        <div style={S.workspace}>
+          <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #2A292F" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={S.tabBar}>
+                {SIMULATOR_TABS.map((tab) => (
+                  <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} style={S.tab(activeTab === tab.id)}>
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-              <div className="chart-body" style={{ flex: 1, minHeight: 0, padding: '12px' }}>
-                <ForecastChart />
-              </div>
-              <div className="p-3 border-t border-[var(--outline)] flex-shrink-0">
-                <DriverEditorPanel activeTab="simulation" part="command" />
-              </div>
-            </div>
-
-            {/* Quick Scenarios & Detected Patterns side by side */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <div>
-                <span className="sim-section-label">Quick Scenarios</span>
-                <DriverEditorPanel activeTab="simulation" part="scenarios" />
-              </div>
-              <div>
-                <span className="sim-section-label">Detected Pattern Windows</span>
-                <DriverEditorPanel activeTab="simulation" part="patterns" />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span style={S.miniBadge("#34D399")}>{seasonLabel}</span>
+                <span style={S.miniBadge("#5B9FE4")}>{calendarContextLabel}</span>
+                <span style={{ ...S.miniBadge("#F07825"), maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectionLabel}</span>
+                <button type="button" style={S.actionBtn} onClick={() => setCalendarPanelOpen(true)}>Choose Date</button>
+                <button type="button" style={S.actionBtn} onClick={() => setGridOpen(true)}>Open Block Grid</button>
+                {simulatorActionButtons.map((button) => (
+                  <button key={button.id} type="button" style={S.actionBtn} onClick={() => setOverlayPanel(button.id)}>
+                    {button.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
-          {/* Right Sidebar: Scope, Intelligence, Adjustments & Attribution */}
-          <aside className="sim-intel-panel" style={{ width: '320px', minWidth: '320px' }}>
-            <span className="sim-section-label">Target Scope</span>
-            <DriverEditorPanel
-              activeTab="simulation"
-              part="selection"
-              calendarPanelOpen={calendarPanelOpen}
-              onCalendarPanelOpenChange={setCalendarPanelOpen}
-              selectedDate={selectedDate}
-              calendarContextLabel={calendarContextLabel}
-            />
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(300px, 0.78fr)", gap: 12, padding: "14px 16px", alignItems: "start" }}>
+            <div style={{ ...S.card, minWidth: 0, boxShadow: "none" }}>
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid #2A292F", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={S.cardTitle}>Forecast Canvas</div>
+                </div>
+                <div style={{ fontSize: 10, color: "#A0A5B8" }}>
+                  Peak {netSummary.peakBaseline.block || "--"} {"->"} {netSummary.peakFinal.block || "--"} • {peakDeltaMw.toFixed(1)} MW delta
+                </div>
+              </div>
+              <div
+                style={{
+                  padding: 10,
+                  height: "clamp(430px, 52vh, 540px)",
+                  minHeight: 430,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  width: "100%",
+                  minWidth: 0,
+                }}
+              >
+                <ForecastChart />
+              </div>
+            </div>
 
-            <span className="sim-section-label">Analytic Insights</span>
-            <DriverEditorPanel activeTab="simulation" part="insights" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <DriverEditorPanel activeTab={activeTab} part="command" />
 
-            <span className="sim-section-label">Weather Adjustments</span>
-            <DriverEditorPanel activeTab="simulation" part="adjustments" />
+              <div>
+                <div style={{ ...S.cardTitle, padding: "0 4px 8px" }}>Target Scope</div>
+                <DriverEditorPanel
+                  activeTab={activeTab}
+                  part="selection"
+                  calendarPanelOpen={calendarPanelOpen}
+                  onCalendarPanelOpenChange={setCalendarPanelOpen}
+                  selectedDate={selectedDate}
+                  calendarContextLabel={calendarContextLabel}
+                />
+              </div>
 
-            <span className="sim-section-label">Variance Attribution</span>
-            <DriverEditorPanel activeTab="simulation" part="attribution" />
-          </aside>
+              <div style={S.card}>
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid #2A292F" }}>
+                  <div style={S.cardTitle}>Scenario Snapshot</div>
+                </div>
+                <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ background: "#201F25", border: "1px solid #2A292F", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: "#6B7186", marginBottom: 6 }}>Temperature</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: deltaSummary.temp >= 0 ? "#F07825" : "#5B9FE4" }}>
+                      {deltaSummary.temp >= 0 ? "+" : ""}{deltaSummary.temp.toFixed(2)} C
+                    </div>
+                  </div>
+                  <div style={{ background: "#201F25", border: "1px solid #2A292F", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: "#6B7186", marginBottom: 6 }}>Humidity</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#45b7d1" }}>
+                      {deltaSummary.hum >= 0 ? "+" : ""}{deltaSummary.hum.toFixed(2)} %
+                    </div>
+                  </div>
+                  <div style={{ background: "#201F25", border: "1px solid #2A292F", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: "#6B7186", marginBottom: 6 }}>Rain</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#C084FC" }}>
+                      {deltaSummary.rain >= 0 ? "+" : ""}{deltaSummary.rain.toFixed(2)} mm
+                    </div>
+                  </div>
+                  <div style={{ background: "#201F25", border: "1px solid #2A292F", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: "#6B7186", marginBottom: 6 }}>Wind</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#34D399" }}>
+                      {deltaSummary.wind >= 0 ? "+" : ""}{deltaSummary.wind.toFixed(2)} m/s
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
       <ScenarioCompareModal open={Boolean(comparePayload)} payload={comparePayload} onClose={closeCompare} />
       <BlockGridEditorModal open={gridOpen} onClose={() => setGridOpen(false)} selectionLabel={selectionLabel} />
+
+      {overlayPanel && (
+        <div className="modal-overlay" onClick={() => setOverlayPanel(null)}>
+          <div className="modal-content" style={{ width: "min(920px, 100%)", maxHeight: "84vh", borderRadius: 16 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ padding: "16px 18px", borderBottom: "1px solid #2A292F" }}>
+              <div>
+                <h3 style={{ margin: 0 }}>
+                  {overlayPanel === "adjustments" && "Weather Adjustments"}
+                  {overlayPanel === "scenarios" && "Quick Scenarios"}
+                  {overlayPanel === "patterns" && "Pattern Windows"}
+                  {overlayPanel === "insights" && "Analytic Insights"}
+                  {overlayPanel === "attribution" && "Variance Attribution"}
+                </h3>
+              </div>
+              <button type="button" onClick={() => setOverlayPanel(null)} style={{ background: "none", border: "none", color: "#6B7186", fontSize: 20, cursor: "pointer" }}>×</button>
+            </div>
+            <div className="modal-body">
+              {overlayPanel === "adjustments" && <DriverEditorPanel activeTab={activeTab} part="adjustments" />}
+              {overlayPanel === "scenarios" && <DriverEditorPanel activeTab={activeTab} part="scenarios" />}
+              {overlayPanel === "patterns" && <DriverEditorPanel activeTab={activeTab} part="patterns" />}
+              {overlayPanel === "insights" && <DriverEditorPanel activeTab={activeTab} part="insights" />}
+              {overlayPanel === "attribution" && <DriverEditorPanel activeTab={activeTab} part="attribution" />}
+            </div>
+          </div>
+        </div>
+      )}
 
       {calendarPanelOpen && (
         <div className="sim-modal-backdrop" onClick={() => setCalendarPanelOpen(false)}>

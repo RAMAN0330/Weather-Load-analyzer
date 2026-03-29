@@ -243,8 +243,6 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                     <KpiCard label="Forecast Peak" value={summary ? `${fmt(summary.peak)} MW` : '--'} meta={summary ? `${summary.peakTime} • B${summary.peakBlock}` : 'No peak'} icon={<TrendingUp size={15} />} className="fp-kpi-card--good" />
                     <KpiCard label="Day Energy" value={summary ? `${fmt(summary.energy)} MWh` : '--'} meta="Forecast energy" icon={<BarChart3 size={15} />} />
                     <KpiCard label="Live MAPE" value={`${fmt(liveMeta?.mape_live ?? health.mape)}%`} meta={titleCase(health.status)} icon={<Gauge size={15} />} className={`fp-kpi-card--${health.status === 'critical' ? 'danger' : health.status === 'warning' ? 'warning' : 'good'}`} />
-                    <KpiCard label="Observed Blocks" value={summary ? `${summary.lastBlock}/96` : '0/96'} meta={summary ? `${summary.actualCoverage}% coverage` : 'No coverage'} icon={<Clock3 size={15} />} />
-                    <KpiCard label="Risk Windows" value={`${signalCount}`} meta={signalCount ? `${fmt(avgUncertainty)}% uncertainty` : 'No active risk'} icon={<AlertCircle size={15} />} className={signalCount ? 'fp-kpi-card--warning' : 'fp-kpi-card--good'} />
                 </section>
 
                 <section className="fp-single-layout">
