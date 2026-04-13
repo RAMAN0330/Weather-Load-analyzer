@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -131,13 +132,14 @@ class FeatureRegistry:
 # ENHANCED EDA ENGINE
 # ==========================================
 class EDAEngine:
-    def __init__(self, data_path):
+    def __init__(self, data_path, region="haryana"):
         self.data_path = data_path
-        self._df = self._load_data_static(data_path)
+        self._region = str(region or "haryana")
+        self._df = self._load_data_static(data_path, region=self._region)
 
     def reload_data(self):
         """Reload data from disk and re-run preprocessing."""
-        self._df = self._load_data_static(self.data_path)
+        self._df = self._load_data_static(self.data_path, region=self._region)
         self._cached_stats = {}
         return self._df
 
@@ -161,7 +163,7 @@ class EDAEngine:
         return float((a - b) / b * 100.0) if b not in (0, 0.0, None) else 0.0
 
     @staticmethod
-    def _load_data_static(data_path):
+    def _load_data_static(data_path, region="haryana"):
         """Loads and preprocesses data with comprehensive feature engineering."""
         try:
             def _read_csv_fast(path):
@@ -242,15 +244,19 @@ class EDAEngine:
             # Calendar & holiday features (national + state-specific, deduplicated)
             # Vectorized for speed — avoid per-row lambdas
             df['is_holiday'] = 0
+            hol_lookup = {}
             try:
                 import holidays
-                yrs = df['Date'].dt.year.unique().tolist()
+                yrs = pd.to_datetime(df['Date']).dt.year.unique().tolist()
                 national = holidays.India(years=yrs)
                 _subdiv = INDIAN_STATE_HOLIDAY_SUBDIV.get(
-                    getattr(self, '_region', 'haryana').lower().strip(), 'HR'
+                    str(region or "haryana").lower().strip(), 'HR'
                 )
                 state = holidays.India(subdiv=_subdiv, years=yrs)
-                _combined_dates = set(national.keys()) | set(state.keys())
+                _combined_dates = {
+                    pd.Timestamp(d).normalize()
+                    for d in (set(national.keys()) | set(state.keys()))
+                }
                 # Vectorized: check unique dates only, then map back
                 unique_dates = pd.to_datetime(df['Date']).dt.normalize().unique()
                 hol_lookup = {d: int(d in _combined_dates) for d in unique_dates}
@@ -260,10 +266,11 @@ class EDAEngine:
 
             # Holiday proximity flags — vectorized via date-level computation
             date_series = pd.to_datetime(df['Date']).dt.normalize()
-            unique_dates_arr = date_series.unique()
-            holiday_dates_arr = unique_dates_arr[pd.Series(unique_dates_arr).map(
-                lambda d: df.loc[date_series == d, 'is_holiday'].iloc[0] == 1 if (date_series == d).any() else False
-            ).values] if df['is_holiday'].any() else np.array([], dtype='datetime64[ns]')
+            holiday_dates_arr = (
+                np.array(sorted({d for d, is_holiday in hol_lookup.items() if is_holiday}), dtype='datetime64[ns]')
+                if df['is_holiday'].any()
+                else np.array([], dtype='datetime64[ns]')
+            )
 
             if len(holiday_dates_arr) > 0:
                 holiday_set = set(pd.to_datetime(holiday_dates_arr))
@@ -274,7 +281,7 @@ class EDAEngine:
                 # Bridge day: vectorized via shift on unique-date level
                 date_plus_1 = date_series + pd.Timedelta(days=1)
                 date_minus_1 = date_series - pd.Timedelta(days=1)
-                is_adj_holiday = date_plus_1.map(lambda d: d in holiday_set) | date_minus_1.map(lambda d: d in holiday_set)
+                is_adj_holiday = date_plus_1.isin(holiday_set) | date_minus_1.isin(holiday_set)
                 df['sandwich_day'] = ((df['is_holiday'] == 0) & (dow < 5) & is_adj_holiday).astype(int)
                 df['bridge_day_flag'] = df['sandwich_day']
 
@@ -311,6 +318,13 @@ class EDAEngine:
                 df['temp_D_minus_7_same_block'] = df['temperature'].shift(blocks_per_day * 7)
                 df['rolling_temp_7day_mean'] = df['temperature'].rolling(blocks_per_day * 7, min_periods=1).mean()
                 df['cooling_degree'] = (df['temperature'] - 24.0).clip(lower=0)
+                # Temperature features
+                df['temperature_sq'] = df['temperature'] ** 2
+                df['temperature_cb'] = df['temperature'] ** 3
+                df['temperature_x_block_sin'] = df['temperature'] * df['block_sin']
+                df['temperature_x_block_cos'] = df['temperature'] * df['block_cos']
+                df['temperature_x_hour_sin'] = df['temperature'] * df['hour_sin']
+                df['temperature_x_hour_cos'] = df['temperature'] * df['hour_cos']
                 if 'humidity' in df.columns:
                     df['heat_index'] = 0.5 * (df['temperature'] + 61.0 + (df['temperature'] - 68.0) * 1.2 + df['humidity'] * 0.094)
                 else:
@@ -318,6 +332,13 @@ class EDAEngine:
 
             if 'humidity' in df.columns:
                 df['humidity_7day_mean'] = df['humidity'].rolling(blocks_per_day * 7, min_periods=1).mean()
+                # Humidity features
+                df['humidity_sq'] = df['humidity'] ** 2
+                df['humidity_cb'] = df['humidity'] ** 3
+                df['humidity_x_block_sin'] = df['humidity'] * df['block_sin']
+                df['humidity_x_block_cos'] = df['humidity'] * df['block_cos']
+                df['humidity_x_hour_sin'] = df['humidity'] * df['hour_sin']
+                df['humidity_x_hour_cos'] = df['humidity'] * df['hour_cos']
 
             if 'precipitation' in df.columns:
                 df['rain_proxy'] = (df['precipitation'] > 0.1).astype(int)
@@ -325,6 +346,13 @@ class EDAEngine:
                                             bins=[-1, 0.01, 1, 5, 20, 1000], 
                                             labels=['None', 'Light', 'Moderate', 'Heavy', 'Storm'])
                 df['is_heavy_rain'] = (df['precipitation'] > 5).astype(int)
+                # Precipitation features
+                df['precipitation_sq'] = df['precipitation'] ** 2
+                df['precipitation_cb'] = df['precipitation'] ** 3
+                df['precipitation_x_block_sin'] = df['precipitation'] * df['block_sin']
+                df['precipitation_x_block_cos'] = df['precipitation'] * df['block_cos']
+                df['precipitation_x_hour_sin'] = df['precipitation'] * df['hour_sin']
+                df['precipitation_x_hour_cos'] = df['precipitation'] * df['hour_cos']
 
             # Load memory features
             if 'total_drawal' in df.columns:
@@ -373,7 +401,7 @@ class EDAEngine:
             return df
 
         except Exception as e:
-            print(f"Error loading data: {e}")
+            logging.getLogger(__name__).warning("Error loading data: %s", e)
             return pd.DataFrame()
 
     def get_date_range(self):

@@ -3,6 +3,9 @@ import os
 import json
 import re
 import uuid
+import logging
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import copy
 from functools import lru_cache
@@ -10,14 +13,51 @@ from typing import List, Optional, Literal, Tuple, Dict, Any
 import numpy as np
 import pandas as pd
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+# Ensure pipeline and ML modules log at INFO so training steps appear in terminal
+logging.getLogger("backend.short_term_pipeline").setLevel(logging.INFO)
+logging.getLogger("backend.ml_baseline").setLevel(logging.INFO)
+logging.getLogger("short_term_pipeline").setLevel(logging.INFO)
+logging.getLogger("ml_baseline").setLevel(logging.INFO)
+
+# Dedicated executor for CPU-bound ML tasks (XGBoost/LightGBM release the GIL).
+# Kept separate from uvicorn's default thread pool so ML never starves fast endpoints.
+# Single worker: CPU-bound ML runs are faster serial than parallel on one machine.
+# Deduplication (below) ensures only one run per unique (date, region) at a time.
+_ML_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ml_worker")
+
+
+def _format_exception(exc: Exception) -> str:
+    message = str(exc).strip()
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+# Maximum fractional contribution a single temperature delta step can add to
+# baseline load. Raising this constant allows the model to respond more
+# aggressively on extreme-heat / cold-snap days; lowering it adds conservatism.
+# Analyse your historical temperature_base distribution: if >5% of blocks are
+# hitting ±_TEMP_BASE_CLIP the cap is too tight for your region.
+_TEMP_BASE_CLIP: float = 0.12
+
+# Mean absolute day-over-day load deviation (MW) above which momentum lambda is
+# reduced to avoid amplifying an anomalous yesterday.
+_HIGH_VOLATILITY_MW: float = 150.0
+
 # --- Imports ---
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import io
 try:
     from .engine import EDAEngine, FeatureRegistry
     from .gridintel_engine import GridIntelControlDesk
     from .short_term_pipeline import (
         run_short_term_pipeline,
+        run_t2_pipeline,
         run_block_driver_weight_delta_engine,
         compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
@@ -30,6 +70,7 @@ except ImportError:
     from gridintel_engine import GridIntelControlDesk
     from short_term_pipeline import (
         run_short_term_pipeline,
+        run_t2_pipeline,
         run_block_driver_weight_delta_engine,
         compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
@@ -37,26 +78,212 @@ except ImportError:
     )
     from backtester import run_backtest
 
+try:
+    from .pipeline_router import router as pipeline_router
+except ImportError:
+    from pipeline_router import router as pipeline_router
+
 # --- Initialization ---
 app = FastAPI()
 
+_CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:3000,http://localhost:8000",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in _CORS_ORIGINS if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+app.include_router(pipeline_router)
+
+# ── Data loading helpers ───────────────────────────────────────────────────
+
+def _load_df_from_pipeline_db(region: str, from_date: str = None, to_date: str = None) -> "pd.DataFrame | None":
+    """Load engine-compatible DataFrame for the given region.
+
+    Priority order:
+      1. MySQL pipeline API  (build_final_data.build_final_data)  — live, freshest data
+      2. SQLite pipeline.db  (pipeline_router)                    — local cache
+      3. Returns None → caller falls back to final_data.csv
+
+    The MySQL API path is skipped if PIPELINE_API_BASE_URL / PIPELINE_API_TOKEN are
+    not set, or if the API is unreachable within a short timeout.
+    """
+    import pandas as _pd
+
+    state = region.upper().replace(" ", "_").replace("-", "_")
+
+    # ── 1. Try MySQL API via build_final_data ──────────────────────────────
+    try:
+        import sys as _sys, os as _os
+        _rd_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        if _rd_root not in _sys.path:
+            _sys.path.insert(0, _rd_root)
+        from build_final_data import build_final_data as _build, _date_range_to_days
+        logger.info("[switch-region] Loading %s from MySQL pipeline API (from=%s to=%s) ...", state, from_date, to_date)
+        days = _date_range_to_days(from_date, to_date)
+        df = _build(state=state, days=days, from_date=from_date, to_date=to_date)
+        if df is not None and not df.empty:
+            if 'Datetime' in df.columns:
+                df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
+            logger.info("[switch-region] MySQL API: %d rows for %s", len(df), state)
+            return df
+    except Exception as _e:
+        logger.warning("[switch-region] MySQL API failed for %s: %s — trying pipeline.db", state, _e)
+
+    # ── 2. Fallback: SQLite pipeline.db ───────────────────────────────────
+    try:
+        from pipeline_router import get_all_tables, pipeline_get_engine_data
+        tables = get_all_tables()
+        tables_lower = [t.lower() for t in tables]
+        load_candidates = [f"{state}_load", f"{state}_sldc"]
+        if not any(c.lower() in tables_lower for c in load_candidates):
+            logger.warning("[switch-region] pipeline.db has no tables for %s", state)
+            return None
+        records = pipeline_get_engine_data(state)
+        if not records:
+            return None
+        df = _pd.DataFrame(records)
+        if 'Datetime' in df.columns:
+            df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
+        logger.info("[switch-region] pipeline.db: %d rows for %s", len(df), state)
+        return df
+    except Exception as _e2:
+        logger.warning("[switch-region] pipeline.db also failed for %s: %s", state, _e2)
+        return None
+
 
 # Initialize Engine
 DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "final_data.csv")
 engine = EDAEngine(DATA_PATH)
 gridintel = GridIntelControlDesk(DATA_PATH)
+_CURRENT_REGION = None  # None = CSV fallback; set to region name after first switch-region call
 
 _BASELINE_WINDOW_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _HISTORY_METRICS_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _DR_ACCURACY_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _DAYAHEAD_SERIES_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+
+# In-flight deduplication: maps cache_key → asyncio.Future of the running pipeline.
+# Any concurrent request for the same key awaits the existing Future instead of
+# starting a second pipeline run (prevents cache stampede).
+_ML_INFLIGHT: Dict[Tuple, "asyncio.Future"] = {}
+
+import threading as _threading
+
+# Per-key threading.Lock: guarantees only ONE synchronous pipeline run per
+# (date, region, baseline_days) at a time, even when called from sync routes.
+# Concurrent waiters acquire the lock, find the cache warm, and return immediately.
+_COMPUTE_KEY_LOCKS: Dict[Tuple, "_threading.Lock"] = {}
+_COMPUTE_KEY_LOCKS_MUTEX = _threading.Lock()
+
+class ProgressBus:
+    """Thread-safe pub/sub for pipeline progress events.
+    Worker threads publish; async WebSocket handlers subscribe."""
+    def __init__(self):
+        self._subs: Dict[str, list] = {}
+        self._lock = _threading.Lock()
+
+    def subscribe(self, key: str, q: "asyncio.Queue"):
+        with self._lock:
+            self._subs.setdefault(key, []).append(q)
+
+    def unsubscribe(self, key: str, q: "asyncio.Queue"):
+        with self._lock:
+            lst = self._subs.get(key, [])
+            try: lst.remove(q)
+            except ValueError: pass
+
+    def publish(self, key: str, msg: dict, loop: "asyncio.AbstractEventLoop"):
+        with self._lock:
+            queues = list(self._subs.get(key, []))
+        for q in queues:
+            try:
+                asyncio.run_coroutine_threadsafe(q.put(msg), loop)
+            except Exception:
+                pass
+
+_PROGRESS_BUS = ProgressBus()
+
+import time as _time_module
+
+# ---------------------------------------------------------------------------
+# Job store — simple in-memory dict (swap dict → Redis hash for prod)
+# ---------------------------------------------------------------------------
+_JOB_STORE: Dict[str, dict] = {}
+_JOB_STORE_MAX = 200   # evict oldest when over limit
+
+def _job_init(job_id: str, date: str, region: str, baseline_days: int) -> dict:
+    job = {
+        "job_id": job_id,
+        "status": "queued",      # queued | running | done | error
+        "date": date,
+        "region": region,
+        "baseline_days": baseline_days,
+        "progress": [],          # list of progress event dicts
+        "result": None,          # full post-processed response
+        "error": None,
+        "created_at": _time_module.time(),
+        "completed_at": None,
+    }
+    _JOB_STORE[job_id] = job
+    # Evict oldest jobs beyond limit
+    if len(_JOB_STORE) > _JOB_STORE_MAX:
+        oldest_keys = sorted(_JOB_STORE, key=lambda k: _JOB_STORE[k]["created_at"])
+        for k in oldest_keys[: len(_JOB_STORE) - _JOB_STORE_MAX]:
+            _JOB_STORE.pop(k, None)
+    return job
+
+
+async def _run_forecast_job(job_id: str) -> None:
+    """Background asyncio task: runs ML pipeline and stores result."""
+    job = _JOB_STORE.get(job_id)
+    if not job:
+        return
+
+    job["status"] = "running"
+    loop = asyncio.get_event_loop()
+
+    def _progress_cb(msg: dict):
+        event = {**msg, "type": "progress"}
+        job["progress"].append(event)
+        # Notify any live WebSocket subscribers (thread-safe)
+        _PROGRESS_BUS.publish(job_id, event, loop)
+
+    try:
+        df = _get_df(copy=False)
+        result = await _compute_dayahead_async(
+            df, job["date"], job["baseline_days"], job["region"],
+            progress_cb=_progress_cb,
+        )
+        if result:
+            payload = {
+                "date": job["date"],
+                "baseline_days": job["baseline_days"],
+                "region": job["region"],
+            }
+            processed = await asyncio.to_thread(
+                _v2_dayahead_postprocess, df, payload, job["date"], True, result
+            )
+            job["result"] = processed
+
+        job["status"] = "done"
+        job["completed_at"] = _time_module.time()
+        _PROGRESS_BUS.publish(job_id, {"type": "done", "message": "✓ Forecast ready"}, loop)
+
+    except Exception as exc:
+        logger.exception("forecast job %s failed: %s", job_id, exc)
+        job["status"] = "error"
+        job["error"] = str(exc)
+        job["completed_at"] = _time_module.time()
+        _PROGRESS_BUS.publish(job_id, {"type": "error", "message": str(exc)}, loop)
+
+
 _API_WEATHER_ENGINE_FEATURES = [
     feature for feature in (
         "temperature", "humidity", "precipitation",
@@ -72,7 +299,15 @@ def _clear_runtime_caches() -> None:
     _BASELINE_WINDOW_CACHE.clear()
     _HISTORY_METRICS_CACHE.clear()
     _DR_ACCURACY_CACHE.clear()
+    _ML_INFLIGHT.clear()
+    with _COMPUTE_KEY_LOCKS_MUTEX:
+        _COMPUTE_KEY_LOCKS.clear()
     _simulator_date_context.cache_clear()
+
+
+@app.on_event("startup")
+async def on_startup():
+    pass  # No warmup — it competes with the first real request and wastes an executor slot.
 
 # --- Lightweight V2 helpers for the new UI ---
 def _get_df(copy=True):
@@ -387,7 +622,11 @@ def _refresh_live_analytics_from_final_series(
     trend_component = _to_n_vec(series.get("trend_component", np.zeros(n, dtype=float)), n, fill=0.0)
     pattern_adjustment = _to_n_vec(series.get("pattern_adjustment", np.zeros(n, dtype=float)), n, fill=0.0)
     calendar_adjustment = _to_n_vec(series.get("calendar_adjustment", np.zeros(n, dtype=float)), n, fill=0.0)
-    actual_vec = _to_n_vec(series.get("actual", np.zeros(n, dtype=float)), n, fill=0.0)
+    # Preserve None/NaN for blocks beyond actual_blocks — do NOT fill with 0
+    _actual_raw = series.get("actual") or []
+    actual_vec = np.full(n, np.nan, dtype=float)
+    for _i, _v in enumerate(list(_actual_raw)[:n]):
+        actual_vec[_i] = float(_v) if _v is not None and not (isinstance(_v, float) and np.isnan(_v)) else np.nan
 
     start_fc = int(np.clip(int(actual_blocks), 0, n))
     window = slice(start_fc, n) if start_fc < n else slice(0, n)
@@ -1095,32 +1334,40 @@ def _compute_kpis_full(
     kpi["mape"] = round(float(np.mean(np.abs(error) / np.maximum(actual, 1e-6)) * 100), 2)
     kpi["peak_accuracy_pct"] = round(float(abs(actual.max() - forecast.max()) / max(actual.max(), 1e-6) * 100), 2)
     kpi["daily_energy_error_pct"] = round(float(abs(actual.sum() - forecast.sum()) / max(actual.sum(), 1e-6) * 100), 2)
-    kpi["rmse_kw"] = round(float(np.sqrt(np.mean(error ** 2))), 2)
-    kpi["bias_kw"] = round(float(np.mean(forecast - actual)), 2)
+    kpi["rmse_mw"] = round(float(np.sqrt(np.mean(error ** 2))), 2)
+    kpi["bias_mw"] = round(float(np.mean(forecast - actual)), 2)
     kpi["block_accuracy_within_2pct"] = round(float(np.mean(np.abs(error) / np.maximum(actual, 1e-6) <= 0.02) * 100), 2)
     kpi["block_accuracy_within_5pct"] = round(float(np.mean(np.abs(error) / np.maximum(actual, 1e-6) <= 0.05) * 100), 2)
     kpi["block_over_10pct"] = round(float(np.mean(np.abs(error) / np.maximum(actual, 1e-6) > 0.10) * 100), 2)
+    # Ramp blocks (morning: 24-43, evening ramp: 64-76) tracked separately per metrics spec
+    ramp_mask = np.zeros(96, dtype=bool)
+    ramp_mask[23:43] = True  # morning ramp blocks 24-43
+    ramp_mask[63:76] = True  # evening ramp blocks 64-76
+    if ramp_mask.sum() > 0 and actual[ramp_mask].max() > 0:
+        kpi["ramp_block_accuracy_within_2pct"] = round(float(np.mean(np.abs(error[ramp_mask]) / np.maximum(actual[ramp_mask], 1e-6) <= 0.02) * 100), 2)
+    else:
+        kpi["ramp_block_accuracy_within_2pct"] = None
 
     # KPI 7-11 Weather/Calendar attribution
     temp_contrib, hum_contrib, precip_contrib = _series_weather_contributions(series)
     total_var = (actual - baseline).sum()
-    kpi["temperature_impact_kw"] = round(float(temp_contrib.sum()), 2)
-    kpi["humidity_impact_kw"] = round(float(hum_contrib.sum()), 2)
-    kpi["precipitation_impact_kw"] = round(float(precip_contrib.sum()), 2)
-    kpi["calendar_effect_kw"] = 0.0
-    kpi["unexplained_variance_kw"] = round(float(total_var - (temp_contrib.sum() + hum_contrib.sum() + precip_contrib.sum())), 2)
+    kpi["temperature_impact_mw"] = round(float(temp_contrib.sum()), 2)
+    kpi["humidity_impact_mw"] = round(float(hum_contrib.sum()), 2)
+    kpi["precipitation_impact_mw"] = round(float(precip_contrib.sum()), 2)
+    kpi["calendar_effect_mw"] = 0.0
+    kpi["unexplained_variance_mw"] = round(float(abs(total_var - (temp_contrib.sum() + hum_contrib.sum() + precip_contrib.sum()))), 2)
 
     # KPI 12-14 dips/rises/ramp
     dips, rises = _compute_dip_rise(actual, baseline)
     ramp = _compute_ramp_metrics(actual)
     kpi["load_dip_count"] = len(dips)
     kpi["load_rise_count"] = len(rises)
-    kpi["max_ramp_kw_per_15min"] = ramp.get("max_ramp")
+    kpi["max_ramp_mw_per_15min"] = ramp.get("max_ramp")
 
     # KPI 15-18 weather sensitivity
     weather = _compute_weather_sensitivity(baseline_df)
-    kpi["cooling_sensitivity_kw_per_c"] = weather.get("cooling_sensitivity")
-    kpi["heating_sensitivity_kw_per_c"] = weather.get("heating_sensitivity")
+    kpi["cooling_sensitivity_mw_per_c"] = weather.get("cooling_sensitivity")
+    kpi["heating_sensitivity_mw_per_c"] = weather.get("heating_sensitivity")
     kpi["humidity_amplification_x"] = weather.get("humidity_amplification")
     kpi["precipitation_response_pct"] = _compute_precip_response(baseline_df).get("precipitation_response_pct")
 
@@ -1131,7 +1378,7 @@ def _compute_kpis_full(
     kpi["weekend_load_change_pct"] = daytype_metrics.get("weekend_load_change_pct")
     kpi["holiday_impact_pct"] = 0
     kpi["weekend_to_weekday_transition_pct"] = kpi["weekend_load_change_pct"]
-    kpi["day_after_holiday_pct"] = 0
+    kpi["post_holiday_rebound_pct"] = 0  # renamed from day_after_holiday_pct; direction now explicit
 
     # KPI 23-26 baseline quality
     base_quality = _compute_baseline_quality(baseline_df, df[df["date"] == target_date])
@@ -1157,12 +1404,12 @@ def _compute_kpis_full(
     kpi["peak_time_block_error"] = peak_time.get("peak_time_block_error")
 
     # KPI 35-37 attribution
-    kpi["peak_variance_attribution_temp_kw"] = round(float(temp_contrib[np.argmax(actual)]), 2)
-    kpi["peak_variance_attribution_hum_kw"] = round(float(hum_contrib[np.argmax(actual)]), 2)
-    kpi["peak_variance_attribution_precip_kw"] = round(float(precip_contrib[np.argmax(actual)]), 2)
-    kpi["daily_energy_variance_temp_kw"] = round(float(temp_contrib.sum()), 2)
-    kpi["daily_energy_variance_hum_kw"] = round(float(hum_contrib.sum()), 2)
-    kpi["daily_energy_variance_precip_kw"] = round(float(precip_contrib.sum()), 2)
+    kpi["peak_variance_attribution_temp_mw"] = round(float(temp_contrib[np.argmax(actual)]), 2)
+    kpi["peak_variance_attribution_hum_mw"] = round(float(hum_contrib[np.argmax(actual)]), 2)
+    kpi["peak_variance_attribution_precip_mw"] = round(float(precip_contrib[np.argmax(actual)]), 2)
+    kpi["daily_energy_variance_temp_mw"] = round(float(temp_contrib.sum()), 2)
+    kpi["daily_energy_variance_hum_mw"] = round(float(hum_contrib.sum()), 2)
+    kpi["daily_energy_variance_precip_mw"] = round(float(precip_contrib.sum()), 2)
 
     # KPI 38-41 time based patterns (delta vs baseline)
     def _segment_sum(start, end):
@@ -1173,10 +1420,10 @@ def _compute_kpis_full(
             return float((actual[s1:e1] - baseline[s1:e1]).sum() + (actual[s2:e2] - baseline[s2:e2]).sum())
         return float((actual[s:e] - baseline[s:e]).sum())
     
-    kpi["morning_ramp_delta_kw"] = round(_segment_sum(20, 32), 2)
-    kpi["midday_plateau_delta_kw"] = round(_segment_sum(32, 56), 2)
-    kpi["evening_peak_delta_kw"] = round(_segment_sum(64, 76), 2)
-    kpi["night_valley_delta_kw"] = round(_segment_sum(88, 16), 2) # unified wrap
+    kpi["morning_ramp_delta_mw"] = round(_segment_sum(24, 43), 2)   # corrected window: blocks 24-43 (06:00-10:45)
+    kpi["midday_plateau_delta_mw"] = round(_segment_sum(40, 56), 2)
+    kpi["evening_peak_delta_mw"] = round(_segment_sum(68, 83), 2)   # corrected window: blocks 68-83 (17:00-20:45)
+    kpi["night_valley_delta_mw"] = round(_segment_sum(88, 16), 2)   # unified wrap
 
     # KPI 42-45 interactions
     kpi.update(_compute_interaction_kpis(df[df["date"] == target_date]))
@@ -1195,6 +1442,41 @@ def _compute_kpis_full(
     if dq.get("weather_data_accuracy") is None:
         dq["weather_data_accuracy"] = 0
     kpi.update(dq)
+
+    # Model Drift PSI — only computed when heavy metrics are explicitly requested.
+    # Running _compute_dayahead for 14 dates on every forecast submission caused the
+    # pipeline to loop continuously; guard it behind include_history_metrics.
+    if include_history_metrics:
+        try:
+            dates_all = _get_valid_dates(df)
+            if len(dates_all) >= 14:
+                recent_dates = dates_all[-7:]
+                baseline_dates = dates_all[-14:-7]
+                def _mape_for_date(d):
+                    s = _compute_dayahead(df, d, 7)
+                    if not s:
+                        return None
+                    a = _to_n_vec(s.get("actual", []), 96)
+                    f = _to_n_vec(s.get("forecast", []), 96)
+                    return float(np.mean(np.abs(a - f) / np.maximum(a, 1e-6)) * 100)
+                recent_mapes = [m for d in recent_dates if (m := _mape_for_date(d)) is not None]
+                base_mapes = [m for d in baseline_dates if (m := _mape_for_date(d)) is not None]
+                if recent_mapes and base_mapes:
+                    bins = np.linspace(0, max(max(recent_mapes), max(base_mapes)) + 1e-6, 6)
+                    r_hist = np.histogram(recent_mapes, bins=bins)[0] / max(len(recent_mapes), 1)
+                    b_hist = np.histogram(base_mapes, bins=bins)[0] / max(len(base_mapes), 1)
+                    r_hist = np.where(r_hist == 0, 1e-4, r_hist)
+                    b_hist = np.where(b_hist == 0, 1e-4, b_hist)
+                    psi = float(np.sum((r_hist - b_hist) * np.log(r_hist / b_hist)))
+                    kpi["model_drift_psi"] = round(max(0.0, psi), 4)
+                else:
+                    kpi["model_drift_psi"] = 0.0
+            else:
+                kpi["model_drift_psi"] = 0.0
+        except Exception:
+            kpi["model_drift_psi"] = 0.0
+    else:
+        kpi["model_drift_psi"] = 0.0
 
     return kpi
 
@@ -1886,7 +2168,7 @@ def _adaptive_temperature_base(
     comfort_mult = np.where(inside_band, 0.85, np.minimum(1.6, 1.0 + (0.05 * distance)))
 
     effective_coeff = coeff_vec * comfort_mult
-    temperature_base = np.clip(delta_vec * effective_coeff, -0.12, 0.12)
+    temperature_base = np.clip(delta_vec * effective_coeff, -_TEMP_BASE_CLIP, _TEMP_BASE_CLIP)
     return {
         "temperature_base": temperature_base,
         "season": season,
@@ -1975,8 +2257,8 @@ class ScenarioRepository:
                         )
                     conn.commit()
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ScenarioRepository: DB init failed, falling back to JSON: %s", exc)
         os.makedirs(os.path.dirname(self._json_path), exist_ok=True)
         if not os.path.exists(self._json_path):
             with open(self._json_path, "w", encoding="utf-8") as f:
@@ -2008,8 +2290,8 @@ class ScenarioRepository:
                         cols = [d[0] for d in cur.description]
                         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
                 return rows
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ScenarioRepository.list: DB query failed, falling back to JSON: %s", exc)
         rows = self._read_json()
         return sorted(rows, key=lambda r: (r.get("version", 0), r.get("created_at", "")), reverse=True)
 
@@ -2029,8 +2311,8 @@ class ScenarioRepository:
                         cur.execute("DELETE FROM scenarios WHERE scenario_id = %s", (scenario_id,))
                     conn.commit()
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ScenarioRepository.delete: DB delete failed, falling back to JSON: %s", exc)
         rows = [r for r in self._read_json() if str(r.get("scenario_id")) != str(scenario_id)]
         self._write_json(rows)
 
@@ -2065,8 +2347,8 @@ class ScenarioRepository:
                         )
                     conn.commit()
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("ScenarioRepository.save: DB insert failed, falling back to JSON: %s", exc)
         rows = self._read_json()
         rows.append(row)
         self._write_json(rows)
@@ -2332,15 +2614,28 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
             series["baseline"] = series["forecast"]
 
     # Provide legacy delta keys expected by the simulator.
-    deltas = series.get("weather_feature_deltas", {})
-    if isinstance(deltas, dict):
-        series.setdefault("temp_delta", deltas.get("temperature", [0.0] * 96))
-        series.setdefault("hum_delta", deltas.get("humidity", [0.0] * 96))
-        series.setdefault("precip_delta", deltas.get("precipitation", [0.0] * 96))
-        series.setdefault(
-            "wind_delta",
-            deltas.get("wind_speed_10m", deltas.get("wind", [0.0] * 96)),
+    deltas = series.get("weather_feature_deltas")
+    if deltas is None:
+        logger.warning(
+            "weather_feature_deltas missing from series for %s — falling back to zeros. "
+            "Check that run_short_term_pipeline populated the series correctly.",
+            resolved,
         )
+        deltas = {}
+    elif not isinstance(deltas, dict):
+        logger.warning(
+            "weather_feature_deltas for %s is not a dict (got %s) — falling back to zeros.",
+            resolved,
+            type(deltas).__name__,
+        )
+        deltas = {}
+    series.setdefault("temp_delta", deltas.get("temperature", [0.0] * 96))
+    series.setdefault("hum_delta", deltas.get("humidity", [0.0] * 96))
+    series.setdefault("precip_delta", deltas.get("precipitation", [0.0] * 96))
+    series.setdefault(
+        "wind_delta",
+        deltas.get("wind_speed_10m", deltas.get("wind", [0.0] * 96)),
+    )
 
     # Use raw (non-filled) actuals to detect partial-day availability.
     raw_day = df[df["date"] == resolved].copy()
@@ -2394,6 +2689,18 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
     precip_delta = np.array(series.get("precip_delta", [0.0] * 96), dtype=float)
     wind_delta = np.array(series.get("wind_delta", wind_delta.tolist()), dtype=float)
 
+    # Extract the four additional weather deltas that are computed in Layer 1
+    # but were previously not passed into the driver engine (defaulted to zero).
+    _wfd = series.get("weather_feature_deltas") or {}
+    apparent_delta = np.array(_wfd.get("apparent_temperature", [0.0] * 96), dtype=float)
+    cloud_delta = np.array(_wfd.get("cloud_cover", [0.0] * 96), dtype=float)
+    sun_delta = np.array(_wfd.get("sunshine_duration", [0.0] * 96), dtype=float)
+    rad_delta = np.array(_wfd.get("direct_radiation", [0.0] * 96), dtype=float)
+    apparent_delta = np.pad(apparent_delta, (0, max(0, 96 - apparent_delta.size)))[:96]
+    cloud_delta = np.pad(cloud_delta, (0, max(0, 96 - cloud_delta.size)))[:96]
+    sun_delta = np.pad(sun_delta, (0, max(0, 96 - sun_delta.size)))[:96]
+    rad_delta = np.pad(rad_delta, (0, max(0, 96 - rad_delta.size)))[:96]
+
     baseline_vec = np.array(series.get("baseline", [0.0] * 96), dtype=float)
     target_day = pd.to_datetime(resolved, errors="coerce")
     is_weekend = False if pd.isna(target_day) else bool(target_day.weekday() >= 5)
@@ -2409,7 +2716,7 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
             
         weights_source = "linear_regression"
     except Exception as e:
-        print(f"Error in api_simulator_blocks weights: {e}")
+        logger.warning("Error in api_simulator_blocks weights: %s", e)
         # Fallback
         weights_df = pd.DataFrame({"block": range(1, 97)})
         weights_df["weight_confidence"] = 0.1
@@ -2618,6 +2925,11 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
         "humidity_delta": hum_delta,
         "rain_delta": precip_delta,
         "wind_delta": wind_delta,
+        # Previously zeroed-out features — now wired in from weather_feature_deltas
+        "apparent_delta": apparent_delta,
+        "cloud_delta": cloud_delta,
+        "sun_delta": sun_delta,
+        "rad_delta": rad_delta,
         "daytype_flag": daytype_flag,
         "holiday_flag": holiday_flag,
     }
@@ -2881,6 +3193,41 @@ def reload_data():
     df = engine.reload_data()
     _clear_runtime_caches()
     return {"status": "ok", "rows": int(len(df))}
+
+
+@app.post("/api/switch-region")
+def switch_region(body: dict):
+    """Switch the active region: reload engine + gridintel from pipeline DB for that state."""
+    global engine, gridintel, _CURRENT_REGION
+    region = (body.get("region") or "haryana").lower().strip()
+    from_date = body.get("from_date") or None
+    to_date   = body.get("to_date")   or None
+    # Never short-circuit on "unchanged" — the startup engine is loaded from final_data.csv
+    # (wrong state), so always reload from DB when a region is explicitly selected.
+
+    db_df = _load_df_from_pipeline_db(region, from_date=from_date, to_date=to_date)
+    if db_df is not None and not db_df.empty:
+        import tempfile, os as _os
+        tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode='w', newline='')
+        db_df.to_csv(tmp, index=False)
+        tmp.close()
+        try:
+            new_engine = EDAEngine(tmp.name, region=region)
+            new_gridintel = GridIntelControlDesk(tmp.name)
+        finally:
+            _os.unlink(tmp.name)
+        source = "pipeline_db"
+    else:
+        # Fallback to original CSV
+        new_engine = EDAEngine(DATA_PATH, region=region)
+        new_gridintel = GridIntelControlDesk(DATA_PATH)
+        source = "csv_fallback"
+
+    engine = new_engine
+    gridintel = new_gridintel
+    _CURRENT_REGION = region
+    _clear_runtime_caches()
+    return {"status": "ok", "region": region, "rows": int(len(engine._df)), "source": source}
 
 @app.post("/analytics/temporal")
 def get_temporal_analysis(req: AnalyticsRequest):
@@ -3275,35 +3622,34 @@ def generate_report(req: ReportRequest):
 # =========================================================
 
 @app.get("/api/v2/config")
-def v2_config():
-    df = _get_df(copy=False)
-    dates_valid = _get_valid_dates(df)
-    dates_all = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
-    latest_valid = dates_valid[-1] if dates_valid else None
-    latest_partial = dates_all[-1] if dates_all else None
-    df_valid = df[df["date"].isin(dates_valid)] if dates_valid else df
-    best = _find_best_baseline_window(df_valid, latest_valid) if latest_valid else {"best_baseline_window": 7, "best_mape": None}
-    allowed_regions = ["odisha", "rajasthan", "haryana"]
-    available = [r for r in sorted(INDIAN_STATE_REGIONS.keys()) if r in allowed_regions]
-    
-    response = {
-        "dates": dates_valid,
-        "all_dates": dates_all,
-        "latest_date": latest_valid,
-        "partial_latest_date": latest_partial,
-        "default_date": latest_valid,
-        "best_baseline_window": best.get("best_baseline_window", 7),
-        "best_mape": best.get("best_mape"),
-        "baseline_window_mapes": best.get("window_mapes", []),
-        "available_regions": available,
-        "default_region": "haryana",
-    }
-    return _json_safe(response)
+async def v2_config():
+    def _work():
+        df = _get_df(copy=False)
+        dates_valid = _get_valid_dates(df)
+        dates_all = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+        latest_valid = dates_valid[-1] if dates_valid else None
+        latest_partial = dates_all[-1] if dates_all else None
+        df_valid = df[df["date"].isin(dates_valid)] if dates_valid else df
+        best = _find_best_baseline_window(df_valid, latest_valid) if latest_valid else {"best_baseline_window": 7, "best_mape": None}
+        allowed_regions = ["odisha", "rajasthan", "haryana"]
+        available = [r for r in sorted(INDIAN_STATE_REGIONS.keys()) if r in allowed_regions]
+        return _json_safe({
+            "dates": dates_valid,
+            "all_dates": dates_all,
+            "latest_date": latest_valid,
+            "partial_latest_date": latest_partial,
+            "default_date": latest_valid,
+            "best_baseline_window": best.get("best_baseline_window", 7),
+            "best_mape": best.get("best_mape"),
+            "baseline_window_mapes": best.get("window_mapes", []),
+            "available_regions": available,
+            "default_region": "haryana",
+        })
+    return await asyncio.to_thread(_work)
 
 @app.post("/api/v2/reload")
-def v2_reload():
-    try:
-        # Full reload through engine for proper feature engineering
+async def v2_reload():
+    def _work():
         engine._df = engine._load_data_static(DATA_PATH)
         df = engine._df
         if "date" in df.columns:
@@ -3317,25 +3663,47 @@ def v2_reload():
             "latest_date": dates_valid[-1] if dates_valid else None,
             "partial_latest_date": dates_all[-1] if dates_all else None
         })
+    try:
+        return await asyncio.to_thread(_work)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Reload failed: {exc}")
 
-@app.post("/api/v2/dayahead")
 def v2_dayahead(payload: dict):
-    df = _get_df()
-    requested = payload.get("date")
+    payload = payload or {}
+    return _v2_dayahead_sync(payload)
+
+
+@app.post("/api/v2/dayahead")
+async def v2_dayahead_endpoint(payload: dict):
+    payload = payload or {}
+    requested    = payload.get("date")
     baseline_days = payload.get("baseline_days", 7)
-    calendar_config = payload.get("calendar_config")
-    region = payload.get("region", "punjab")
-    include_heavy_metrics = bool(payload.get("include_heavy_metrics", False))
+    region       = payload.get("region", "punjab")
+
+    # Resolve date (fast, pandas)
+    df = _get_df()
     resolved, exact, _ = _resolve_date(df, requested)
     if not resolved:
         raise HTTPException(status_code=404, detail="No data available")
-    baseline_window_stats = _find_best_baseline_window(df, resolved)
-    dayahead_result = _compute_dayahead(df, resolved, baseline_days, region=region)
+
+    # ML pipeline — deduplicated: concurrent requests for same key share one run
+    dayahead_result = await _compute_dayahead_async(df, resolved, baseline_days, region)
     if not dayahead_result:
         raise HTTPException(status_code=404, detail="No data for selected date")
-    
+
+    # Post-processing is fast pandas/numpy — run in default thread pool
+    return await asyncio.to_thread(_v2_dayahead_postprocess, df, payload, resolved, exact, dayahead_result)
+
+
+def _build_dayahead_response(
+    df, resolved: str, exact: bool, baseline_days, region: str,
+    calendar_config, include_heavy_metrics: bool, dayahead_result: dict,
+    requested: str = None,
+):
+    """Build the full API response dict from an already-computed dayahead_result.
+    Never calls _compute_dayahead — caller is responsible for providing the result."""
+    baseline_window_stats = _find_best_baseline_window(df, resolved)
+
     # dayahead_result is now a full result dict. We extract 'series' for legacy helpers.
     series = dayahead_result.get("series", {})
     if not series:
@@ -3437,7 +3805,7 @@ def v2_dayahead(payload: dict):
         else:
              y_df = actual_w.copy()
     except Exception as e:
-        print(f"Error in weather analysis: {e}")
+        logger.warning("Error in weather analysis: %s", e)
         # Fallback to prevent crash
         normal_w = pd.DataFrame(0.0, index=range(1, 97), columns=w_cols)
         actual_w = pd.DataFrame(0.0, index=range(1, 97), columns=w_cols)
@@ -3632,6 +4000,461 @@ def v2_dayahead(payload: dict):
     return _json_safe(response)
 
 
+def _v2_dayahead_sync(payload: dict):
+    df = _get_df()
+    requested = payload.get("date")
+    baseline_days = payload.get("baseline_days", 7)
+    calendar_config = payload.get("calendar_config")
+    region = payload.get("region", "punjab")
+    include_heavy_metrics = bool(payload.get("include_heavy_metrics", False))
+    resolved, exact, _ = _resolve_date(df, requested)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="No data available")
+    dayahead_result = _compute_dayahead(df, resolved, baseline_days, region=region)
+    if not dayahead_result:
+        raise HTTPException(status_code=404, detail="No data for selected date")
+    return _build_dayahead_response(
+        df, resolved, exact, baseline_days, region,
+        calendar_config, include_heavy_metrics, dayahead_result, requested,
+    )
+
+
+def _v2_dayahead_postprocess(df, payload: dict, resolved: str, exact: bool, dayahead_result: dict):
+    """Build the full API response from a pre-computed dayahead_result. Never re-runs the pipeline."""
+    return _build_dayahead_response(
+        df, resolved, exact,
+        payload.get("baseline_days", 7),
+        payload.get("region", "punjab"),
+        payload.get("calendar_config"),
+        False,
+        dayahead_result,
+        payload.get("date", resolved),
+    )
+
+
+@app.post("/api/v2/forecast/t2")
+def v2_forecast_t2(payload: dict):
+    """
+    T+2 (day-after-tomorrow) forecast.
+
+    Request body:
+      { "date": "YYYY-MM-DD",  // T+1 date (today's forecast reference)
+        "region": "punjab",
+        "baseline_days": 7 }
+
+    Returns the same structure as /api/v2/dayahead with an added
+    `horizon: "t2"` key and no actuals (actual_blocks=0).
+    """
+    payload = payload or {}
+    df = _get_df()
+    if "date" not in df.columns:
+        raise HTTPException(status_code=404, detail="No data available")
+
+    requested = payload.get("date")
+    region = payload.get("region", "punjab")
+    baseline_days = int(payload.get("baseline_days", 7))
+    resolved, _, _ = _resolve_date(df, requested)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="No data available")
+
+    config = {"region": region, "candidate_lookback_days": 45}
+    try:
+        result = run_t2_pipeline(df=df, t1_date=resolved, config=config)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
+
+    return _json_safe(result)
+
+
+@app.post("/api/v2/forecast/export")
+def v2_forecast_export(payload: dict = None):
+    """
+    Export T+1 and T+2 forecasts as a two-sheet Excel file.
+
+    Request body:
+      { "date": "YYYY-MM-DD",   // T+1 reference date (defaults to latest)
+        "region": "punjab",
+        "baseline_days": 7 }
+
+    Returns an .xlsx file with sheets:
+      - "T+1"  : day-ahead forecast (96 blocks)
+      - "T+2"  : day-after-tomorrow forecast (96 blocks)
+    """
+    payload = payload or {}
+    df = _get_df()
+    if "date" not in df.columns:
+        raise HTTPException(status_code=404, detail="No data available")
+
+    region = payload.get("region", "punjab")
+    baseline_days = int(payload.get("baseline_days", 7))
+    resolved, _, _ = _resolve_date(df, payload.get("date"))
+    if not resolved:
+        raise HTTPException(status_code=404, detail="No data available")
+
+    # --- T+1 ---
+    try:
+        t1_raw = _v2_dayahead_sync({"date": resolved, "region": region, "baseline_days": baseline_days})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"T+1 pipeline error: {exc}")
+
+    # --- T+2 ---
+    config = {"region": region, "candidate_lookback_days": 45}
+    try:
+        t2_raw = run_t2_pipeline(df=df, t1_date=resolved, config=config)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
+
+    def _series_to_df(result: dict, horizon_label: str) -> pd.DataFrame:
+        """Flatten the series dict from a forecast result into a block-level DataFrame."""
+        series = result.get("series", {})
+        blocks = series.get("blocks") or list(range(1, 97))
+        n = len(blocks)
+
+        def _pad(arr, default=None):
+            if not arr:
+                return [default] * n
+            return list(arr)[:n] + [default] * max(0, n - len(arr))
+
+        wfd = series.get("weather_feature_deltas") or {}
+
+        out = pd.DataFrame({
+            "Block": blocks,
+            "Time": [
+                f"{((b - 1) * 15) // 60:02d}:{((b - 1) * 15) % 60:02d}"
+                for b in blocks
+            ],
+            "Baseline_MW": _pad(series.get("baseline")),
+            "Forecast_MW": _pad(series.get("forecast")),
+            "Actual_MW": _pad(series.get("actual")),
+            "P10_MW": _pad(series.get("p10")),
+            "P90_MW": _pad(series.get("p90")),
+            "Forecast_Confidence": _pad(series.get("forecast_confidence")),
+            "Weather_Impact_MW": _pad(series.get("weather_impact")),
+            "Momentum_Impact_MW": _pad(series.get("momentum_impact_mw")),
+            "DoD_Load_Delta_MW": _pad(series.get("dod_load_delta_mw")),
+            "Temp_Delta_MW": _pad(wfd.get("temperature") if isinstance(wfd, dict) else None),
+            "Humidity_Delta_MW": _pad(wfd.get("humidity") if isinstance(wfd, dict) else None),
+            "Precip_Delta_MW": _pad(wfd.get("precipitation") if isinstance(wfd, dict) else None),
+        })
+
+        # Determine the forecast date — T+2 result stores it at top level as t2_date
+        meta = result.get("metadata", {}) or {}
+        date_val = (
+            result.get("t2_date")
+            or meta.get("forecast_date")
+            or meta.get("date")
+            or ""
+        )
+        out.insert(0, "Horizon", horizon_label)
+        out.insert(1, "Date", date_val)
+        out.insert(2, "Region", meta.get("region") or region)
+        return out
+
+    df_t1 = _series_to_df(t1_raw, "T+1")
+    df_t2 = _series_to_df(t2_raw, "T+2")
+
+    # ── Styled Excel export ──────────────────────────────────────────────────
+    from openpyxl import Workbook
+    from openpyxl.styles import (
+        PatternFill, Font, Alignment, Border, Side, GradientFill
+    )
+    from openpyxl.utils import get_column_letter
+    from openpyxl.styles.numbers import FORMAT_NUMBER_COMMA_SEPARATED1
+
+    # Palette
+    CLR_DARK_NAVY   = "0D1B2A"   # sheet title bg
+    CLR_NAVY        = "1A3A5C"   # section header bg
+    CLR_BLUE_HDR    = "1E5799"   # column header bg
+    CLR_ACCENT      = "2196F3"   # accent / forecast
+    CLR_GREEN       = "27AE60"   # actual / positive
+    CLR_ORANGE      = "E67E22"   # baseline
+    CLR_RED         = "E74C3C"   # warning / P10
+    CLR_LIGHT_BLUE  = "EBF4FB"   # alternating row A
+    CLR_WHITE       = "FFFFFF"
+    CLR_LIGHT_GRAY  = "F5F6FA"   # alternating row B
+    CLR_GOLD        = "F39C12"   # confidence
+
+    def _mk_fill(hex_color):
+        return PatternFill("solid", fgColor=hex_color)
+
+    def _mk_border(style="thin", color="BDBDBD"):
+        s = Side(style=style, color=color)
+        return Border(left=s, right=s, top=s, bottom=s)
+
+    def _mk_font(bold=False, color=CLR_DARK_NAVY, size=10, italic=False):
+        return Font(name="Calibri", bold=bold, color=color, size=size, italic=italic)
+
+    def _write_sheet(wb: "Workbook", df: pd.DataFrame, sheet_name: str,
+                     horizon_label: str, forecast_date: str, region_str: str):
+        ws = wb.create_sheet(title=sheet_name)
+        ws.sheet_view.showGridLines = False
+
+        # ── Column config: (header label, width, number_format, color_key)
+        # color_key: "forecast" | "actual" | "baseline" | "band" | "weather" | "meta" | "conf"
+        COL_CFG = [
+            ("Block #",           9,   "0",           "meta"),
+            ("Time (IST)",        11,  "@",           "meta"),
+            ("Baseline (MW)",     15,  "#,##0.0",     "baseline"),
+            ("Forecast (MW)",     15,  "#,##0.0",     "forecast"),
+            ("Actual (MW)",       14,  "#,##0.0",     "actual"),
+            ("P10 (MW)",          13,  "#,##0.0",     "band"),
+            ("P90 (MW)",          13,  "#,##0.0",     "band"),
+            ("Confidence (%)",    16,  "0.0%",        "conf"),
+            ("Weather Δ (MW)",    15,  "#,##0.0;[Red]-#,##0.0", "weather"),
+            ("Momentum Δ (MW)",   17,  "#,##0.0;[Red]-#,##0.0", "weather"),
+            ("DoD Δ (MW)",        13,  "#,##0.0;[Red]-#,##0.0", "weather"),
+            ("Temp Δ (MW)",       13,  "#,##0.0;[Red]-#,##0.0", "weather"),
+            ("Humidity Δ (MW)",   16,  "#,##0.0;[Red]-#,##0.0", "weather"),
+            ("Precip Δ (MW)",     14,  "#,##0.0;[Red]-#,##0.0", "weather"),
+        ]
+
+        # Map df columns (after dropping Horizon/Date/Region) to COL_CFG
+        data_cols = [
+            "Block", "Time", "Baseline_MW", "Forecast_MW", "Actual_MW",
+            "P10_MW", "P90_MW", "Forecast_Confidence", "Weather_Impact_MW",
+            "Momentum_Impact_MW", "DoD_Load_Delta_MW", "Temp_Delta_MW",
+            "Humidity_Delta_MW", "Precip_Delta_MW",
+        ]
+
+        HDR_COLORS = {
+            "meta":     CLR_NAVY,
+            "forecast": CLR_BLUE_HDR,
+            "actual":   "1E7A45",
+            "baseline": "8E5A14",
+            "band":     "5B2D8E",
+            "conf":     "7B5800",
+            "weather":  "2E6B6B",
+        }
+
+        # ── Row 1: Title bar ─────────────────────────────────────────────────
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(COL_CFG))
+        title_cell = ws.cell(row=1, column=1)
+        title_cell.value = (
+            f"GNA Energy  ·  Load Forecast  ·  {horizon_label}  ·  "
+            f"{forecast_date}  ·  Region: {region_str.upper()}"
+        )
+        title_cell.font    = _mk_font(bold=True, color=CLR_WHITE, size=13)
+        title_cell.fill    = _mk_fill(CLR_DARK_NAVY)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 28
+
+        # ── Row 2: Sub-header (generated info) ──────────────────────────────
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(COL_CFG))
+        sub_cell = ws.cell(row=2, column=1)
+        sub_cell.value = (
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} IST  ·  "
+            f"Model: NEXUS-ML Hybrid  ·  Blocks: 96  ·  Resolution: 15-min"
+        )
+        sub_cell.font      = _mk_font(italic=True, color="AAAAAA", size=9)
+        sub_cell.fill      = _mk_fill("16202E")
+        sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[2].height = 18
+
+        # ── Row 3: blank spacer ──────────────────────────────────────────────
+        ws.row_dimensions[3].height = 6
+        for c in range(1, len(COL_CFG) + 1):
+            ws.cell(row=3, column=c).fill = _mk_fill("0D1B2A")
+
+        # ── Row 4: Summary KPI band ──────────────────────────────────────────
+        data_vals = {}
+        for k, col in zip(data_cols, range(len(data_cols))):
+            if k in df.columns:
+                data_vals[k] = pd.to_numeric(df[k], errors="coerce")
+
+        def _safe_mean(key):
+            v = data_vals.get(key)
+            return round(float(v.mean()), 1) if v is not None and v.notna().any() else None
+
+        def _safe_max(key):
+            v = data_vals.get(key)
+            return round(float(v.max()), 1) if v is not None and v.notna().any() else None
+
+        def _safe_min(key):
+            v = data_vals.get(key)
+            return round(float(v.min()), 1) if v is not None and v.notna().any() else None
+
+        mean_fc  = _safe_mean("Forecast_MW")
+        peak_fc  = _safe_max("Forecast_MW")
+        min_fc   = _safe_min("Forecast_MW")
+        mean_bl  = _safe_mean("Baseline_MW")
+        mean_conf = _safe_mean("Forecast_Confidence")
+
+        kpi_items = [
+            ("Avg Forecast", f"{mean_fc:,.1f} MW" if mean_fc is not None else "—"),
+            ("Peak Forecast", f"{peak_fc:,.1f} MW" if peak_fc is not None else "—"),
+            ("Min Forecast", f"{min_fc:,.1f} MW" if min_fc is not None else "—"),
+            ("Avg Baseline", f"{mean_bl:,.1f} MW" if mean_bl is not None else "—"),
+            ("Avg Confidence", f"{mean_conf*100:.1f}%" if mean_conf is not None else "—"),
+        ]
+
+        # Spread KPIs across columns (pair: label col, value col)
+        kpi_cols_per_item = len(COL_CFG) // len(kpi_items)
+        for idx, (lbl, val) in enumerate(kpi_items):
+            c_start = idx * kpi_cols_per_item + 1
+            c_end   = c_start + kpi_cols_per_item - 1
+            if idx == len(kpi_items) - 1:
+                c_end = len(COL_CFG)
+
+            ws.merge_cells(start_row=4, start_column=c_start, end_row=4, end_column=c_end)
+            kc = ws.cell(row=4, column=c_start)
+            kc.value     = f"{lbl}\n{val}"
+            kc.font      = Font(name="Calibri", bold=True, color=CLR_WHITE, size=10)
+            kc.fill      = _mk_fill(CLR_NAVY)
+            kc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            kc.border    = Border(
+                left=Side(style="thin", color="2A4A6A"),
+                right=Side(style="thin", color="2A4A6A"),
+                top=Side(style="thin", color="2A4A6A"),
+                bottom=Side(style="thin", color="2A4A6A"),
+            )
+        ws.row_dimensions[4].height = 36
+
+        # ── Row 5: blank spacer ──────────────────────────────────────────────
+        ws.row_dimensions[5].height = 6
+        for c in range(1, len(COL_CFG) + 1):
+            ws.cell(row=5, column=c).fill = _mk_fill(CLR_WHITE)
+
+        # ── Row 6: Column headers ────────────────────────────────────────────
+        for col_idx, (hdr, width, fmt, color_key) in enumerate(COL_CFG, start=1):
+            cell = ws.cell(row=6, column=col_idx, value=hdr)
+            cell.font      = _mk_font(bold=True, color=CLR_WHITE, size=9)
+            cell.fill      = _mk_fill(HDR_COLORS[color_key])
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border    = _mk_border("thin", "3A5A7A")
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        ws.row_dimensions[6].height = 30
+
+        # ── Rows 7+: Data ────────────────────────────────────────────────────
+        # Period labels for grouping
+        PERIOD_LABELS = {
+            (1,  8):  ("Night",    "00:00–02:00", "1A2A4A"),
+            (9,  28): ("Morning",  "02:00–07:00", "12344A"),
+            (29, 48): ("Peak AM",  "07:00–12:00", "4A1222"),
+            (49, 68): ("Midday",   "12:00–17:00", "4A3A12"),
+            (69, 88): ("Peak PM",  "17:00–22:00", "3A124A"),
+            (89, 96): ("Late Night","22:00–24:00", "1A2A4A"),
+        }
+
+        def _period_for(block):
+            for (s, e), (lbl, t, clr) in PERIOD_LABELS.items():
+                if s <= block <= e:
+                    return lbl, clr
+            return "—", CLR_DARK_NAVY
+
+        prev_period = None
+        data_row = 7
+
+        for row_i, row in enumerate(df[data_cols].itertuples(index=False), start=0):
+            block_num = int(row[0]) if row[0] is not None else row_i + 1
+            period, period_clr = _period_for(block_num)
+
+            # Insert a period separator when period changes
+            if period != prev_period:
+                ws.merge_cells(
+                    start_row=data_row, start_column=1,
+                    end_row=data_row, end_column=len(COL_CFG)
+                )
+                sep = ws.cell(row=data_row, column=1)
+                sep.value     = f"  ◆  {period}"
+                sep.font      = Font(name="Calibri", bold=True, color=CLR_WHITE, size=8)
+                sep.fill      = _mk_fill(period_clr)
+                sep.alignment = Alignment(horizontal="left", vertical="center")
+                ws.row_dimensions[data_row].height = 14
+                data_row  += 1
+                prev_period = period
+
+            # Alternating row fill
+            bg = CLR_LIGHT_BLUE if row_i % 2 == 0 else CLR_LIGHT_GRAY
+
+            for col_idx, (hdr, width, fmt, color_key) in enumerate(COL_CFG, start=1):
+                val = row[col_idx - 1]  # row is a namedtuple indexed by position
+                cell = ws.cell(row=data_row, column=col_idx)
+
+                # Format value
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    cell.value = None
+                else:
+                    try:
+                        cell.value = float(val) if fmt not in ("@",) else str(val)
+                    except (TypeError, ValueError):
+                        cell.value = str(val) if val is not None else None
+
+                cell.number_format = fmt
+                cell.alignment     = Alignment(horizontal="center", vertical="center")
+                cell.border        = _mk_border("hair", "D0D7E3")
+
+                # Row background
+                cell.fill = _mk_fill(bg)
+
+                # Column-specific overrides
+                if color_key == "forecast" and cell.value is not None:
+                    cell.font = Font(name="Calibri", bold=True, color=CLR_ACCENT, size=9)
+                elif color_key == "actual" and cell.value is not None:
+                    cell.font = Font(name="Calibri", bold=True, color="155724", size=9)
+                elif color_key == "baseline" and cell.value is not None:
+                    cell.font = Font(name="Calibri", color="7B4000", size=9)
+                elif color_key == "conf":
+                    try:
+                        conf_val = float(val) if val is not None else 0
+                        if conf_val >= 0.85:
+                            cell.font = Font(name="Calibri", bold=True, color="155724", size=9)
+                        elif conf_val >= 0.70:
+                            cell.font = Font(name="Calibri", color=CLR_GOLD, size=9)
+                        else:
+                            cell.font = Font(name="Calibri", color=CLR_RED, size=9)
+                    except (TypeError, ValueError):
+                        cell.font = _mk_font(size=9)
+                else:
+                    cell.font = _mk_font(size=9)
+
+            ws.row_dimensions[data_row].height = 16
+            data_row += 1
+
+        # ── Freeze panes (keep header visible) ──────────────────────────────
+        ws.freeze_panes = "C7"
+
+        # No conditional color scale — plain alternating rows only
+
+        # ── Auto-filter on header row ────────────────────────────────────────
+        ws.auto_filter.ref = (
+            f"A6:{get_column_letter(len(COL_CFG))}6"
+        )
+
+        # ── Tab color ────────────────────────────────────────────────────────
+        ws.sheet_properties.tabColor = CLR_ACCENT if "1" in sheet_name else CLR_ORANGE
+
+    # ── Build workbook ───────────────────────────────────────────────────────
+    wb = Workbook()
+    wb.remove(wb.active)   # remove default blank sheet
+
+    def _get_meta(result, region_fallback):
+        meta = result.get("metadata", {}) or {}
+        date_val = (
+            result.get("t2_date")
+            or meta.get("forecast_date")
+            or meta.get("date")
+            or ""
+        )
+        return date_val, meta.get("region") or region_fallback
+
+    t1_date, t1_region = _get_meta(t1_raw, region)
+    t2_date, t2_region = _get_meta(t2_raw, region)
+
+    _write_sheet(wb, df_t1, "T+1  Day-Ahead",   "T+1 (Day-Ahead)",       t1_date, t1_region)
+    _write_sheet(wb, df_t2, "T+2  Day-After",    "T+2 (Day-After-Tomorrow)", t2_date, t2_region)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"GNA_Forecast_{resolved}_T1_T2.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/forecast")
 def forecast_get(date: Optional[str] = None, baseline_days: int = 7, region: str = "punjab"):
     return v2_dayahead({
@@ -3666,17 +4489,24 @@ def v2_live(payload: dict = None):
         raise HTTPException(status_code=404, detail="No data for requested date")
 
     if "total_drawal" in day_df.columns:
-        # Some feeds use tiny placeholders (e.g. 0.0001) for "missing" drawal.
-        # Treat near-zero values as unavailable so Live Ops doesn't think all 96 blocks are present.
-        drawal = pd.to_numeric(day_df["total_drawal"], errors="coerce").fillna(0.0)
-        available_blocks = int(day_df[drawal > 1e-3]["time_block"].nunique())
+        # Count only CONSECUTIVE valid blocks from block 1 — stop at first gap/zero.
+        # This prevents scatter of non-zero values in later blocks from inflating the count.
+        _sorted = day_df.sort_values("time_block")[["time_block", "total_drawal"]].copy()
+        _sorted["total_drawal"] = pd.to_numeric(_sorted["total_drawal"], errors="coerce").fillna(0.0)
+        _sorted = _sorted[_sorted["time_block"].between(1, 96)]
+        available_blocks = 0
+        for _blk in range(1, 97):
+            _row = _sorted[_sorted["time_block"] == _blk]
+            if _row.empty or float(_row["total_drawal"].iloc[0]) < 50.0:
+                break
+            available_blocks = _blk
     else:
         available_blocks = int(day_df["time_block"].nunique())
-    available_blocks = max(1, min(96, available_blocks))
+    available_blocks = max(0, min(96, available_blocks))
 
     requested_blocks = int(payload.get("actual_blocks", available_blocks))
     actual_blocks = max(0, min(requested_blocks, available_blocks))
-    if available_blocks < 10:
+    if available_blocks < 2:
         actual_blocks = 0
     config_override = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     if payload.get("calendar_config"):
@@ -3897,165 +4727,171 @@ def v2_history():
     }
     return _json_safe(response)
 @app.post("/api/v2/load_benchmarks")
-def v2_load_benchmarks(payload: dict):
-    df = _get_df()
+async def v2_load_benchmarks(payload: dict):
     date = payload.get("date")
-    if not date:
-        valid_dates = _get_valid_dates(df)
-        date = valid_dates[-1] if valid_dates else None
-    
-    if not date:
+
+    def _work():
+        df = _get_df()
+        d = date
+        if not d:
+            valid_dates = _get_valid_dates(df)
+            d = valid_dates[-1] if valid_dates else None
+        if not d:
+            return None
+        target_dt = pd.to_datetime(d)
+        t1 = (target_dt - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        t7 = (target_dt - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+        t365 = (target_dt - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
+
+        def _extract(dd):
+            day_df = df[df["date"] == dd].copy()
+            if day_df.empty:
+                return [None] * 96
+            day_df["time_block"] = pd.to_numeric(day_df.get("time_block"), errors="coerce")
+            day_df["total_drawal"] = pd.to_numeric(day_df.get("total_drawal"), errors="coerce")
+            day_df = day_df.dropna(subset=["time_block"])
+            day_df = day_df[day_df["time_block"].between(1, 96)]
+            if day_df.empty:
+                return [None] * 96
+            by_block = (
+                day_df.groupby(day_df["time_block"].astype(int))["total_drawal"]
+                .mean()
+                .reindex(range(1, 97))
+            )
+            vec = by_block.to_numpy(dtype=float)
+            vec = np.where(vec <= 1.0, np.nan, vec)
+            return [None if (v is None or not np.isfinite(float(v))) else float(v) for v in vec.tolist()]
+
+        return _json_safe({
+            "today": _extract(d),
+            "t1": _extract(t1),
+            "t7": _extract(t7),
+            "t365": _extract(t365),
+            "dates": {"today": d, "t1": t1, "t7": t7, "t365": t365}
+        })
+
+    result = await asyncio.to_thread(_work)
+    if result is None:
         raise HTTPException(status_code=404, detail="No date specified")
-    
-    target_dt = pd.to_datetime(date)
-    t1 = (target_dt - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-    t7 = (target_dt - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
-    t365 = (target_dt - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
-    
-    def _extract(d):
-        day_df = df[df["date"] == d].copy()
-        if day_df.empty:
-            return [None] * 96
-
-        day_df["time_block"] = pd.to_numeric(day_df.get("time_block"), errors="coerce")
-        day_df["total_drawal"] = pd.to_numeric(day_df.get("total_drawal"), errors="coerce")
-        day_df = day_df.dropna(subset=["time_block"])
-        day_df = day_df[day_df["time_block"].between(1, 96)]
-        if day_df.empty:
-            return [None] * 96
-
-        by_block = (
-            day_df.groupby(day_df["time_block"].astype(int))["total_drawal"]
-            .mean()
-            .reindex(range(1, 97))
-        )
-        vec = by_block.to_numpy(dtype=float)
-        # Treat 0/near-0 blocks as missing for realistic load series.
-        vec = np.where(vec <= 1.0, np.nan, vec)
-
-        return [None if (v is None or not np.isfinite(float(v))) else float(v) for v in vec.tolist()]
-
-    return _json_safe({
-        "today": _extract(date),
-        "t1": _extract(t1),
-        "t7": _extract(t7),
-        "t365": _extract(t365),
-        "dates": {"today": date, "t1": t1, "t7": t7, "t365": t365}
-    })
+    return result
 
 @app.post("/api/v2/load_series")
-def v2_load_series(payload: dict):
-    df = _get_df()
+async def v2_load_series(payload: dict):
     dates = payload.get("dates", [])
-    series = {}
-    for d in dates:
-        day_df = df[df["date"] == d].copy()
-        if day_df.empty:
-            series[d] = [None] * 96
-            continue
 
-        day_df["time_block"] = pd.to_numeric(day_df.get("time_block"), errors="coerce")
-        day_df["total_drawal"] = pd.to_numeric(day_df.get("total_drawal"), errors="coerce")
-        day_df = day_df.dropna(subset=["time_block"])
-        day_df = day_df[day_df["time_block"].between(1, 96)]
-        if day_df.empty:
-            series[d] = [None] * 96
-            continue
+    def _work():
+        df = _get_df()
+        series = {}
+        for d in dates:
+            day_df = df[df["date"] == d].copy()
+            if day_df.empty:
+                series[d] = [None] * 96
+                continue
+            day_df["time_block"] = pd.to_numeric(day_df.get("time_block"), errors="coerce")
+            day_df["total_drawal"] = pd.to_numeric(day_df.get("total_drawal"), errors="coerce")
+            day_df = day_df.dropna(subset=["time_block"])
+            day_df = day_df[day_df["time_block"].between(1, 96)]
+            if day_df.empty:
+                series[d] = [None] * 96
+                continue
+            by_block = (
+                day_df.groupby(day_df["time_block"].astype(int))["total_drawal"]
+                .mean()
+                .reindex(range(1, 97))
+            )
+            vec = by_block.to_numpy(dtype=float)
+            vec = np.where(vec <= 1.0, np.nan, vec)
+            series[d] = [None if (v is None or not np.isfinite(float(v))) else float(v) for v in vec.tolist()]
+        return _json_safe({"series": series})
 
-        by_block = (
-            day_df.groupby(day_df["time_block"].astype(int))["total_drawal"]
-            .mean()
-            .reindex(range(1, 97))
-        )
-        vec = by_block.to_numpy(dtype=float)
-        vec = np.where(vec <= 1.0, np.nan, vec)
-        series[d] = [None if (v is None or not np.isfinite(float(v))) else float(v) for v in vec.tolist()]
-    
-    return _json_safe({"series": series})
+    return await asyncio.to_thread(_work)
 
 @app.post("/api/v2/load_change")
-def v2_load_change(payload: dict):
-    df = _get_df()
+async def v2_load_change(payload: dict):
     date1 = payload.get("date1")
     date2 = payload.get("date2")
-    dates = payload.get("dates", [])
-    
-    def _extract_sum(d):
-        day_df = df[df["date"] == d]
-        return float(day_df["total_drawal"].sum()) if not day_df.empty else 0.0
+    req_dates = payload.get("dates", [])
 
-    # If no dates list provided, fetch all chronological dates for a "Full Data" view
-    if not dates or len(dates) <= 1:
-        dates = sorted(df["date"].dropna().astype(str).unique().tolist())
+    def _work():
+        df = _get_df()
+        dates = req_dates
 
-    if dates and len(dates) > 1:
-        sorted_dates = sorted(dates)
-        daily_trends = []
-        for i in range(1, len(sorted_dates)):
-            curr_sum = _extract_sum(sorted_dates[i])
-            prev_sum = _extract_sum(sorted_dates[i-1])
-            if prev_sum > 0:
-                change = ((curr_sum - prev_sum) / prev_sum) * 100
-                daily_trends.append({
-                    "date": sorted_dates[i],
-                    "value": round(change, 2)
-                })
-        
-        return _json_safe({
-            "type": "daily",
-            "data": daily_trends
-        })
-    else:
-        # Absolute fallback if only 1 day of data exists
-        def _extract_blocks(d):
-            day_df = df[df["date"] == d].sort_values("time_block")
-            return day_df["total_drawal"].values if not day_df.empty else np.zeros(96)
-        
-        l1 = _extract_blocks(date1 or (dates[0] if dates else None))
-        l2 = _extract_blocks(date2)
-        l2_safe = np.where(l2 == 0, 1e-6, l2)
-        change_pct = ((l1 - l2) / l2_safe) * 100
-        
-        return _json_safe({
-            "type": "blocks",
-            "blocks": list(range(1, 97)),
-            "change_pct": [round(float(x), 2) for x in change_pct]
-        })
+        def _extract_sum(d):
+            day_df = df[df["date"] == d]
+            return float(day_df["total_drawal"].sum()) if not day_df.empty else 0.0
+
+        if not dates or len(dates) <= 1:
+            dates = sorted(df["date"].dropna().astype(str).unique().tolist())
+
+        if dates and len(dates) > 1:
+            sorted_dates = sorted(dates)
+            daily_trends = []
+            for i in range(1, len(sorted_dates)):
+                curr_sum = _extract_sum(sorted_dates[i])
+                prev_sum = _extract_sum(sorted_dates[i - 1])
+                if prev_sum > 0:
+                    daily_trends.append({
+                        "date": sorted_dates[i],
+                        "value": round(((curr_sum - prev_sum) / prev_sum) * 100, 2)
+                    })
+            return _json_safe({"type": "daily", "data": daily_trends})
+        else:
+            def _extract_blocks(d):
+                day_df = df[df["date"] == d].sort_values("time_block")
+                return day_df["total_drawal"].values if not day_df.empty else np.zeros(96)
+            l1 = _extract_blocks(date1 or (dates[0] if dates else None))
+            l2 = _extract_blocks(date2)
+            l2_safe = np.where(l2 == 0, 1e-6, l2)
+            change_pct = ((l1 - l2) / l2_safe) * 100
+            return _json_safe({
+                "type": "blocks",
+                "blocks": list(range(1, 97)),
+                "change_pct": [round(float(x), 2) for x in change_pct]
+            })
+
+    return await asyncio.to_thread(_work)
 
 
 @app.post("/api/v2/analysis")
-def v2_analysis(payload: dict):
-    df = _get_df()
+async def v2_analysis(payload: dict):
+    """Fast pandas-only endpoint — no ML.
+    Returns correlations immediately (~20ms).
+    Attribution is derived from the dayahead cache if already computed,
+    otherwise returns an empty list (frontend fills it when dayahead arrives)."""
     requested = payload.get("date")
-    resolved, exact, valid_dates = _resolve_date(df, requested)
-    if not resolved:
+    region = payload.get("region", "haryana")
+
+    def _work():
+        df = _get_df()
+        resolved, exact, valid_dates = _resolve_date(df, requested)
+        if not resolved:
+            return None
+        df_valid = df[df["date"].isin(valid_dates)]
+        window_dates = valid_dates[-7:] if len(valid_dates) >= 7 else valid_dates
+        window_df = df_valid[df_valid["date"].isin(window_dates)]
+        correlations = {}
+        for col in ["temperature", "humidity", "precipitation"]:
+            if col in window_df.columns:
+                corr = _safe_corr(window_df["total_drawal"], window_df[col])
+                correlations[col] = round(float(corr), 3)
+        # Check if dayahead was already computed (cache hit) — free attribution
+        sig = _df_signature(df_valid)
+        cache_key = ("dayahead", str(resolved), 7, str(region)) + (sig,)
+        cached = _DAYAHEAD_SERIES_CACHE.get(cache_key)
+        attribution = _attribution_summary(cached) if cached else []
+        return _json_safe({"date": resolved, "correlations": correlations, "attribution": attribution})
+
+    result = await asyncio.to_thread(_work)
+    if result is None:
         raise HTTPException(status_code=404, detail="No data available")
-    
-    # Use filtered df for analysis to ensure consistency
-    df_valid = df[df["date"].isin(valid_dates)]
-    day_df = df_valid[df_valid["date"] == resolved]
-    window_dates = valid_dates[-7:] if len(valid_dates) >= 7 else valid_dates
-    window_df = df_valid[df_valid["date"].isin(window_dates)]
-    correlations = {}
-    for col in ["temperature", "humidity", "precipitation"]:
-        if col in window_df.columns:
-            corr = _safe_corr(window_df["total_drawal"], window_df[col])
-            correlations[col] = round(float(corr), 3)
-    series = _compute_dayahead(df_valid, resolved, 7)
-    response = {
-        "date": resolved,
-        "correlations": correlations,
-        "attribution": _attribution_summary(series) if series else []
-    }
-    return _json_safe(response)
+    return result
 
 @app.post("/api/v2/precompute")
-def v2_precompute(payload: dict):
-    """Single endpoint that returns dayahead + benchmarks + momentum + analysis.
-    Called once after data load to pre-fill all tabs without individual round-trips."""
-    import concurrent.futures
-
-    df = _get_df()
+async def v2_precompute(payload: dict):
+    """All 4 tasks fire in parallel via asyncio.gather.
+    Fast tasks (benchmarks, momentum) use the default thread pool.
+    Dayahead (ML ~30s) uses _ML_EXECUTOR so it never blocks fast endpoints."""
+    df = _get_df(copy=False)
     requested = payload.get("date")
     baseline_days = payload.get("baseline_days", 7)
     region = payload.get("region", "haryana")
@@ -4065,145 +4901,285 @@ def v2_precompute(payload: dict):
     if not resolved:
         raise HTTPException(status_code=404, detail="No data available")
 
-    results = {}
-    errors = {}
+    loop = asyncio.get_event_loop()
 
-    def _do_dayahead():
+    async def _safe(coro, label):
         try:
-            return v2_dayahead({
-                "date": resolved, "baseline_days": baseline_days,
-                "calendar_config": calendar_config, "region": region
-            })
+            return await coro
         except Exception as e:
-            return {"error": str(e)}
+            err_text = _format_exception(e)
+            logger.warning("precompute %s error: %s", label, err_text)
+            return {"error": err_text}
 
-    def _do_benchmarks():
+    bench_coro    = asyncio.to_thread(lambda: _v2_load_benchmarks_sync(resolved))
+    t1            = (pd.to_datetime(resolved) - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    moment_coro   = asyncio.to_thread(lambda: _v2_load_change_sync(resolved, t1, []))
+    analysis_coro = asyncio.to_thread(lambda: _v2_analysis_fast_sync(resolved))
+    df            = _get_df(copy=False)
+    # Use async deduplication — won't start a second pipeline if one is in-flight
+    dayahead_coro = _compute_dayahead_async(df, resolved, baseline_days, region)
+
+    benchmarks, momentum, analysis, dayahead_result = await asyncio.gather(
+        _safe(bench_coro, "benchmarks"),
+        _safe(moment_coro, "momentum"),
+        _safe(analysis_coro, "analysis"),
+        _safe(dayahead_coro, "dayahead"),
+    )
+
+    # Post-process dayahead (fast, no ML)
+    dayahead_payload = {"date": resolved, "baseline_days": baseline_days,
+                        "calendar_config": calendar_config, "region": region}
+    if dayahead_result and not isinstance(dayahead_result, dict) or (
+        isinstance(dayahead_result, dict) and not dayahead_result.get("error")
+    ):
         try:
-            return v2_load_benchmarks({"date": resolved})
+            dayahead = await asyncio.to_thread(
+                _v2_dayahead_postprocess, df, dayahead_payload, resolved, True, dayahead_result
+            )
         except Exception as e:
-            return {"error": str(e)}
+            dayahead = {"error": _format_exception(e)}
+    else:
+        dayahead = dayahead_result
 
-    def _do_momentum():
-        try:
-            target_dt = pd.to_datetime(resolved)
-            t1 = (target_dt - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-            return v2_load_change({"date1": resolved, "date2": t1, "dates": []})
-        except Exception as e:
-            return {"error": str(e)}
+    return _json_safe({
+        "benchmarks": benchmarks,
+        "momentum": momentum,
+        "analysis": analysis,
+        "dayahead": dayahead,
+    })
 
-    def _do_analysis():
-        try:
-            return v2_analysis({"date": resolved, "region": region})
-        except Exception as e:
-            return {"error": str(e)}
 
-    # Run all 4 computations in parallel threads
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        fut_dayahead = executor.submit(_do_dayahead)
-        fut_bench = executor.submit(_do_benchmarks)
-        fut_momentum = executor.submit(_do_momentum)
-        fut_analysis = executor.submit(_do_analysis)
+# --- Sync helpers used by v2_precompute (avoids awaiting async wrappers from threads) ---
 
-        results["dayahead"] = fut_dayahead.result(timeout=120)
-        results["benchmarks"] = fut_bench.result(timeout=30)
-        results["momentum"] = fut_momentum.result(timeout=30)
-        results["analysis"] = fut_analysis.result(timeout=30)
+def _v2_load_benchmarks_sync(date: str):
+    df = _get_df()
+    target_dt = pd.to_datetime(date)
+    t1 = (target_dt - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    t7 = (target_dt - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+    t365 = (target_dt - pd.Timedelta(days=365)).strftime('%Y-%m-%d')
 
-    return _json_safe(results)
+    def _extract(dd):
+        day_df = df[df["date"] == dd].copy()
+        if day_df.empty:
+            return [None] * 96
+        day_df["time_block"] = pd.to_numeric(day_df.get("time_block"), errors="coerce")
+        day_df["total_drawal"] = pd.to_numeric(day_df.get("total_drawal"), errors="coerce")
+        day_df = day_df.dropna(subset=["time_block"])
+        day_df = day_df[day_df["time_block"].between(1, 96)]
+        if day_df.empty:
+            return [None] * 96
+        by_block = (
+            day_df.groupby(day_df["time_block"].astype(int))["total_drawal"]
+            .mean().reindex(range(1, 97))
+        )
+        vec = by_block.to_numpy(dtype=float)
+        vec = np.where(vec <= 1.0, np.nan, vec)
+        return [None if (v is None or not np.isfinite(float(v))) else float(v) for v in vec.tolist()]
+
+    return _json_safe({
+        "today": _extract(date), "t1": _extract(t1),
+        "t7": _extract(t7), "t365": _extract(t365),
+        "dates": {"today": date, "t1": t1, "t7": t7, "t365": t365}
+    })
+
+
+def _v2_load_change_sync(date1: str, date2: str, dates: list):
+    df = _get_df()
+    if not dates or len(dates) <= 1:
+        dates = sorted(df["date"].dropna().astype(str).unique().tolist())
+
+    def _sum(d):
+        day_df = df[df["date"] == d]
+        return float(day_df["total_drawal"].sum()) if not day_df.empty else 0.0
+
+    if len(dates) > 1:
+        sorted_dates = sorted(dates)
+        daily_trends = []
+        for i in range(1, len(sorted_dates)):
+            curr, prev = _sum(sorted_dates[i]), _sum(sorted_dates[i - 1])
+            if prev > 0:
+                daily_trends.append({"date": sorted_dates[i], "value": round(((curr - prev) / prev) * 100, 2)})
+        return _json_safe({"type": "daily", "data": daily_trends})
+    else:
+        def _blocks(d):
+            day_df = df[df["date"] == d].sort_values("time_block")
+            return day_df["total_drawal"].values if not day_df.empty else np.zeros(96)
+        l1 = _blocks(date1)
+        l2 = _blocks(date2)
+        change_pct = ((l1 - l2) / np.where(l2 == 0, 1e-6, l2)) * 100
+        return _json_safe({"type": "blocks", "blocks": list(range(1, 97)),
+                           "change_pct": [round(float(x), 2) for x in change_pct]})
+
+
+def _v2_analysis_fast_sync(date: str, region: str = "haryana"):
+    """Correlation-only analysis (no ML) for precompute fast path."""
+    df = _get_df()
+    resolved, exact, valid_dates = _resolve_date(df, date)
+    if not resolved:
+        return {"error": "No data available"}
+    df_valid = df[df["date"].isin(valid_dates)]
+    window_dates = valid_dates[-7:] if len(valid_dates) >= 7 else valid_dates
+    window_df = df_valid[df_valid["date"].isin(window_dates)]
+    correlations = {}
+    for col in ["temperature", "humidity", "precipitation"]:
+        if col in window_df.columns:
+            corr = _safe_corr(window_df["total_drawal"], window_df[col])
+            correlations[col] = round(float(corr), 3)
+    return _json_safe({"date": resolved, "correlations": correlations, "attribution": []})
 
 
 @app.get("/api/v2/settings")
-def v2_settings():
-    response = {
-        "alert_thresholds": {"warning_pct": 5, "critical_pct": 10},
-        "baseline_defaults": {"window_days": 7, "weather_similarity": True},
-        "tariffs": _get_tariffs()
-    }
-    return _json_safe(response)
+async def v2_settings():
+    return await asyncio.to_thread(
+        lambda: _json_safe({
+            "alert_thresholds": {"warning_pct": 5, "critical_pct": 10},
+            "baseline_defaults": {"window_days": 7, "weather_similarity": True},
+            "tariffs": _get_tariffs()
+        })
+    )
 
-@app.post("/api/simulator/blocks")
-def v2_simulator_blocks(payload: dict):
-    df = _get_df()
-    if "date" not in df.columns:
-        raise HTTPException(status_code=404, detail="No data available")
-    
-    dates = sorted(df["date"].dropna().astype(str).unique().tolist())
-    requested_date = payload.get("date")
-    if not requested_date or requested_date not in dates:
-        requested_date = _get_latest_robust_date(df)
-    
-    if not requested_date:
-        raise HTTPException(status_code=404, detail="No data available")
 
-    # Parse payload configurations
-    config_override = {}
-    if payload.get("sliders"):
-        config_override["driver_sliders"] = payload.get("sliders")
-    if payload.get("selection"):
-        config_override["selection"] = payload.get("selection")
-    if payload.get("manual_base"):
-        config_override["manual_base"] = payload.get("manual_base")
+@app.post("/api/v2/prepare")
+async def v2_prepare(payload: dict):
+    """
+    Phase 1-3 data preparation: returns historical stats, similar days preview,
+    and weather summary for the target date — WITHOUT running ML training.
+    Completes in < 3s since engine._df is already in memory.
+    """
+    date = payload.get("date")
+    region = payload.get("region", "haryana")
+    baseline_days = int(payload.get("baseline_days", 7))
 
-    # Run pipeline
-    try:
-        result = run_short_term_pipeline(df, requested_date, config=config_override)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Pipeline error: {str(exc)}")
+    def _work():
+        df = _get_df()
+        if df is None or df.empty:
+            return {"status": "no_data"}
 
-    # Map result to SimulatorBlocksResponse
-    blocks_out = []
-    raw_rows = result.get("forecast_df", [])
-    matrix_list = result.get("block_driver_matrix", [])
-    matrix_map = {int(r["block"]): r for r in matrix_list if "block" in r}
-    
-    for row in raw_rows:
-        b_num = int(row.get("time_block", 0))
-        m_row = matrix_map.get(b_num, {})
-        
-        block_item = {
-            "block_number": b_num,
-            "baseline_mw": row.get("historical_baseline"),
-            "final_mw": row.get("forecast"),
-            "actual_mw": row.get("actual"),
-            "selection_mask": float(result.get("selection_mask", [1.0]*96)[b_num-1]) if b_num > 0 else 1.0,
-            
-            # Real impact percentages from the matrix
-            "weather_total_impact_pct": float(m_row.get("weather_scaled", 0.0) * 100.0),
-            "temperature_impact_pct": float(m_row.get("temperature_scaled", 0.0) * 100.0),
-            "humidity_impact_pct": float(m_row.get("humidity_scaled", 0.0) * 100.0),
-            "precipitation_impact_pct": float(m_row.get("precipitation_scaled", 0.0) * 100.0),
-            "wind_impact_pct": float(m_row.get("wind_scaled", 0.0) * 100.0),
-            "daytype_impact_pct": float(m_row.get("daytype_scaled", 0.0) * 100.0),
-            "holiday_impact_pct": float(m_row.get("holiday_scaled", 0.0) * 100.0),
-            "manual_impact_pct": float(m_row.get("manual_scaled", 0.0) * 100.0),
+        response = {"status": "ok", "date": date, "region": region, "phases": []}
+
+        # ── Phase 1: Data summary ─────────────────────────────────────────────
+        total_rows = len(df)
+        date_col = "date" if "date" in df.columns else None
+        date_range = {}
+        if date_col:
+            dates = df[date_col].astype(str)
+            date_range = {"from": str(dates.min()), "to": str(dates.max()), "total_days": dates.nunique()}
+        load_col = "total_drawal" if "total_drawal" in df.columns else None
+        load_stats = {}
+        if load_col:
+            load_stats = {
+                "mean_mw": round(float(df[load_col].mean()), 1),
+                "peak_mw": round(float(df[load_col].max()), 1),
+                "min_mw": round(float(df[load_col].min()), 1),
+            }
+        response["data_summary"] = {
+            "total_rows": total_rows,
+            "date_range": date_range,
+            "load_stats": load_stats,
         }
-        blocks_out.append(block_item)
+        response["phases"].append({"step": "data_loaded", "message": "✓ Historical data loaded"})
 
-    # Construct response
-    response = {
-        "date": requested_date,
-        "baseline_days": payload.get("baseline_days", 7),
-        "available_dates": dates,
-        "sliders": result.get("metadata", {}).get("driver_sliders"),
-        "selection": result.get("metadata", {}).get("selection"),
-        "weights_source": "derived", # or from pipeline
-        "driver_weight_matrix": result.get("block_driver_matrix"), # Pipeline returns this as list of dicts
-        "block_driver_matrix": result.get("block_driver_matrix"),  # Pipeline returns row-level driver details here
-        "blocks": blocks_out,
-        # Pass through other metadata
-        "temperature_delta_profile": result.get("metadata", {}).get("temperature_delta_profile"),
-    }
+        # ── Phase 2: Preprocessing verification ──────────────────────────────
+        feature_count = len([c for c in df.columns if c not in ["date", "time_block", "total_drawal", "Datetime"]])
+        response["preprocessing"] = {
+            "features_available": feature_count,
+            "has_weather": any(c in df.columns for c in ["temperature", "humidity", "precipitation"]),
+            "has_holidays": "is_holiday" in df.columns,
+        }
+        response["phases"].append({"step": "preprocessing_done", "message": "✓ Features engineered"})
 
-    # The frontend 'blockMapFromApi' expects 'SimulatorBlocksResponse'. 
-    # Important: 'block_driver_matrix' in python response (line 2832) contains:
-    # 'temperature_scaled', 'weather_scaled' etc. 
-    # Check if 'block_driver_matrix' is populated in pipeline. 
-    # Yes, line 2832: "block_driver_matrix": block_driver_matrix.to_dict("records")
-    
-    # We'll rely on 'block_driver_matrix' to provide the detailed attribution 
-    # as the frontend 'store.ts' lines 398-466 heavily use it.
-    
-    return _json_safe(response)
+        # ── Phase 3: Quick historical stats by day-type ───────────────────────
+        hist_stats = {}
+        if load_col and "DayOfWeek" in df.columns:
+            try:
+                by_dow = df.groupby("DayOfWeek")[load_col].mean().round(1).to_dict()
+                hist_stats["avg_by_dow"] = by_dow
+            except Exception:
+                pass
+        if load_col and "Hour" in df.columns:
+            try:
+                by_hour = df.groupby("Hour")[load_col].mean().round(1).to_dict()
+                hist_stats["avg_by_hour"] = {str(k): v for k, v in by_hour.items()}
+            except Exception:
+                pass
+        response["historical_stats"] = hist_stats
+        response["phases"].append({"step": "stats_ready", "message": "✓ Historical stats computed"})
+
+        # ── Weather summary for target date (if available) ───────────────────
+        wx_summary = {}
+        if date and date_col and "temperature" in df.columns:
+            try:
+                day_df = df[df[date_col].astype(str) == date]
+                if not day_df.empty:
+                    wx_summary = {
+                        "temp_mean": round(float(day_df["temperature"].mean()), 1),
+                        "temp_max": round(float(day_df["temperature"].max()), 1),
+                        "humidity_mean": round(float(day_df["humidity"].mean()), 1) if "humidity" in day_df.columns else None,
+                        "precip_total": round(float(day_df["precipitation"].sum()), 2) if "precipitation" in day_df.columns else None,
+                    }
+            except Exception:
+                pass
+        response["weather_summary"] = wx_summary
+
+        return _json_safe(response)
+
+    return await asyncio.to_thread(_work)
+
+
+@app.post("/api/v2/forecast/submit")
+async def forecast_submit(payload: dict):
+    """Submit a forecast job. Returns job_id immediately; worker runs in background."""
+    date = payload.get("date")
+    region = payload.get("region", "haryana")
+    baseline_days = int(payload.get("baseline_days", 7))
+    if not date:
+        raise HTTPException(status_code=400, detail="date is required")
+
+    # UX Fix: If a job for exactly these params is ALREADY running, bind the UI to it directly 
+    # instead of launching a shielded ghost-job that eats all the progress callbacks.
+    for jid, job in _JOB_STORE.items():
+        if job["status"] in ("queued", "running") and job["date"] == date and job["region"] == region and job["baseline_days"] == baseline_days:
+            return {"job_id": jid, "status": job["status"], "date": date, "restored": True}
+
+    job_id = str(uuid.uuid4())
+    _job_init(job_id, date, region, baseline_days)
+    asyncio.create_task(_run_forecast_job(job_id))
+
+    return {"job_id": job_id, "status": "queued", "date": date}
+
+
+@app.get("/api/v2/forecast/job/{job_id}")
+async def forecast_job_status(job_id: str):
+    """Poll job status + last few progress events."""
+    job = _JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _json_safe({
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"][-5:],
+        "has_result": job["result"] is not None,
+        "error": job["error"],
+        "elapsed": (
+            round((job["completed_at"] or _time_module.time()) - job["created_at"], 1)
+        ),
+    })
+
+
+@app.get("/api/v2/forecast/job/{job_id}/result")
+async def forecast_job_result(job_id: str):
+    """Fetch full forecast result once job is done."""
+    job = _JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] == "error":
+        raise HTTPException(status_code=500, detail=job["error"] or "Job failed")
+    if job["status"] != "done" or job["result"] is None:
+        raise HTTPException(status_code=202, detail="Job not complete yet")
+    return job["result"]
+
+    # NOTE: Duplicate /api/simulator/blocks route was removed.
+    # The primary handler is api_simulator_blocks() using SimulatorBlocksRequest model.
 
 
 # --- Scenario Endpoints (Placeholder) ---
@@ -4215,7 +5191,7 @@ def _load_scenarios():
     try:
         with open(SCENARIOS_FILE, "r") as f:
             return json.load(f)
-    except:
+    except (json.JSONDecodeError, OSError):
         return []
 
 def _save_scenarios(items):
@@ -4244,42 +5220,174 @@ def v2_delete_scenario(scenario_id: str):
     _save_scenarios(items)
     return {"status": "ok"}
 
-def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "punjab"):
-    # New implementation using run_short_term_pipeline
+def _make_cache_key(target_date: str, baseline_days: int, region: str, df) -> tuple:
     try:
         baseline_days = int(baseline_days) if baseline_days else 7
-    except:
+    except (TypeError, ValueError):
         baseline_days = 7
     baseline_days = max(1, min(baseline_days, 15))
-    
-    sig = _df_signature(df) if "_df_signature" in globals() else ""
-    cache_key = ("dayahead", str(target_date), int(baseline_days), str(region)) + (sig,)
-    
-    cached = _DAYAHEAD_SERIES_CACHE.get(cache_key) if "_DAYAHEAD_SERIES_CACHE" in globals() else None
+    sig = _df_signature(df)
+    return ("dayahead", str(target_date), int(baseline_days), str(region)) + (sig,)
+
+
+def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "punjab", progress_cb=None):
+    """Sync pipeline runner — always checks cache first, runs pipeline on miss.
+    Uses per-key threading.Lock so only ONE pipeline run executes per unique
+    (date, region, baseline_days) even under concurrent synchronous callers."""
+    cache_key = _make_cache_key(target_date, baseline_days, region, df)
+
+    # Fast path: already cached
+    cached = _DAYAHEAD_SERIES_CACHE.get(cache_key)
     if cached is not None:
         return copy.deepcopy(cached)
-        
-    try:
-        config = {
-            "candidate_lookback_days": baseline_days,
-            "weather_tune_iters": 0,
-            "region": region
-        }
-        
-        result = run_short_term_pipeline(df, target_date, config=config)
-        
-        # Enrich with consolidated drivers and insights
-        result = _refresh_live_analytics_from_final_series(result, 0)
-        
-        if "_DAYAHEAD_SERIES_CACHE" in globals():
+
+    # Acquire (or create) a per-key lock — prevents duplicate pipeline runs
+    with _COMPUTE_KEY_LOCKS_MUTEX:
+        lock = _COMPUTE_KEY_LOCKS.setdefault(cache_key, _threading.Lock())
+
+    with lock:
+        # Double-check cache inside lock — a waiter finds it warm
+        cached = _DAYAHEAD_SERIES_CACHE.get(cache_key)
+        if cached is not None:
+            logger.debug("[dedup-sync] cache hit after lock wait for %s", target_date)
+            return copy.deepcopy(cached)
+
+        logger.info("[pipeline] starting run for %s (region=%s, window=%s)", target_date, region, baseline_days)
+        try:
+            config = {
+                "candidate_lookback_days": int(baseline_days) if baseline_days else 7,
+                "weather_tune_iters": 0,
+                "region": region,
+            }
+            if progress_cb is not None:
+                config["progress_callback"] = progress_cb
+
+            # Auto-detect how many consecutive valid blocks exist for target_date.
+            # This prevents raw 0s in the trailing portion of an incomplete day from
+            # appearing as actual values in the chart (they should be null/None).
+            _day = df[df["date"].astype(str) == target_date].copy()
+            _day["total_drawal"] = pd.to_numeric(_day.get("total_drawal", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+            _day = _day[_day["time_block"].between(1, 96)].sort_values("time_block")
+            _detected_blocks = 0
+            for _b in range(1, 97):
+                _row = _day[_day["time_block"] == _b]
+                if _row.empty or float(_row["total_drawal"].iloc[0]) < 50.0:
+                    break
+                _detected_blocks = _b
+
+            result = run_short_term_pipeline(df, target_date, actual_blocks=_detected_blocks, config=config)
+            result = _refresh_live_analytics_from_final_series(result, _detected_blocks)
+            if len(_DAYAHEAD_SERIES_CACHE) >= 64:
+                _DAYAHEAD_SERIES_CACHE.pop(next(iter(_DAYAHEAD_SERIES_CACHE)))
             _DAYAHEAD_SERIES_CACHE[cache_key] = result
-            
-        return copy.deepcopy(result)
-    except Exception as e:
-        print(f"Error in _compute_dayahead: {e}")
-        import traceback
-        traceback.print_exc()
+            return copy.deepcopy(result)
+        except Exception as e:
+            logger.exception("Error in _compute_dayahead: %s", e)
+        finally:
+            # Remove lock entry so it doesn't accumulate forever
+            with _COMPUTE_KEY_LOCKS_MUTEX:
+                _COMPUTE_KEY_LOCKS.pop(cache_key, None)
         return None
+
+
+async def _compute_dayahead_async(df, target_date: str, baseline_days: int, region: str = "punjab", progress_cb=None):
+    """Async wrapper with in-flight deduplication.
+
+    If a pipeline run for this (date, region, baseline_days) is already in progress,
+    awaits that result instead of starting a duplicate run.  Guarantees at most ONE
+    pipeline execution per unique key regardless of how many concurrent requests arrive.
+    """
+    cache_key = _make_cache_key(target_date, baseline_days, region, df)
+
+    # 1. Cache hit — return immediately, no executor needed
+    cached = _DAYAHEAD_SERIES_CACHE.get(cache_key)
+    if cached is not None:
+        return copy.deepcopy(cached)
+
+    loop = asyncio.get_event_loop()
+
+    # 2. Already in-flight for same key — wait for it
+    existing = _ML_INFLIGHT.get(cache_key)
+    if existing is not None:
+        logger.info("[dedup] Awaiting in-flight pipeline for %s", target_date)
+        if progress_cb:
+            progress_cb({"type": "progress", "message": "⏳ Waiting for in-flight pipeline...", "elapsed": 0})
+        return await asyncio.shield(existing)
+
+    # 3. Start a new pipeline run and register its Future
+    fut: asyncio.Future = loop.create_future()
+    _ML_INFLIGHT[cache_key] = fut
+    try:
+        result = await loop.run_in_executor(
+            _ML_EXECUTOR,
+            lambda: _compute_dayahead(df, target_date, baseline_days, region, progress_cb=progress_cb)
+        )
+        fut.set_result(result)
+        return result
+    except Exception as e:
+        fut.set_exception(e)
+        raise
+    finally:
+        _ML_INFLIGHT.pop(cache_key, None)
+
+
+@app.websocket("/api/v2/ws/forecast/{job_id}")
+async def ws_forecast(websocket: WebSocket, job_id: str):
+    """Stream live progress for a forecast job.
+
+    - Replays any already-recorded progress events on connect.
+    - Then streams new events as the pipeline runs.
+    - Sends {"type": "done"} or {"type": "error"} when finished.
+    """
+    await websocket.accept()
+    q: asyncio.Queue = asyncio.Queue()
+    _PROGRESS_BUS.subscribe(job_id, q)
+    try:
+        job = _JOB_STORE.get(job_id)
+        if not job:
+            await websocket.send_json({"type": "error", "message": "Job not found"})
+            return
+
+        # Replay already-recorded progress (client may connect after job started)
+        for evt in job.get("progress", []):
+            await websocket.send_json(evt)
+
+        # If already finished, send final event and close
+        if job["status"] == "done":
+            await websocket.send_json({"type": "done", "message": "✓ Forecast ready"})
+            return
+        if job["status"] == "error":
+            await websocket.send_json({"type": "error", "message": job.get("error", "failed")})
+            return
+
+        # Stream live events until done or error
+        while True:
+            try:
+                evt = await asyncio.wait_for(q.get(), timeout=1.0)
+                await websocket.send_json(evt)
+                if evt.get("type") in ("done", "error"):
+                    break
+            except asyncio.TimeoutError:
+                # Heartbeat + check if job silently finished
+                j = _JOB_STORE.get(job_id, {})
+                if j.get("status") == "done":
+                    await websocket.send_json({"type": "done", "message": "✓ Forecast ready"})
+                    break
+                elif j.get("status") == "error":
+                    await websocket.send_json({"type": "error", "message": j.get("error", "failed")})
+                    break
+                try:
+                    await websocket.send_json({"type": "heartbeat"})
+                except Exception:
+                    break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.warning("ws_forecast[%s] error: %s", job_id, exc)
+    finally:
+        _PROGRESS_BUS.unsubscribe(job_id, q)
+
 
 @app.post("/api/v2/sldc-export")
 def v2_sldc_export(payload: dict = None):
@@ -4442,6 +5550,7 @@ def v2_model_performance(payload: dict = None):
         "drift_alert": drift_alert,
         "drift_pct": round(drift_pct, 1),
         "drift_message": f"7-day MAPE increased by {drift_pct:.1f}% vs prior period. Consider retraining." if drift_alert else "Model performance stable.",
+        "t2_t1_mape_ratio": round(recent_7d / max(older_avg, 0.1), 3),  # ratio of recent MAPE to baseline MAPE
     }
 
 

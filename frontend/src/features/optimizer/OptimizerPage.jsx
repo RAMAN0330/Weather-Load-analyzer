@@ -36,8 +36,8 @@ const buildHistogram = (values = [], binCount = 10) => {
 
 /* ─── Styles ─── */
 const S = {
-  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: 0, height: '100%', overflowX: 'hidden', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0 16px', position: 'relative' },
-  kpiRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '0 16px' },
+  page: { fontFamily: "'IBM Plex Mono', monospace", color: '#ECEEF3', minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0 0', position: 'relative' },
+  kpiRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '0 16px', flexShrink: 0 },
   kpi: { minWidth: 0, minHeight: 132, padding: '16px 18px', background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))', borderRadius: 14, border: '1px solid #2A292F', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)' },
   kpiLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: '#6B7186', marginBottom: 8 },
   kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#ECEEF3', lineHeight: 1.05 }),
@@ -463,35 +463,34 @@ export default function OptimizerPage({
           </div>
 
           {/* ─── TABS ─── */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '0 16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '0 16px', flexWrap: 'wrap', flexShrink: 0 }}>
             <div style={S.tabBar}>
               {TABS.map(t => <button key={t.id} onClick={() => setActiveTab(t.id)} style={S.tab(activeTab === t.id)}>{t.l}</button>)}
             </div>
             {activeTab === 'window' && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
                 {[
-                  ['rationale', 'Open Selection Rationale'],
-                  ['signals', 'Open Selection Signals'],
-                  ['leaderboard', 'Open Window Leaderboard'],
-                  ['gap', 'Open Gap Profile'],
-                ].map(([panel, label]) => (
+                  { panel: 'rationale', label: 'Selection Rationale', sub: 'Why this window was chosen', color: '#F07825' },
+                  { panel: 'signals', label: 'Selection Signals', sub: 'Load · Weather · Price signals', color: '#5B9FE4' },
+                  { panel: 'leaderboard', label: 'Window Leaderboard', sub: 'Ranked window candidates', color: '#34D399' },
+                  { panel: 'gap', label: 'Gap Profile', sub: 'Supply-demand gap view', color: '#C084FC' },
+                ].map(({ panel, label, sub, color }) => (
                   <button
                     key={panel}
                     type="button"
                     onClick={() => setWindowOverlayPanel(panel)}
                     style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      padding: '8px 14px',
-                      borderRadius: 999,
-                      border: '1px solid #2A292F',
-                      background: panel === 'rationale' ? '#F0782514' : '#1A191E',
-                      color: panel === 'rationale' ? '#F07825' : '#ECEEF3',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
+                      display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5,
+                      minWidth: 130, padding: '10px 14px', borderRadius: 14,
+                      border: `1px solid ${windowOverlayPanel === panel ? `${color}66` : `${color}33`}`,
+                      background: windowOverlayPanel === panel ? `${color}18` : `${color}10`,
+                      color: '#ECEEF3', cursor: 'pointer', fontFamily: 'inherit',
+                      textAlign: 'left', transition: 'all 0.15s ease',
                     }}
                   >
-                    {label}
+                    <span style={{ fontSize: 8, letterSpacing: 1.1, textTransform: 'uppercase', color: '#6B7186' }}>Quick panel</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: windowOverlayPanel === panel ? color : color }}>{label}</span>
+                    <span style={{ fontSize: 9, color: '#6B7186' }}>{sub}</span>
                   </button>
                 ))}
               </div>
@@ -500,19 +499,19 @@ export default function OptimizerPage({
 
           {/* ═══ WINDOW SELECTION TAB ═══ */}
           {activeTab === 'window' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0, overflow: 'hidden' }}>
               {/* Accuracy Curve + Side panels */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.32fr) minmax(360px, 0.92fr)', gap: 12, padding: '0 16px 6px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.32fr) minmax(360px, 0.92fr)', gap: 12, padding: '0 16px 16px', flex: 1, minHeight: 0, alignItems: 'stretch', overflow: 'hidden' }}>
                 {/* Accuracy Chart */}
-                <div style={S.card}>
+                <div style={{ ...S.card, minHeight: 0 }}>
                   <div style={S.cardTitle}>Accuracy Curve — MAPE vs Window Length</div>
-                  <div style={{ flex: 1, padding: 10 }}>
-                    {accuracyOption ? <ReactECharts option={accuracyOption} style={{ height: 430, width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No accuracy data</div>}
+                  <div style={{ flex: 1, padding: 10, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    {accuracyOption ? <ReactECharts option={accuracyOption} style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No accuracy data</div>}
                   </div>
                 </div>
 
                 {/* Stability + Slider */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflow: 'auto', flex: 1 }}>
                   {/* Stability Band */}
                   <div style={S.card}>
                     <div style={S.cardTitle}>Stability Band</div>
@@ -540,40 +539,44 @@ export default function OptimizerPage({
                   </div>
 
                   {/* Baseline Window Selector */}
-                  <div style={S.card}>
+                  <div style={{ ...S.card, flex: 1, minHeight: 0 }}>
                     <div style={S.cardTitle}>Baseline Window (MAPE Optimized)</div>
-                    <div style={{ padding: 18, flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ padding: '12px 16px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'space-between' }}>
+                      {/* Slider row */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <input type="range" min="1" max="30" value={baselineDays} onChange={e => setBaselineDays(Number(e.target.value))}
                           style={{ flex: 1, accentColor: '#F07825' }} />
-                        <span style={{ fontSize: 18, fontWeight: 700 }}>{baselineDays} Days</span>
+                        <span style={{ fontSize: 22, fontWeight: 700, minWidth: 70, textAlign: 'right' }}>{baselineDays} Days</span>
                       </div>
-                      <div style={{ fontSize: 10, color: '#6B7186' }}>
+                      {/* MAPE label */}
+                      <div style={{ fontSize: 10, color: '#6B7186', marginTop: -4 }}>
                         {currentMape != null ? `Current MAPE: ${fmt(currentMape)}%` : 'Select window to evaluate'}
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        <div style={{ background: '#201F25', border: '1px solid #2A292F', borderRadius: 12, padding: '12px 14px' }}>
+                      {/* Info cards */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, flex: 1, minHeight: 0 }}>
+                        <div style={{ background: '#201F25', border: '1px solid #2A292F', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                           <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: '#6B7186', marginBottom: 6 }}>Why it matters</div>
-                          <div style={{ fontSize: 11, color: '#ECEEF3', lineHeight: 1.55 }}>
+                          <div style={{ fontSize: 10, color: '#ECEEF3', lineHeight: 1.5 }}>
                             Selection balances lowest error, cluster stability, and how far the current window sits from the best performer.
                           </div>
                         </div>
-                        <div style={{ background: '#201F25', border: '1px solid #2A292F', borderRadius: 12, padding: '12px 14px' }}>
+                        <div style={{ background: '#201F25', border: '1px solid #2A292F', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                           <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: '#6B7186', marginBottom: 6 }}>Current posture</div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: currentRank != null && currentRank <= 3 ? '#34D399' : '#FBBF24' }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: currentRank != null && currentRank <= 3 ? '#34D399' : '#FBBF24' }}>
                             {selectionConfidence}
                           </div>
                           <div style={{ fontSize: 9, color: '#A0A5B8', marginTop: 4 }}>{windowAction}</div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {/* Day buttons */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1, alignContent: 'flex-start' }}>
                         {baselineWindowMapes.map(row => {
                           const wd = Number(row.window_days);
                           const active = baselineDays === wd;
                           return (
                             <button key={`bw-${row.window_days}`} onClick={() => Number.isFinite(wd) && setBaselineDays(wd)}
                               style={{
-                                fontSize: 9, padding: '6px 10px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
+                                fontSize: 11, fontWeight: 600, padding: '9px 14px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
                                 border: `1px solid ${active ? '#F07825' : '#2A292F'}`,
                                 background: active ? '#F0782518' : 'transparent',
                                 color: active ? '#F07825' : '#6B7186',
@@ -592,19 +595,19 @@ export default function OptimizerPage({
 
           {/* ═══ PATTERN FIT TAB ═══ */}
           {activeTab === 'pattern' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minHeight: 0, overflow: 'hidden' }}>
               {/* Charts */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px' }}>
-                <div style={S.card}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 16px 16px', flex: 1, minHeight: 0, alignItems: 'stretch', overflow: 'hidden' }}>
+                <div style={{ ...S.card, minHeight: 0 }}>
                   <div style={S.cardTitle}>Pattern Fit — Actual vs Baseline</div>
-                  <div style={{ flex: 1, padding: 10 }}>
-                    {patternFitOption ? <ReactECharts option={patternFitOption} style={{ height: 340, width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No pattern data</div>}
+                  <div style={{ flex: 1, padding: 10, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    {patternFitOption ? <ReactECharts option={patternFitOption} style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No pattern data</div>}
                   </div>
                 </div>
-                <div style={S.card}>
+                <div style={{ ...S.card, minHeight: 0 }}>
                   <div style={S.cardTitle}>Residual Profile (Actual − Baseline)</div>
-                  <div style={{ flex: 1, padding: 10 }}>
-                    {residualBarOption ? <ReactECharts option={residualBarOption} style={{ height: 340, width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No residual data</div>}
+                  <div style={{ flex: 1, padding: 10, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    {residualBarOption ? <ReactECharts option={residualBarOption} style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }} notMerge /> : <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>No residual data</div>}
                   </div>
                 </div>
               </div>

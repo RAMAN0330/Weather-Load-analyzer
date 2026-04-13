@@ -42,12 +42,11 @@ const S = {
     color: '#ECEEF3',
     minHeight: 0,
     height: '100%',
-    overflowX: 'hidden',
-    overflowY: 'auto',
+    overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    gap: 14,
-    padding: '8px 0 16px',
+    gap: 0,
+    padding: 0,
   },
   kpiGrid: {
     display: 'grid',
@@ -76,7 +75,7 @@ const S = {
   kpiSub: { fontSize: 10, color: '#6B7186', marginTop: 3, lineHeight: 1.45 },
   kpiSpark: { position: 'absolute', bottom: 8, right: 12, opacity: 0.25 },
   workspace: {
-    margin: '0 16px',
+    margin: '10px 16px 16px',
     background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
     borderRadius: 16,
     border: '1px solid #2A292F',
@@ -84,6 +83,8 @@ const S = {
     display: 'flex',
     flexDirection: 'column',
     boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    flex: 1,
+    minHeight: 0,
   },
   workspaceHeader: {
     padding: '18px 20px 14px',
@@ -107,7 +108,10 @@ const S = {
     gridTemplateColumns: 'minmax(0, 1.5fr) minmax(320px, 0.82fr)',
     gap: 14,
     padding: '14px 16px',
-    alignItems: 'start',
+    alignItems: 'stretch',
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   card: {
     background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
@@ -220,6 +224,43 @@ function ArcGauge({ value, sublabel, size = 90 }) {
   );
 }
 
+const KpiCard = ({ eyebrow, title, value, unit, tone = '#ECEEF3', detail, footer, sparkline, contents }) => (
+  <div
+    style={{
+      ...S.card,
+      padding: '16px 18px',
+      gap: 8,
+      minHeight: 132,
+      justifyContent: 'space-between',
+      background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+      position: 'relative',
+      overflow: 'hidden'
+    }}
+  >
+    <div style={S.miniLabel}>{eyebrow}</div>
+    {sparkline && <div style={{ position: 'absolute', bottom: 8, right: 12, opacity: 0.25 }}>{sparkline}</div>}
+    {contents ? (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {contents}
+      </div>
+    ) : (
+      <>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#A0A5B8', marginBottom: 8 }}>{title}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 30, lineHeight: 1, fontWeight: 700, color: tone }}>{value}</span>
+            {unit ? <span style={{ fontSize: 11, color: '#6B7186' }}>{unit}</span> : null}
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {detail ? <div style={{ fontSize: 10, color: '#ECEEF3' }}>{detail}</div> : null}
+          {footer ? <div style={{ fontSize: 9, color: '#6B7186' }}>{footer}</div> : null}
+        </div>
+      </>
+    )}
+  </div>
+);
+
 function DetailOverlay({ open, title, subtitle, onClose, children, contentStyle, bodyStyle }) {
   if (!open) return null;
   return (
@@ -247,6 +288,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   const [chartTab, setChartTab] = useState('load_curve');
   const [weatherOverlay, setWeatherOverlay] = useState('temperature');
   const [activePanel, setActivePanel] = useState(null);
+  // Pipeline DB state
 
   useEffect(() => { const id = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(id); }, []);
 
@@ -287,8 +329,58 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   const ramps = loads.slice(1).map((v, i) => Math.abs(v - loads[i]));
   const maxRamp = ramps.length ? Math.max(...ramps) : 0;
   const maxRampIdx = ramps.indexOf(maxRamp) + 1;
-  const healthPct = (peakLoad / CAPACITY) * 100;
-  const healthBadge = healthPct > 95 ? { l: 'RED', c: '#F87171' } : healthPct > 90 ? { l: 'AMBER', c: '#FBBF24' } : { l: 'GREEN', c: '#34D399' };
+
+  // Region-aware capacity: use prop if available, else fall back to 6500
+  const regionCapacity = dayAheadData?.metadata?.region_capacity_mw || liveForecastData?.metadata?.region_capacity_mw || CAPACITY;
+  const healthPct = (peakLoad / regionCapacity) * 100;
+  const healthBadge = healthPct > 85 ? { l: 'RED', c: '#F87171' } : healthPct > 70 ? { l: 'AMBER', c: '#FBBF24' } : { l: 'GREEN', c: '#34D399' };
+
+  // Advanced statistics
+  const sortedLoads = useMemo(() => [...loads].filter(v => v > 0).sort((a, b) => a - b), [loads]);
+  const medianLoad = useMemo(() => {
+    if (!sortedLoads.length) return 0;
+    const mid = Math.floor(sortedLoads.length / 2);
+    return sortedLoads.length % 2 ? sortedLoads[mid] : (sortedLoads[mid - 1] + sortedLoads[mid]) / 2;
+  }, [sortedLoads]);
+  const iqrLoad = useMemo(() => {
+    if (sortedLoads.length < 4) return 0;
+    const q1 = sortedLoads[Math.floor(sortedLoads.length * 0.25)];
+    const q3 = sortedLoads[Math.floor(sortedLoads.length * 0.75)];
+    return q3 - q1;
+  }, [sortedLoads]);
+
+  // Kurtosis of load distribution
+  const kurtosis = useMemo(() => {
+    if (sortedLoads.length < 4) return null;
+    const mean = sortedLoads.reduce((a, b) => a + b, 0) / sortedLoads.length;
+    const std = Math.sqrt(sortedLoads.reduce((a, v) => a + (v - mean) ** 2, 0) / sortedLoads.length);
+    if (std < 1e-6) return null;
+    return sortedLoads.reduce((a, v) => a + ((v - mean) / std) ** 4, 0) / sortedLoads.length;
+  }, [sortedLoads]);
+
+  // Forecast Skill Score: MAPE improvement vs naive persistence (tomorrow = today)
+  const forecastSkillScore = useMemo(() => {
+    const forecast = loads;
+    const actual = yLoads;
+    if (!forecast.length || !actual.length) return null;
+    const validPairs = forecast.map((f, i) => ({ f, a: actual[i] })).filter(({ f, a }) => a > 10 && Number.isFinite(f) && Number.isFinite(a));
+    if (validPairs.length < 10) return null;
+    const modelMape = validPairs.reduce((s, { f, a }) => s + Math.abs(f - a) / a, 0) / validPairs.length * 100;
+    // Persistence: use yesterday (yLoads) as forecast for today — MAPE of yLoads vs loads
+    const persistMape = validPairs.reduce((s, { a }, i) => s + Math.abs((yLoads[i] || a) - loads[i]) / Math.max(loads[i], 1) * 100, 0) / validPairs.length;
+    return persistMape > 0 ? Math.round(((persistMape - modelMape) / persistMape) * 100) : null;
+  }, [loads, yLoads]);
+
+  // Bias Trend: rolling 7-day mean signed error
+  const biasTrend = useMemo(() => {
+    const s = dayAheadData?.series || liveForecastData?.series;
+    const f = (s?.forecast || []).map(Number).filter(Number.isFinite);
+    const a = (s?.actual || []).map(Number).filter(Number.isFinite);
+    if (f.length < 4 || a.length < 4) return null;
+    const n = Math.min(f.length, a.length);
+    const errors = Array.from({ length: n }, (_, i) => f[i] - a[i]);
+    return Math.round(errors.reduce((s, v) => s + v, 0) / errors.length);
+  }, [dayAheadData, liveForecastData]);
 
   /* ─── Correlations ─── */
   const rhoTemp = computeSpearmanRho(temps, loads);
@@ -485,12 +577,16 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   });
 
   const chartOpts = { load_curve: loadCurveOption, weather_overlay: weatherOverlayOption, distribution: loadDistOption, ramp: rampOption };
-  const TABS = [{ id: 'load_curve', l: '24h Load Curve' }, { id: 'weather_overlay', l: 'Weather vs Load' }, { id: 'distribution', l: 'Distribution' }, { id: 'ramp', l: 'Ramp Analysis' }];
+  const TABS = [
+    { id: 'load_curve', l: '24h Load Curve' },
+    { id: 'weather_overlay', l: 'Weather vs Load' },
+    { id: 'distribution', l: 'Distribution' },
+    { id: 'ramp', l: 'Ramp Analysis' }
+  ];
 
   /* ═══ RENDER ═══ */
   return (
     <div style={S.page}>
-
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
           <div style={{ fontSize: 16, marginBottom: 6 }}>No data available</div>
@@ -499,63 +595,126 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
       ) : (
         <>
           {/* ─── KPI CARDS ─── */}
-          <div style={S.kpiGrid}>
-            <div style={S.kpi()}>
-              <div style={S.kpiLabel}>Day Energy</div>
-              <div style={S.kpiVal('#F07825')}>{fmt(dayEnergy, 0)} <span style={S.kpiUnit}>MWh</span></div>
-              <div style={{ fontSize: 9, color: dayEnergy - yEnergy >= 0 ? '#F87171' : '#34D399', marginTop: 3, fontWeight: 600 }}>
-                {dayEnergy - yEnergy >= 0 ? '▲' : '▼'} {fmt(Math.abs(dayEnergy - yEnergy), 0)} MWh vs yesterday
-              </div>
-              <div style={S.kpiSpark}><Sparkline data={loads.filter((_, i) => i % 4 === 0)} /></div>
+          <div style={{ ...S.kpiGrid, padding: '10px 16px 0', flexShrink: 0 }}>
+            <KpiCard
+              eyebrow="Energy Profile"
+              title="Day Energy"
+              value={fmt(dayEnergy, 0)}
+              unit="MWh"
+              tone="#F07825"
+              detail={`${dayEnergy - yEnergy >= 0 ? '▲' : '▼'} ${fmt(Math.abs(dayEnergy - yEnergy), 0)} MWh vs yesterday`}
+              footer="Total 24h consumption"
+              sparkline={<Sparkline data={loads.filter((_, i) => i % 4 === 0)} />}
+            />
+            <KpiCard
+              eyebrow="Demand Peak"
+              title="Peak Demand"
+              value={fmt(peakLoad)}
+              unit="MW"
+              tone="#F87171"
+              detail={`Observed at ${blockToTime(peakIdx)}`}
+              footer={`${healthPct.toFixed(1)}% of system capacity`}
+            />
+            <KpiCard
+              eyebrow="Baseload"
+              title="Min Demand"
+              value={fmt(minLoad)}
+              unit="MW"
+              tone="#34D399"
+              detail={`Observed at ${blockToTime(minIdx)}`}
+              footer="Structural baseload reference"
+            />
+            <KpiCard
+              eyebrow="Efficiency"
+              contents={<LoadFactorRing value={loadFactor} />}
+            />
+            <KpiCard
+              eyebrow="Variability"
+              title="Max Ramp"
+              value={fmt(maxRamp)}
+              unit="MW/15m"
+              tone="#FBBF24"
+              detail={`At ${blockToTime(maxRampIdx)}`}
+              footer={`${fmt(maxRamp * 4, 0)} MW/hr velocity`}
+            />
+            <KpiCard
+              eyebrow="Resource Balance"
+              title="System Stress"
+              value={healthPct.toFixed(1)}
+              unit="%"
+              tone={healthBadge.c}
+              detail={`Status: ${healthBadge.l}`}
+              footer={`${fmt(regionCapacity - peakLoad, 0)} MW headroom`}
+            />
+            <KpiCard
+              eyebrow="Distribution"
+              title="IQR Spread"
+              value={fmt(iqrLoad, 0)}
+              unit="MW"
+              tone="#ECEEF3"
+              detail={`Median ${fmt(medianLoad, 0)} MW`}
+              footer="Interquartile range"
+            />
+            <KpiCard
+              eyebrow="Model Stability"
+              title="Bias Trend"
+              value={biasTrend != null ? `${biasTrend > 0 ? '+' : ''}${fmt(biasTrend, 0)}` : '--'}
+              unit="MW"
+              tone={biasTrend == null ? '#ECEEF3' : biasTrend > 15 ? '#F87171' : biasTrend < -15 ? '#34D399' : '#FBBF24'}
+              detail={biasTrend == null ? 'Awaiting settled blocks' : biasTrend > 15 ? 'Over-forecast tendency' : biasTrend < -15 ? 'Under-forecast tendency' : 'Within tolerance'}
+              footer="Rolling signed error"
+            />
+            {kurtosis != null && (
+              <KpiCard
+                eyebrow="Stats Profile"
+                title="Kurtosis"
+                value={kurtosis.toFixed(2)}
+                tone={kurtosis > 3 ? '#FBBF24' : '#ECEEF3'}
+                detail={kurtosis > 3 ? 'Fat-tailed — error spikes likely' : 'Normal distribution'}
+                footer="Tailedness of load profile"
+              />
+            )}
+          </div>
+
+          {/* ── Floating control strip ── */}
+          <div style={{ margin: '10px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            <div style={S.tabBar}>
+              {TABS.map(t => <button key={t.id} onClick={() => setChartTab(t.id)} style={S.tab(chartTab === t.id)}>{t.l}</button>)}
             </div>
-            <div style={S.kpi()}>
-              <div style={S.kpiLabel}>Peak Demand</div>
-              <div style={S.kpiVal('#F87171')}>{fmt(peakLoad)} <span style={S.kpiUnit}>MW</span></div>
-              <div style={S.kpiSub}>at {blockToTime(peakIdx)} • {healthPct.toFixed(1)}% of {CAPACITY} MW</div>
-            </div>
-            <div style={S.kpi()}>
-              <div style={S.kpiLabel}>Minimum Demand</div>
-              <div style={S.kpiVal('#34D399')}>{fmt(minLoad)} <span style={S.kpiUnit}>MW</span></div>
-              <div style={S.kpiSub}>at {blockToTime(minIdx)} • baseload reference</div>
-            </div>
-            <div style={S.kpi()}>
-              <LoadFactorRing value={loadFactor} />
-            </div>
-            <div style={S.kpi()}>
-              <div style={S.kpiLabel}>Ramp (Max)</div>
-              <div style={S.kpiVal('#FBBF24')}>{fmt(maxRamp)} <span style={S.kpiUnit}>MW/15m</span></div>
-              <div style={S.kpiSub}>at {blockToTime(maxRampIdx)} • {fmt(maxRamp * 4, 0)} MW/hr</div>
-            </div>
-            <div style={S.kpi()}>
-              <div style={S.kpiLabel}>Capacity Stress</div>
-              <div style={S.kpiVal(healthBadge.c)}>{healthPct.toFixed(1)} <span style={S.kpiUnit}>%</span></div>
-              <div style={S.kpiSub}>
-                <span style={S.badge(healthBadge.c)}>{healthBadge.l}</span>
-                <span style={{ marginLeft: 8 }}>{fmt(CAPACITY - peakLoad)} MW headroom to capacity</span>
-              </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+              {chartTab === 'weather_overlay' && ['temperature', 'humidity', 'cloud', 'precipitation'].map(k => (
+                <button key={k} onClick={() => setWeatherOverlay(k)} style={S.pill(weatherOverlay === k)}>{k}</button>
+              ))}
+              <span style={S.badge(currentTod.color)}>{currentTod.name}</span>
+              <span style={S.badge('#5B9FE4')}>{shiftLabel}</span>
+              <span style={S.badge('#F07825')}>{timeLeft} left</span>
+              {[
+                { label: 'Weather', sub: 'Temp · Humidity · Cloud', panel: 'weather', color: '#5B9FE4' },
+                { label: 'Correlations', sub: 'Spearman · Load vs Weather', panel: 'correlations', color: '#34D399' },
+                ...(anomalies.length > 0 ? [{ label: 'Anomalies', sub: `${anomalies.length} detected`, panel: 'anomalies', color: '#F87171' }] : []),
+              ].map(({ label, sub, panel, color }) => (
+                <button
+                  key={panel}
+                  type="button"
+                  onClick={() => setActivePanel(panel)}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5,
+                    minWidth: 172, padding: '12px 16px', borderRadius: 14,
+                    border: `1px solid ${activePanel === panel ? `${color}66` : '#2A292F'}`,
+                    background: activePanel === panel ? `${color}18` : 'rgba(255,255,255,0.02)',
+                    color: activePanel === panel ? color : '#ECEEF3',
+                    cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', transition: 'all 0.15s ease',
+                  }}
+                >
+                  <span style={{ fontSize: 9, letterSpacing: 1.1, textTransform: 'uppercase', color: activePanel === panel ? color : '#6B7186' }}>Quick panel</span>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
+                  <span style={{ fontSize: 10, color: activePanel === panel ? `${color}cc` : '#6B7186' }}>{sub}</span>
+                </button>
+              ))}
             </div>
           </div>
 
           <div style={S.workspace}>
-            <div style={S.workspaceHeader}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div style={S.tabBar}>
-                  {TABS.map(t => <button key={t.id} onClick={() => setChartTab(t.id)} style={S.tab(chartTab === t.id)}>{t.l}</button>)}
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
-                  {chartTab === 'weather_overlay' && ['temperature', 'humidity', 'cloud', 'precipitation'].map(k => (
-                    <button key={k} onClick={() => setWeatherOverlay(k)} style={S.pill(weatherOverlay === k)}>{k}</button>
-                  ))}
-                  <span style={S.badge(currentTod.color)}>{currentTod.name}</span>
-                  <span style={S.badge('#5B9FE4')}>{shiftLabel}</span>
-                  <span style={S.badge('#F07825')}>{timeLeft} left</span>
-                  <button type="button" style={S.actionBtn} onClick={() => setActivePanel('weather')}>Open Weather</button>
-                  <button type="button" style={S.actionBtn} onClick={() => setActivePanel('correlations')}>Open Correlations</button>
-                  {anomalies.length > 0 ? <button type="button" style={S.actionBtn} onClick={() => setActivePanel('anomalies')}>Open All Anomalies</button> : null}
-                </div>
-              </div>
-            </div>
-
             <div style={S.workspaceGrid}>
               {/* Chart card */}
               <div style={S.card}>
@@ -567,19 +726,19 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                     Solid: Today | Dashed: Yesterday
                   </div>
                 </div>
-                <div style={{ flex: 1, padding: '10px 10px 14px', minHeight: 430 }}>
-                  <ReactECharts option={chartOpts[chartTab]?.()} style={{ height: '100%', minHeight: 400 }} notMerge />
+                <div style={{ flex: 1, padding: '10px 10px 14px', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <ReactECharts option={chartOpts[chartTab]?.()} style={{ flex: 1, minHeight: 0, height: '100%' }} notMerge lazyUpdate />
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={S.card}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
+                <div style={{ ...S.card, flex: 1, minHeight: 0 }}>
                   <div style={S.cardHeader}>
                     <div style={S.cardTitle}>TOD Performance</div>
                     <span style={S.badge(currentTod.color)}>Current: {currentTod.name}</span>
                   </div>
-                  <div style={{ flex: 1, overflow: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <div style={{ overflow: 'auto', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', height: '100%' }}>
                       <thead>
                         <tr>
                           {['PERIOD', 'BLKS', 'AVG MW', 'PEAK', 'ENERGY', 'STATUS'].map(h => (
@@ -590,14 +749,15 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                       <tbody>
                         {todGroups.map(t => {
                           const isCur = t.name === currentTod.name;
+                          const rowTd = { ...S.td, height: `${100 / todGroups.length}%` };
                           return (
                             <tr key={t.name} style={{ background: isCur ? '#F0782508' : 'transparent' }}>
-                              <td style={{ ...S.td, fontWeight: 700, color: t.color, borderLeft: isCur ? `3px solid ${t.color}` : '3px solid transparent', whiteSpace: 'nowrap' }}>{t.name}</td>
-                              <td style={S.td}>{t.blocks}</td>
-                              <td style={{ ...S.td, fontWeight: 600 }}>{fmt(t.avgLoad)}</td>
-                              <td style={S.td}>{fmt(t.peakMw)}</td>
-                              <td style={S.td}>{fmt(t.energy)}</td>
-                              <td style={S.td}><span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>{t.status}</span></td>
+                              <td style={{ ...rowTd, fontWeight: 700, color: t.color, borderLeft: isCur ? `3px solid ${t.color}` : '3px solid transparent', whiteSpace: 'nowrap' }}>{t.name}</td>
+                              <td style={rowTd}>{t.blocks}</td>
+                              <td style={{ ...rowTd, fontWeight: 600 }}>{fmt(t.avgLoad)}</td>
+                              <td style={rowTd}>{fmt(t.peakMw)}</td>
+                              <td style={rowTd}>{fmt(t.energy)}</td>
+                              <td style={rowTd}><span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>{t.status}</span></td>
                             </tr>
                           );
                         })}
@@ -616,12 +776,12 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                 </div>
 
                 {anomalies.length > 0 && (
-                  <div style={S.card}>
+                  <div style={{ ...S.card, flexShrink: 0 }}>
                     <div style={S.cardHeader}>
                       <div style={S.cardTitle}>Anomalies</div>
                       <span style={S.badge('#F87171')}>{anomalies.length} flagged</span>
                     </div>
-                    <div style={{ maxHeight: 190, overflow: 'auto' }}>
+                    <div style={{ overflow: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                           <tr>

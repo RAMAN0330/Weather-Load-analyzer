@@ -197,6 +197,20 @@ export default function LoadAnalysisPage({
   const [overlayPanel, setOverlayPanel] = useState(null);
   const [localMomentum, setLocalMomentum] = useState(null);
   const [localMultiSeries, setLocalMultiSeries] = useState({});
+  const [selfBenchmark, setSelfBenchmark] = useState(null);
+  const [selfFetching, setSelfFetching] = useState(false);
+
+  // Self-fetch benchmark data when parent hasn't provided it yet
+  useEffect(() => {
+    if (benchmarkData || selfBenchmark || selfFetching || !effectiveDate) return;
+    setSelfFetching(true);
+    axios.post('/api/v2/load_benchmarks', { date: effectiveDate })
+      .then(res => setSelfBenchmark(res.data))
+      .catch(e => console.warn('load_benchmarks self-fetch failed:', e?.message))
+      .finally(() => setSelfFetching(false));
+  }, [effectiveDate, benchmarkData, selfBenchmark, selfFetching]);
+
+  const resolvedBenchmark = benchmarkData || selfBenchmark;
 
   useEffect(() => {
     setCompareDates(multiSelectedDates || []);
@@ -206,10 +220,10 @@ export default function LoadAnalysisPage({
     setLocalMultiSeries(multiDaySeries || {});
   }, [multiDaySeries]);
 
-  const today = useMemo(() => (benchmarkData?.today || []).map(Number).filter(Number.isFinite), [benchmarkData]);
-  const t1 = useMemo(() => (benchmarkData?.t1 || []).map(Number).filter(Number.isFinite), [benchmarkData]);
-  const t7 = useMemo(() => (benchmarkData?.t7 || []).map(Number).filter(Number.isFinite), [benchmarkData]);
-  const t365 = useMemo(() => (benchmarkData?.t365 || []).map(Number).filter(Number.isFinite), [benchmarkData]);
+  const today = useMemo(() => (resolvedBenchmark?.today || []).map(Number).filter(Number.isFinite), [resolvedBenchmark]);
+  const t1 = useMemo(() => (resolvedBenchmark?.t1 || []).map(Number).filter(Number.isFinite), [resolvedBenchmark]);
+  const t7 = useMemo(() => (resolvedBenchmark?.t7 || []).map(Number).filter(Number.isFinite), [resolvedBenchmark]);
+  const t365 = useMemo(() => (resolvedBenchmark?.t365 || []).map(Number).filter(Number.isFinite), [resolvedBenchmark]);
 
   const peak = today.length ? Math.max(...today) : 0;
   const valley = today.length ? Math.min(...today.filter((v) => v > 0)) : 0;
@@ -295,6 +309,16 @@ export default function LoadAnalysisPage({
   const pvRatio = valley > 0 ? peak / valley : null;
   const reserveMargin = dayAheadData?.kpis_full?.reserve_margin_adequacy_pct;
 
+  // Duck Curve Severity: midday min (blocks 40-56) / morning peak (blocks 44-55)
+  const duckCurveSeverity = useMemo(() => {
+    if (today.length < 56) return null;
+    const middayMin = Math.min(...today.slice(39, 56).filter(v => v > 0));
+    const morningPeak = Math.max(...today.slice(43, 56));
+    if (morningPeak <= 0) return null;
+    return middayMin / morningPeak;
+  }, [today]);
+  const duckCurveFlag = duckCurveSeverity != null && duckCurveSeverity < 0.65;
+
   const structuralRows = useMemo(() => ([
     { m: 'Peak (MW)', t: peak, y: yPeak },
     { m: 'Valley (MW)', t: valley, y: yValley },
@@ -370,6 +394,24 @@ export default function LoadAnalysisPage({
       detail: trend.data.length ? `${trend.data.length} daily points tracked` : 'Momentum unavailable',
       footer: similarDays[0] ? `Best historical match ${similarDays[0].date}` : 'No similar-day anchor',
     },
+    {
+      eyebrow: 'Storage dispatch',
+      title: 'Peak-to-Valley',
+      value: pvRatio != null ? pvRatio.toFixed(2) : '--',
+      unit: 'ratio',
+      tone: pvRatio != null && pvRatio > 1.5 ? '#F87171' : '#ECEEF3',
+      detail: pvRatio != null ? `Peak ${fmt(peak, 0)} MW / Valley ${fmt(valley, 0)} MW` : 'Awaiting load signal',
+      footer: 'Higher ratio = more storage/hydro opportunity',
+    },
+    {
+      eyebrow: 'Solar integration',
+      title: duckCurveFlag ? 'Duck Curve Risk' : 'Duck Curve',
+      value: duckCurveSeverity != null ? duckCurveSeverity.toFixed(2) : '--',
+      unit: 'ratio',
+      tone: duckCurveFlag ? '#F87171' : duckCurveSeverity != null && duckCurveSeverity < 0.75 ? '#FBBF24' : '#34D399',
+      detail: duckCurveFlag ? 'Midday dip severe — solar ramp risk' : duckCurveSeverity != null ? 'Midday min / Morning peak' : 'Awaiting load signal',
+      footer: 'Flag raised if ratio < 0.65 (Rajasthan critical)',
+    },
   ]), [
     peak,
     peakShiftBlocks,
@@ -390,6 +432,9 @@ export default function LoadAnalysisPage({
     maxRampDown,
     trend,
     similarDays,
+    pvRatio,
+    duckCurveSeverity,
+    duckCurveFlag,
   ]);
 
   const benchmarkOpt = useMemo(() => {
@@ -858,8 +903,12 @@ export default function LoadAnalysisPage({
     <div style={S.page}>
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
-          <div style={{ fontSize: 16, marginBottom: 6 }}>No load data available</div>
-          <div style={{ fontSize: 11 }}>Select a date to load benchmark data</div>
+          <div style={{ fontSize: 16, marginBottom: 6 }}>
+            {selfFetching ? 'Loading benchmark data…' : 'No load data available'}
+          </div>
+          <div style={{ fontSize: 11 }}>
+            {selfFetching ? `Fetching data for ${effectiveDate}` : 'Select a date to load benchmark data'}
+          </div>
         </div>
       ) : (
         <>
@@ -1016,7 +1065,9 @@ export default function LoadAnalysisPage({
                   <ReactECharts option={chartMap[mainTab]} style={{ height: 398, width: '100%' }} notMerge />
                 ) : (
                   <div style={{ padding: 70, textAlign: 'center', color: '#6B7186', fontSize: 11 }}>
-                    {mainTab === 'comparison' ? 'Pick dates above or from similar-day overlays to compare.' : 'No data for this view.'}
+                    {DB_LOAD_TABS.includes(mainTab) && dbLoadLoading ? 'Loading pipeline DB data…'
+                      : mainTab === 'comparison' ? 'Pick dates above or from similar-day overlays to compare.'
+                      : 'No data for this view.'}
                   </div>
                 )}
 

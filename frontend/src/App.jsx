@@ -1,24 +1,18 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import ReactECharts from 'echarts-for-react';
 import { useSimulatorStore } from './features/simulator/store';
-import { SimulatorPage } from './features/simulator/SimulatorPage';
-import { ForecastPage } from './features/forecast/ForecastPage';
-import AnalysisPage from './features/analysis/AnalysisPage';
-import WeatherAnalysisPanel from './components/WeatherAnalysis/WeatherAnalysisPanel';
-import WeatherDeepPage from './features/weather/WeatherDeepPage';
-import LoadAnalysisPage from './features/load/LoadAnalysisPage';
-import OptimizerPage from './features/optimizer/OptimizerPage';
-import SettingsPage from './features/settings/SettingsPage';
 import CommandStrip from './components/CommandStrip';
+import PipelineProgress from './components/PipelineProgress';
 import AlertRibbon from './components/AlertRibbon';
 import WeatherStrip from './components/WeatherStrip';
 import ContextPanel from './components/ContextPanel';
 import ForecastTable from './components/ForecastTable';
 import {
   Activity,
+  ArrowRight,
   BarChart3,
   CloudRain,
+  Database,
   Download,
   Droplets,
   Gauge,
@@ -26,6 +20,7 @@ import {
   Layers,
   LayoutGrid,
   Loader2,
+  MapPin,
   Play,
   Settings,
   Sun,
@@ -33,6 +28,17 @@ import {
   TrendingUp,
   Wind
 } from 'lucide-react';
+
+const ReactECharts = lazy(() => import('echarts-for-react'));
+const SimulatorPage = lazy(() => import('./features/simulator/SimulatorPage').then((mod) => ({ default: mod.SimulatorPage })));
+const ForecastPage = lazy(() => import('./features/forecast/ForecastPage').then((mod) => ({ default: mod.ForecastPage })));
+const AnalysisPage = lazy(() => import('./features/analysis/AnalysisPage'));
+const WeatherDeepPage = lazy(() => import('./features/weather/WeatherDeepPage'));
+const LoadAnalysisPage = lazy(() => import('./features/load/LoadAnalysisPage'));
+const OptimizerPage = lazy(() => import('./features/optimizer/OptimizerPage'));
+const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
+const SimilarDaysPage = lazy(() => import('./features/pipeline/SimilarDaysPage'));
+const WeatherLocPage = lazy(() => import('./features/pipeline/WeatherLocPage'));
 
 const normalizeBase = (base) => {
   if (!base) return '/api';
@@ -52,6 +58,9 @@ const API_URL = (path) => {
 
 axios.defaults.timeout = 45000;
 
+const APP_TITLE = 'VidyutPragya';
+const FORECAST_REQUEST_TIMEOUT_MS = 180000;
+
 const NAV_ITEMS = [
   { key: 'load_analysis', label: 'Load Analysis', icon: Activity },
   { key: 'weather_analysis', label: 'Weather Analysis', icon: Sun },
@@ -59,7 +68,9 @@ const NAV_ITEMS = [
   { key: 'simulator', label: 'Simulator', icon: Play },
   { key: 'analysis', label: 'Analysis', icon: BarChart3 },
   { key: 'forecast', label: 'Forecast', icon: LayoutGrid },
-  { key: 'monitor', label: 'Monitor', icon: TrendingUp }
+  { key: 'monitor', label: 'Monitor', icon: TrendingUp },
+  { key: 'similar_days', label: 'Similar Days', icon: Database },
+  { key: 'weather_loc', label: 'Weather Locations', icon: MapPin },
 ];
 
 const OPTIMIZER_TABS = [
@@ -67,6 +78,8 @@ const OPTIMIZER_TABS = [
   { key: 'pattern', label: 'Pattern Fit', icon: Activity },
   { key: 'errors', label: 'Error Diagnostics', icon: BarChart3 }
 ];
+
+const MONITOR_PLACEHOLDER_WIDTHS = [84, 78, 72, 88, 69, 81];
 
 const LIVE_INSIGHT_OPTIONS = [
   { key: 'similar_day_matches', label: 'Similar Day Matches', subtitle: 'Top-N ranked by similarity score' },
@@ -226,6 +239,41 @@ const KPI_TARGETS = {
   unexplained_variance_kw: { type: 'max', good: 0, warn: 2 }
 };
 
+const REGION_DETAILS = {
+  odisha: {
+    label: 'Odisha',
+    subtitle: 'Coastal industry, monsoon swings, and heavy-grid draw clusters.',
+    signal: 'Cyclone-aware operations',
+    tags: ['Port + metals', 'Rain volatility'],
+    icon: Layers,
+    footerNote: 'Best for monsoon-sensitive load shifts, industrial clusters, and coastal weather stress.'
+  },
+  rajasthan: {
+    label: 'Rajasthan',
+    subtitle: 'Solar-heavy daytime behavior with desert heat and ramp transitions.',
+    signal: 'Solar ramp watch',
+    tags: ['Solar swing', 'Dry heat load'],
+    icon: Sun,
+    footerNote: 'Best for solar ramp analysis, weather-driven cooling load, and daylight peak planning.'
+  },
+  haryana: {
+    label: 'Haryana',
+    subtitle: 'Industrial and agricultural demand with sharp urban evening acceleration.',
+    signal: 'Evening peak acceleration',
+    tags: ['Mixed demand', 'Fast ramps'],
+    icon: TrendingUp,
+    footerNote: 'Best for mixed urban-industrial behavior, short-term stress windows, and evening peak readiness.'
+  },
+  chhattisgarh: {
+    label: 'Chhattisgarh',
+    subtitle: 'Coal-heavy generation mix with industrial load clusters and seasonal demand swings.',
+    signal: 'Thermal dispatch watch',
+    tags: ['Industrial load', 'Coal-heavy'],
+    icon: Activity,
+    footerNote: 'Best for thermal-dominant dispatch analysis, industrial demand patterns, and monsoon-season variability.'
+  }
+};
+
 const downloadBlob = (data, filename, type) => {
   const blob = new Blob([data], { type });
   const url = URL.createObjectURL(blob);
@@ -258,39 +306,117 @@ const ChartLoading = ({ label = 'Loading chart...' }) => (
   </div>
 );
 
-const RegionSelectionModal = ({ regions, selected, onSelect, onConfirm }) => {
+const ViewLoading = ({ label = 'Loading view...' }) => (
+  <div className="glass-panel p-4">
+    <ChartLoading label={label} />
+  </div>
+);
+
+const RegionSelectionModal = ({ regions, selected, onSelect, onConfirm, dateRange, onDateRange }) => {
+  const selectedMeta = selected ? (REGION_DETAILS[selected] || null) : null;
+
+  // Default: last 120 days up to today
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const defaultFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+
   return (
-    <div className="overlay">
-      <div className="modal">
-        <div className="modal-header">
+    <div className="overlay region-overlay">
+      <div className="modal region-modal">
+        <div className="modal-header region-modal__header">
+          <p className="region-kicker">State Workspace</p>
           <h2>Select Your State</h2>
-          <p>Choose a region to load localized power grid analytics and weather-impact forecasts.</p>
+          <p>Choose a state to load localized power grid analytics and weather-aware forecasting.</p>
         </div>
+
         <div className="region-grid">
-          {regions.map((r) => (
-            <div
-              key={r}
-              className={`region-tile ${selected === r ? 'active' : ''}`}
-              onClick={() => onSelect(r)}
-            >
-              <div className="region-icon">
-                {r === 'delhi' ? <Activity size={24} /> :
-                  ['punjab', 'haryana'].includes(r) ? <TrendingUp size={24} /> :
-                    ['rajasthan', 'gujarat'].includes(r) ? <Sun size={24} /> :
-                      ['maharashtra', 'goa'].includes(r) ? <Wind size={24} /> :
-                        <Layers size={24} />}
-              </div>
-              <span className="region-name">{r}</span>
-            </div>
-          ))}
+          {regions.map((r) => {
+            const meta = REGION_DETAILS[r] || {
+              label: titleize(r),
+              subtitle: 'Localized load analytics and weather-aware forecasting.',
+              signal: 'State-specific forecasting',
+              tags: ['Grid analytics', 'Weather aware'],
+              icon: Layers,
+              footerNote: 'State-specific dashboard with localized forecasting and grid intelligence.'
+            };
+            const Icon = meta.icon;
+
+            return (
+              <button
+                type="button"
+                key={r}
+                className={`region-tile ${selected === r ? 'active' : ''}`}
+                onClick={() => onSelect(r)}
+              >
+                <div className="region-tile__top">
+                  <div className="region-icon">
+                    <Icon size={22} />
+                  </div>
+                </div>
+
+                <div className="region-copy">
+                  <span className="region-name">{meta.label}</span>
+                  <span className="region-subtitle">{meta.subtitle}</span>
+                </div>
+
+                <span className="region-signal">{meta.signal}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="modal-footer">
+
+        {/* ── Date range picker ─────────────────────────────────────────── */}
+        <div className="region-date-range">
+          <div className="region-date-range__label">
+            <span>Data Range</span>
+            <span className="region-date-range__hint">Fetch historical data between these dates</span>
+          </div>
+          <div className="region-date-range__inputs">
+            <div className="region-date-field">
+              <label>From</label>
+              <input
+                type="date"
+                value={dateRange.from || defaultFrom}
+                max={dateRange.to || todayStr}
+                onChange={e => onDateRange({ ...dateRange, from: e.target.value })}
+              />
+            </div>
+            <div className="region-date-range__sep">→</div>
+            <div className="region-date-field">
+              <label>To</label>
+              <input
+                type="date"
+                value={dateRange.to || todayStr}
+                min={dateRange.from || defaultFrom}
+                max={todayStr}
+                onChange={e => onDateRange({ ...dateRange, to: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="region-date-presets">
+            <button type="button" className="region-date-preset" title="Last 120 days"
+              onClick={() => onDateRange({ from: defaultFrom, to: todayStr })}>120d</button>
+            <button type="button" className="region-date-preset" title="Last 60 days"
+              onClick={() => onDateRange({ from: new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10), to: todayStr })}>60d</button>
+            <button type="button" className="region-date-preset" title="Last 30 days"
+              onClick={() => onDateRange({ from: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), to: todayStr })}>30d</button>
+          </div>
+        </div>
+
+        <div className="modal-footer region-modal__footer">
+          <div className="region-selection-summary">
+            <span className="region-selection-summary__label">Selected state</span>
+            <strong>{selectedMeta?.label || 'Choose a state to continue'}</strong>
+            <p>
+              {selectedMeta?.footerNote || 'Your launch will open a tailored dashboard with localized baselines, weather-impact analytics, and operator-ready forecasting signals.'}
+            </p>
+          </div>
           <button
-            className="primary-btn start-btn"
+            className="primary-btn start-btn region-launch-btn"
             disabled={!selected}
             onClick={onConfirm}
           >
-            Launch Dashboard
+            <span>Launch Dashboard</span>
+            <ArrowRight size={16} />
           </button>
         </div>
       </div>
@@ -525,8 +651,16 @@ const LoadChart = ({
   };
 
   return (
-    <div className="chart-wrap">
-      <ReactECharts option={option} style={{ height: '100%', width: '100%' }} onEvents={onEvents} />
+    <div className="chart-wrap" style={{ minHeight: 320 }}>
+      <Suspense fallback={<ChartLoading />}>
+        <ReactECharts
+          option={option}
+          style={{ height: '100%', width: '100%' }}
+          onEvents={onEvents}
+          notMerge
+          lazyUpdate
+        />
+      </Suspense>
     </div>
   );
 };
@@ -993,9 +1127,13 @@ export default function App() {
   const [settings, setSettings] = useState(null);
   const [date, setDate] = useState('');
   const [baselineDays, setBaselineDays] = useState(7);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // kept for fetchDayAhead/fetchLive/fetchAnalysis manual refreshes
+  const [initPhase, setInitPhase] = useState('idle'); // 'idle'|'config'|'data'|'ready'|'training'|'done'
+  const [trainingProgress, setTrainingProgress] = useState([]);
+  const forecastWorkerRef = useRef(null);
   const [dayAhead, setDayAhead] = useState(null);
   const [live, setLive] = useState(null);
+  const [liveT2, setLiveT2] = useState(null);
   const [actualBlocks, setActualBlocks] = useState(0);
   const [analysis, setAnalysis] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -1009,8 +1147,13 @@ export default function App() {
   const [liveInsightsOpen, setLiveInsightsOpen] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState(null);
   const [showRegionPrompt, setShowRegionPrompt] = useState(true);
+  const _today = new Date().toISOString().slice(0, 10);
+  const _defaultFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+  const [regionDateRange, setRegionDateRange] = useState({ from: _defaultFrom, to: _today });
   const [viewDataOpen, setViewDataOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(true);
+  const [pipelineDate, setPipelineDate] = useState(null);
+  const [pipelineJobId, setPipelineJobId] = useState(null);
 
   // 3-Tab Load Analysis States
   const [loadTab, setLoadTab] = useState('benchmark');
@@ -1023,6 +1166,13 @@ export default function App() {
   const [optimizerTab, setOptimizerTab] = useState('window');
 
   const weatherRef = useRef(null);
+
+  useEffect(() => {
+    const activeLabel = NAV_ITEMS.find((item) => item.key === active)?.label
+      || (active === 'settings' ? 'Settings' : 'Grid Intelligence');
+    const regionLabel = selectedRegion ? titleize(selectedRegion) : 'Grid Intelligence';
+    document.title = `${APP_TITLE} | ${activeLabel} - ${regionLabel}`;
+  }, [active, selectedRegion]);
 
   // Sync store sliders into local adj for display/calculation
   // We keep mode/start/end/block in local state (weatherAdj), but override temp/humidity/precip from store.
@@ -1090,13 +1240,57 @@ export default function App() {
     };
   }, [effectiveDate]);
 
+  // ── Forecast Web Worker bootstrap ─────────────────────────────────────────
+  const _startForecastWorker = (jobId) => {
+    // Terminate any previous worker
+    if (forecastWorkerRef.current) {
+      forecastWorkerRef.current.postMessage({ type: 'stop' });
+      forecastWorkerRef.current.terminate();
+    }
+    const worker = new Worker('/forecastWorker.js');
+    forecastWorkerRef.current = worker;
+
+    worker.onmessage = (e) => {
+      const { type } = e.data;
+      if (type === 'progress') {
+        setTrainingProgress(e.data.events || []);
+      } else if (type === 'result') {
+        const resultData = e.data.data;
+        if (resultData && !resultData.error) {
+          setDayAhead(resultData);
+          // Simulator blocks: pipeline is now cached → fast
+          const dateVal = resultData?.metadata?.effective_date || date;
+          loadFromFileData(dateVal || date, baselineDays);
+        }
+        setInitPhase('done');
+        setTrainingProgress([]);
+        worker.terminate();
+        forecastWorkerRef.current = null;
+      } else if (type === 'error') {
+        console.warn('Forecast worker error:', e.data.message);
+        pushToast('error', `Model training failed: ${e.data.message}`);
+        setInitPhase('ready'); // stay ready, forecast section shows retry
+        setTrainingProgress([]);
+        worker.terminate();
+        forecastWorkerRef.current = null;
+      }
+    };
+
+    // Derive API base for the worker (absolute URL required inside Worker)
+    const workerApiBase = window.location.origin;
+    worker.postMessage({ type: 'start', jobId, apiBase: workerApiBase });
+  };
+
+  // ── Phased initialisation ──────────────────────────────────────────────────
   const initializeData = async (regionToUse) => {
-    setLoading(true);
+    setInitPhase('config');
+    setTrainingProgress([]);
+
     try {
-      // Fetch config + settings in parallel
+      // ── Phase 1: Config + settings (blocking — need the date) ─────────────
       const [cfgRes, settingsRes] = await Promise.all([
-        axios.get(API_URL('/v2/config')),
-        axios.get(API_URL('/v2/settings')),
+        axios.get(API_URL('/v2/config'), { timeout: 15000 }),
+        axios.get(API_URL('/v2/settings'), { timeout: 15000 }),
       ]);
 
       setAvailableRegions(cfgRes.data.available_regions || []);
@@ -1107,28 +1301,50 @@ export default function App() {
       const bl = cfgRes.data.best_baseline_window || 7;
       if (d) setDate(d);
       setBaselineDays(bl);
-      if (d) loadFromFileData(d, bl);
+      if (!d) { setInitPhase('ready'); return; }
 
-      if (!d) { setLoading(false); return; }
+      const prevDay = new Date(new Date(d).getTime() - 86400000).toISOString().slice(0, 10);
 
-      // Single precompute call: dayahead + benchmarks + momentum + analysis
-      const preRes = await axios.post(API_URL('/v2/precompute'), {
-        date: d,
-        baseline_days: bl,
-        calendar_config: calendarConfig,
-        region: regionToUse,
-      }, { timeout: 180000 });
+      // ── Phase 2: All historical/analytical data in parallel ───────────────
+      setInitPhase('data');
+      await Promise.allSettled([
+        axios.post(API_URL('/v2/load_benchmarks'), { date: d }, { timeout: 15000 })
+          .then(r => setBenchmarkData(r.data))
+          .catch(e => console.warn('benchmarks failed:', e?.message)),
 
-      const pre = preRes.data;
-      if (pre.dayahead && !pre.dayahead.error) setDayAhead(pre.dayahead);
-      if (pre.benchmarks && !pre.benchmarks.error) setBenchmarkData(pre.benchmarks);
-      if (pre.momentum && !pre.momentum.error) setMomentumChange(pre.momentum);
-      if (pre.analysis && !pre.analysis.error) setAnalysis(pre.analysis);
+        axios.post(API_URL('/v2/load_change'), { date1: d, date2: prevDay, dates: [] }, { timeout: 15000 })
+          .then(r => setMomentumChange(r.data))
+          .catch(e => console.warn('momentum failed:', e?.message)),
+
+        axios.post(API_URL('/v2/analysis'), { date: d, region: regionToUse }, { timeout: 15000 })
+          .then(r => { if (r.data && !r.data.error) setAnalysis(r.data); })
+          .catch(e => console.warn('analysis failed:', e?.message)),
+      ]);
+
+      // ── Phase 3: UI is now fully rendered with all prepared data ──────────
+      setInitPhase('ready');
+
+      // ── Phase 4: Submit model training job → hand off to Web Worker ───────
+      setInitPhase('training');
+      try {
+        const res = await axios.post(API_URL('/v2/forecast/submit'), {
+          date: d, region: regionToUse, baseline_days: bl,
+          calendar_config: calendarConfig,
+        }, { timeout: 10000 });
+        const { job_id } = res.data;
+        setPipelineJobId(job_id);
+        _startForecastWorker(job_id); // non-blocking — worker polls in background
+      } catch (e) {
+        console.warn('forecast submit failed:', e?.message);
+        setInitPhase('ready'); // training failed to submit; show retry option
+      }
+
     } catch (e) {
       console.error('Initialize failed:', e);
-      // Fallback: try config-only init
+      setInitPhase('ready');
+      // Fallback: config-only, then trigger forecast directly
       try {
-        const cfgRes = await axios.get(API_URL('/v2/config'));
+        const cfgRes = await axios.get(API_URL('/v2/config'), { timeout: 15000 });
         setConfig(cfgRes.data);
         const d = cfgRes.data.default_date || cfgRes.data.latest_date || '';
         if (d) {
@@ -1136,12 +1352,10 @@ export default function App() {
           fetchDayAheadForInit(d, cfgRes.data.best_baseline_window || 7, regionToUse);
         }
       } catch { setConfig(null); }
-    } finally {
-      setLoading(false);
     }
   };
 
-  const [availableRegions, setAvailableRegions] = useState(['odisha', 'rajasthan', 'haryana']);
+  const [availableRegions, setAvailableRegions] = useState(['odisha', 'rajasthan', 'haryana', 'chhattisgarh']);
 
   // Startup: only fetch config if we have a region
   useEffect(() => {
@@ -1149,9 +1363,19 @@ export default function App() {
     // For now, wait for selection
   }, []);
 
-  const handleRegionConfirm = () => {
+  const handleRegionConfirm = async () => {
     if (selectedRegion) {
       setShowRegionPrompt(false);
+      setInitPhase('config');
+      try {
+        await axios.post(API_URL('/switch-region'), {
+          region: selectedRegion,
+          from_date: regionDateRange.from || undefined,
+          to_date: regionDateRange.to || undefined,
+        }, { timeout: 60000 });
+      } catch (e) {
+        console.warn('switch-region failed, using existing engine data:', e?.message);
+      }
       initializeData(selectedRegion);
     }
   };
@@ -1164,7 +1388,7 @@ export default function App() {
         baseline_days: targetBaseline,
         calendar_config: calendarConfig,
         region: targetRegion
-      });
+      }, { timeout: FORECAST_REQUEST_TIMEOUT_MS });
       setDayAhead(res.data);
     } catch (e) {
       console.error('Initial fetch failed:', e);
@@ -1249,43 +1473,44 @@ export default function App() {
 
   const fetchDayAhead = async () => {
     if (!effectiveDate) return;
-    setLoading(true);
+    setInitPhase('training');
+    setTrainingProgress([]);
     try {
-      const res = await axios.post(API_URL('/v2/dayahead'), {
+      const res = await axios.post(API_URL('/v2/forecast/submit'), {
         date: effectiveDate,
         baseline_days: baselineDays,
         calendar_config: calendarConfig,
-        region: selectedRegion
-      });
-      setDayAhead(res.data);
-      pushToast('success', 'Forecast generated successfully');
-      loadFromFileData(effectiveDate, baselineDays);
+        region: selectedRegion,
+      }, { timeout: 10000 });
+      const { job_id } = res.data;
+      setPipelineJobId(job_id);
+      _startForecastWorker(job_id);
     } catch (e) {
-      const fallback = 'http://localhost:8000/api/v2/dayahead';
-      const status = e?.response?.status;
-      const msg = e?.response?.data?.detail || e?.message || 'Failed to load forecast';
-      pushToast('error', `Forecast error (${status || 'network'}): ${msg}`);
-      if (API_BASE.startsWith('/api')) {
-        try {
-          const res = await axios.post(fallback, {
-            date: effectiveDate,
-            baseline_days: baselineDays,
-            calendar_config: calendarConfig,
-            region: selectedRegion
-          });
-          setDayAhead(res.data);
-          pushToast('success', 'Forecast loaded via fallback');
-        } catch {
-          // keep error toast
-        }
+      // Fallback: direct synchronous call (e.g. if submit endpoint fails)
+      setLoading(true);
+      try {
+        const res = await axios.post(API_URL('/v2/dayahead'), {
+          date: effectiveDate,
+          baseline_days: baselineDays,
+          calendar_config: calendarConfig,
+          region: selectedRegion,
+        }, { timeout: FORECAST_REQUEST_TIMEOUT_MS });
+        setDayAhead(res.data);
+        loadFromFileData(effectiveDate, baselineDays);
+        pushToast('success', 'Forecast generated');
+        setInitPhase('done');
+      } catch (e2) {
+        const msg = e2?.response?.data?.detail || e2?.message || 'Failed to load forecast';
+        pushToast('error', `Forecast error: ${msg}`);
+        setInitPhase('ready');
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
     }
   };
 
   const fetchLive = async () => {
-    setLoading(true);
+    setLoading(true); // live refresh is user-initiated; brief overlay is acceptable
     try {
       const payload = {
         date: liveEffectiveDate || undefined,
@@ -1293,32 +1518,39 @@ export default function App() {
         actual_blocks: actualBlocks || (live?.metadata?.actual_blocks ?? undefined),
         region: selectedRegion,
       };
-      const res = await axios.post(API_URL('/v2/live'), payload, { timeout: 180000 });
-      setLive(res.data);
-      const availableBlocks = res.data?.metadata?.actual_blocks;
-      if (Number.isFinite(availableBlocks) && actualBlocks === 0) {
-        setActualBlocks(availableBlocks);
-      }
-      pushToast('info', 'Short-term forecast refreshed');
-    } catch (e) {
-      const fallback = 'http://localhost:8000/api/v2/live';
-      const status = e?.response?.status;
-      const msg = e?.response?.data?.detail || e?.message || 'Failed to refresh Live Ops';
-      pushToast('error', `Live Ops error (${status || 'network'}): ${msg}`);
-      if (API_BASE.startsWith('/api')) {
-        try {
-          const payload = {
-            date: liveEffectiveDate || undefined,
-            calendar_config: calendarConfig,
-            actual_blocks: actualBlocks || (live?.metadata?.actual_blocks ?? undefined),
-            region: selectedRegion || 'punjab',
-          };
-          const res = await axios.post(fallback, payload, { timeout: 180000 });
-          setLive(res.data);
-          pushToast('success', 'Live Ops loaded via fallback');
-        } catch {
-          // keep error toast
+      const t2Payload = {
+        date: liveEffectiveDate || undefined,
+        region: selectedRegion || 'punjab',
+        baseline_days: 7,
+      };
+      const [res, t2Res] = await Promise.allSettled([
+        axios.post(API_URL('/v2/live'), payload, { timeout: 180000 }),
+        axios.post(API_URL('/v2/forecast/t2'), t2Payload, { timeout: 180000 }),
+      ]);
+      if (res.status === 'fulfilled') {
+        setLive(res.value.data);
+        const availableBlocks = res.value.data?.metadata?.actual_blocks;
+        if (Number.isFinite(availableBlocks) && actualBlocks === 0) {
+          setActualBlocks(availableBlocks);
         }
+        pushToast('info', 'Short-term forecast refreshed');
+      } else {
+        const fallback = 'http://localhost:8000/api/v2/live';
+        const status = res.reason?.response?.status;
+        const msg = res.reason?.response?.data?.detail || res.reason?.message || 'Failed to refresh Live Ops';
+        pushToast('error', `Live Ops error (${status || 'network'}): ${msg}`);
+        if (API_BASE.startsWith('/api')) {
+          try {
+            const fbRes = await axios.post(fallback, payload, { timeout: 180000 });
+            setLive(fbRes.data);
+            pushToast('success', 'Live Ops loaded via fallback');
+          } catch {
+            // keep error toast
+          }
+        }
+      }
+      if (t2Res.status === 'fulfilled') {
+        setLiveT2(t2Res.value.data);
       }
     } finally {
       setLoading(false);
@@ -1344,18 +1576,23 @@ export default function App() {
     if (analysis?.date === effectiveDate) return;
     setLoading(true);
     try {
-      const res = await axios.post(API_URL('/v2/analysis'), {
-        date: effectiveDate,
-        region: selectedRegion
-      });
-      setAnalysis(res.data);
-      if (!dayAhead || dayAhead?.metadata?.effective_date !== effectiveDate) {
-        const da = await axios.post(API_URL('/v2/dayahead'), {
+      const needsDayAhead = !dayAhead || dayAhead?.metadata?.effective_date !== effectiveDate;
+      const [analysisRes, dayAheadRes] = await Promise.all([
+        axios.post(API_URL('/v2/analysis'), {
           date: effectiveDate,
-          baseline_days: baselineDays,
-          calendar_config: calendarConfig
-        });
-        setDayAhead(da.data);
+          region: selectedRegion
+        }, { timeout: 15000 }),
+        needsDayAhead
+          ? axios.post(API_URL('/v2/dayahead'), {
+            date: effectiveDate,
+            baseline_days: baselineDays,
+            calendar_config: calendarConfig
+          }, { timeout: FORECAST_REQUEST_TIMEOUT_MS })
+          : Promise.resolve(null)
+      ]);
+      setAnalysis(analysisRes.data);
+      if (dayAheadRes?.data) {
+        setDayAhead(dayAheadRes.data);
       }
     } catch (e) {
       const fallback = 'http://localhost:8000/api/v2/analysis';
@@ -1381,16 +1618,17 @@ export default function App() {
 
   // Optimize fetching: Prevent duplicate reloads on tab switch
   useEffect(() => {
+    // Guard: never fire during initialization — initPhase must be in dep array so the
+    // closure always reads the current value (prevents stale-closure double-submission).
+    if (initPhase === 'config' || initPhase === 'data' || initPhase === 'training') return;
     const isDayAheadActive = ['load_analysis', 'weather_analysis', 'optimizer', 'simulator', 'analysis'].includes(active);
     if (isDayAheadActive && date) {
-      // Check if data is already loaded for this date and baseline
-      const alreadyLoaded = dayAhead &&
-        dayAhead.metadata?.effective_date === date;
+      const alreadyLoaded = dayAhead && dayAhead.metadata?.effective_date === date;
       if (!alreadyLoaded) {
         fetchDayAhead();
       }
     }
-  }, [active, date, baselineDays]);
+  }, [active, date, baselineDays, initPhase]);
 
   useEffect(() => {
     if (active === 'forecast') {
@@ -1507,6 +1745,19 @@ export default function App() {
       baseline_mw: baseArr[idx] || 0
     }));
   }, [live, liveAdjustedForecast, liveActual]);
+
+  const t2DataZipped = useMemo(() => {
+    const s = liveT2?.series;
+    if (!s?.blocks?.length) return [];
+    const fArr = s.forecast || [];
+    const baseArr = s.hybrid_baseline || [];
+    return s.blocks.map((b, idx) => ({
+      block_number: b,
+      forecast_mw: fArr[idx] || 0,
+      actual_mw: null,
+      baseline_mw: baseArr[idx] || 0,
+    }));
+  }, [liveT2]);
 
   const dayAheadSeries = useMemo(() => {
     if (active === 'forecast' && live?.series && liveEffectiveDate && effectiveDate === liveEffectiveDate) {
@@ -2159,13 +2410,40 @@ export default function App() {
       .slice(0, 12);
   }, [variancePct]);
 
-  const handleExportLiveCsv = () => {
-    if (!live?.forecast_df?.length) return;
-    const header = Object.keys(live.forecast_df[0]).join(',');
-    const body = live.forecast_df
-      .map((row) => Object.values(row).map((v) => `"${v ?? ''}"`).join(','))
-      .join('\n');
-    downloadBlob(`${header}\n${body}`, `shortterm_${live?.date || effectiveDate}.csv`, 'text/csv');
+  const [exportLoading, setExportLoading] = useState(false);
+  const handleExportLiveCsv = async () => {
+    const exportDate = live?.date || effectiveDate;
+    if (!exportDate) { alert('No forecast date available. Run a forecast first.'); return; }
+    setExportLoading(true);
+    try {
+      const res = await fetch(API_URL('/v2/forecast/export'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: exportDate,
+          region: selectedRegion || 'punjab',
+          baseline_days: baselineDays || 7,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`Server error ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `GNA_Forecast_${exportDate}_T1_T2.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   const benchmarkOption = useMemo(() => {
@@ -2370,12 +2648,60 @@ export default function App() {
 
   return (
     <div className="shell nexus-shell">
-      {/* Global loading overlay */}
-      {loading && (
+      {/* Phase-aware loading overlay — only shown during config fetch and manual refreshes */}
+      {(loading || initPhase === 'config') && (
         <div className="loading-overlay">
           <div className="loading-spinner">
-            <div className="ring" />
-            <div className="label">Loading analytics...</div>
+            <div className="loading-brand loading-brand--pulse">
+              <span className="loading-brand__title">VidyutPragya</span>
+              <span className="loading-brand__subtitle">
+                {selectedRegion ? `${titleize(selectedRegion)} analytics` : 'Loading analytics'}
+              </span>
+            </div>
+            <div className="label">
+              {initPhase === 'config' ? 'Loading configuration…' : 'Preparing data…'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Data preparation progress — shown during phase 2 only, non-blocking */}
+      {initPhase === 'data' && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 900,
+          background: 'linear-gradient(90deg, var(--accent) 0%, transparent 100%)',
+          height: 3,
+          animation: 'progress-bar-indeterminate 1.4s ease-in-out infinite',
+        }} />
+      )}
+
+      {/* Non-blocking forecast training status bar */}
+      {initPhase === 'training' && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 48, right: 0, zIndex: 950,
+          background: 'var(--bg-elevated)', borderTop: '1px solid var(--outline)',
+          padding: '6px 16px', display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', color: '#F07825', flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: '#A0A5B8', flexShrink: 0 }}>Model training…</span>
+          {trainingProgress.length > 0 && (
+            <span style={{ fontSize: 10, color: '#6B7186', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {trainingProgress[trainingProgress.length - 1]?.message || ''}
+            </span>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+            {['Loading data', 'Feature engineering', 'Similarity search', 'ML training', 'Assembling forecast'].map((step, i) => {
+              const stepPhrases = ['1/7', '2/7', '3/7', '4/7', '5/7'];
+              const done = trainingProgress.some(p => p.message?.includes(stepPhrases[i]));
+              return (
+                <span key={step} style={{
+                  fontSize: 9, padding: '2px 7px', borderRadius: 20,
+                  background: done ? 'rgba(52,211,153,0.15)' : 'var(--bg-surface)',
+                  color: done ? '#34D399' : '#6B7186',
+                  border: `1px solid ${done ? 'rgba(52,211,153,0.3)' : 'var(--outline)'}`,
+                }}>{step}</span>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2424,7 +2750,7 @@ export default function App() {
         onReload={() => { reloadData(); loadFromFileData(effectiveDate, baselineDays); }}
         onRefreshLive={fetchLive}
         onDownload={handleExportLiveCsv}
-        canDownload={Boolean(live?.forecast_df?.length)}
+        canDownload={Boolean(live?.date || effectiveDate) && !exportLoading}
         activeView={active}
         setActiveView={setActive}
         forecastHealth={forecastHealth}
@@ -2511,84 +2837,115 @@ export default function App() {
       </div>
 
       {active === 'load_analysis' && (
-        <LoadAnalysisPage
-          effectiveDate={effectiveDate}
-          benchmarkData={benchmarkData}
-          momentumChange={momentumChange}
-          multiDaySeries={multiDaySeries}
-          multiSelectedDates={multiSelectedDates}
-          setMultiSelectedDates={setMultiSelectedDates}
-          detectedSeason={detectedSeason}
-          liveData={live}
-          dayAheadData={dayAhead}
-          apiUrl={API_URL}
-        />
+        <Suspense fallback={<ViewLoading label="Loading load analysis..." />}>
+          <LoadAnalysisPage
+            effectiveDate={effectiveDate}
+            benchmarkData={benchmarkData}
+            momentumChange={momentumChange}
+            multiDaySeries={multiDaySeries}
+            multiSelectedDates={multiSelectedDates}
+            setMultiSelectedDates={setMultiSelectedDates}
+            detectedSeason={detectedSeason}
+            liveData={live}
+            dayAheadData={dayAhead}
+            apiUrl={API_URL}
+          />
+        </Suspense>
       )}
 
       {
         active === 'weather_analysis' && (
-          <WeatherDeepPage
-            effectiveDate={effectiveDate}
-            dayAheadData={dayAhead}
-            dayAheadSeries={dayAheadSeries}
-            liveData={live}
-            selectedRegion={selectedRegion}
-          />
+          <Suspense fallback={<ViewLoading label="Loading weather analysis..." />}>
+            <WeatherDeepPage
+              effectiveDate={effectiveDate}
+              dayAheadData={dayAhead}
+              dayAheadSeries={dayAheadSeries}
+              liveData={live}
+              selectedRegion={selectedRegion}
+            />
+          </Suspense>
         )
       }
 
       {active === 'optimizer' && (
-        <OptimizerPage
-          dayAheadData={dayAhead}
-          dayAheadSeries={dayAheadSeries}
-          baselineWindowMapes={baselineWindowMapes}
-          baselineDays={baselineDays}
-          setBaselineDays={setBaselineDays}
-          availableActualBlocks={availableActualBlocks}
-          effectiveDate={effectiveDate}
-        />
+        <Suspense fallback={<ViewLoading label="Loading optimizer..." />}>
+          <OptimizerPage
+            dayAheadData={dayAhead}
+            dayAheadSeries={dayAheadSeries}
+            baselineWindowMapes={baselineWindowMapes}
+            baselineDays={baselineDays}
+            setBaselineDays={setBaselineDays}
+            availableActualBlocks={availableActualBlocks}
+            effectiveDate={effectiveDate}
+          />
+        </Suspense>
       )}
 
-      {active === 'simulator' && <SimulatorPage requestedDate={effectiveDate} baselineDays={baselineDays} />}
+      {active === 'simulator' && (
+        <Suspense fallback={<ViewLoading label="Loading simulator..." />}>
+          <SimulatorPage requestedDate={effectiveDate} baselineDays={baselineDays} />
+        </Suspense>
+      )}
 
-      {active === 'analysis' && <AnalysisPage effectiveDate={effectiveDate} dayAheadData={dayAhead} liveForecastData={live} />}
+      {active === 'analysis' && (
+        <Suspense fallback={<ViewLoading label="Loading analysis..." />}>
+          <AnalysisPage effectiveDate={effectiveDate} dayAheadData={dayAhead} liveForecastData={live} />
+        </Suspense>
+      )}
 
       {
         active === 'forecast' && (
-          <ForecastPage
-            liveData={liveDataZipped}
-            liveMeta={live?.metadata}
-            driverContributions={live?.driver_contributions || []}
-            decisionSignals={live?.decision_signals || []}
-            effectiveDate={liveEffectiveDate}
-            selectedRegion={selectedRegion}
-            onRefresh={fetchLive}
-            onDownload={handleExportLiveCsv}
-            canDownload={Boolean(live?.forecast_df?.length)}
-            fmt={fmt}
-            chart={
-              <LoadChart
-                blocks={live?.series?.blocks || []}
-                baseline={live?.series?.hybrid_baseline || []}
-                forecast={liveAdjustedForecast.length ? liveAdjustedForecast : (live?.series?.forecast || [])}
-                actual={liveActual}
-                p10={live?.series?.p10 || []}
-                p90={live?.series?.p90 || []}
-                dateLabel={live?.date || liveEffectiveDate || ''}
-              />
-            }
-            weatherStrip={
-              <WeatherStrip dayAhead={dayAhead} live={live} fmt={fmt} />
-            }
-            forecastTable={
-              <ForecastTable
-                liveData={liveDataZipped}
-                forecastUncertainty={live?.forecast_uncertainty}
-                actualBlocks={live?.metadata?.actual_blocks || actualBlocks}
-                fmt={fmt}
-              />
-            }
-          />
+          <Suspense fallback={<ViewLoading label="Loading forecast workspace..." />}>
+            <ForecastPage
+              liveData={liveDataZipped}
+              liveMeta={live?.metadata}
+              driverContributions={live?.driver_contributions || []}
+              decisionSignals={live?.decision_signals || []}
+              effectiveDate={liveEffectiveDate}
+              selectedRegion={selectedRegion}
+              onRefresh={fetchLive}
+              onDownload={handleExportLiveCsv}
+              canDownload={Boolean(live?.date || effectiveDate) && !exportLoading}
+              fmt={fmt}
+              chart={
+                <LoadChart
+                  blocks={live?.series?.blocks || []}
+                  baseline={live?.series?.hybrid_baseline || []}
+                  forecast={liveAdjustedForecast.length ? liveAdjustedForecast : (live?.series?.forecast || [])}
+                  actual={liveActual}
+                  p10={live?.series?.p10 || []}
+                  p90={live?.series?.p90 || []}
+                  dateLabel={live?.date || liveEffectiveDate || ''}
+                />
+              }
+              t2LiveData={t2DataZipped}
+              t2Meta={liveT2?.metadata}
+              t2Chart={
+                liveT2?.series?.blocks?.length ? (
+                  <LoadChart
+                    blocks={liveT2.series.blocks}
+                    baseline={liveT2.series.hybrid_baseline || []}
+                    forecast={liveT2.series.forecast || []}
+                    actual={[]}
+                    p10={liveT2.series.p10 || []}
+                    p90={liveT2.series.p90 || []}
+                    dateLabel={liveT2?.t2_date || ''}
+                  />
+                ) : null
+              }
+              weatherStrip={
+                <WeatherStrip dayAhead={dayAhead} live={live} fmt={fmt} />
+              }
+              forecastTable={
+                <ForecastTable
+                  liveData={liveDataZipped}
+                  forecastUncertainty={live?.forecast_uncertainty}
+                  actualBlocks={live?.metadata?.actual_blocks || actualBlocks}
+                  fmt={fmt}
+                />
+              }
+            />
+          </Suspense>
         )
       }
 
@@ -2635,12 +2992,12 @@ export default function App() {
                   <span>Performance breakdown by day type and weather regime</span>
                 </div>
                 <div className="flex flex-col gap-2">
-                  {['Weekday', 'Weekend', 'Holiday', 'Hot', 'Cold', 'Monsoon'].map((seg) => (
+                  {['Weekday', 'Weekend', 'Holiday', 'Hot', 'Cold', 'Monsoon'].map((seg, idx) => (
                     <div key={seg} className="flex justify-between items-center text-xs">
                       <span>{seg}</span>
                       <div className="flex items-center gap-2">
                         <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div className="h-full bg-[var(--accent)] rounded-full" style={{ width: `${Math.random() * 40 + 60}%` }} />
+                          <div className="h-full bg-[var(--accent)] rounded-full" style={{ width: `${MONITOR_PLACEHOLDER_WIDTHS[idx]}%` }} />
                         </div>
                         <span className="text-[var(--muted)] w-12 text-right">--</span>
                       </div>
@@ -2701,6 +3058,18 @@ export default function App() {
         )
       }
 
+      {active === 'similar_days' && (
+        <Suspense fallback={<ViewLoading label="Loading Similar Days..." />}>
+          <SimilarDaysPage />
+        </Suspense>
+      )}
+
+      {active === 'weather_loc' && (
+        <Suspense fallback={<ViewLoading label="Loading Weather Locations..." />}>
+          <WeatherLocPage />
+        </Suspense>
+      )}
+
       {
         showRegionPrompt && (
           <RegionSelectionModal
@@ -2708,21 +3077,25 @@ export default function App() {
             selected={selectedRegion}
             onSelect={setSelectedRegion}
             onConfirm={handleRegionConfirm}
+            dateRange={regionDateRange}
+            onDateRange={setRegionDateRange}
           />
         )
       }
 
       {
         active === 'settings' && (
-          <SettingsPage
-            settings={settings}
-            config={config}
-            effectiveDate={effectiveDate}
-            selectedRegion={selectedRegion}
-            baselineDays={baselineDays}
-            availableRegions={availableRegions}
-            apiBaseUrl={API_BASE}
-          />
+          <Suspense fallback={<ViewLoading label="Loading settings..." />}>
+            <SettingsPage
+              settings={settings}
+              config={config}
+              effectiveDate={effectiveDate}
+              selectedRegion={selectedRegion}
+              baselineDays={baselineDays}
+              availableRegions={availableRegions}
+              apiBaseUrl={API_BASE}
+            />
+          </Suspense>
         )
       }
       {/* Weather Strip & Forecast Table now inside ForecastPage */}
@@ -2743,6 +3116,15 @@ export default function App() {
       />
       </div>{/* end .nexus-body */}
       </div>{/* end .main-area */}
+      {pipelineJobId && (
+        <PipelineProgress
+          jobId={pipelineJobId}
+          onResult={(data) => {
+            if (data && !data.error) setDayAhead(data);
+            setPipelineJobId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

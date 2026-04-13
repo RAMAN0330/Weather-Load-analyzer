@@ -391,6 +391,26 @@ export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7
   const peakShiftBlocks = netSummary.peakFinal.block && netSummary.peakBaseline.block
     ? netSummary.peakFinal.block - netSummary.peakBaseline.block
     : 0;
+
+  // Reserve Margin Impact: remaining reserve % after scenario peak vs installed capacity
+  const INSTALLED_CAPACITY_MW = 6500; // default; ideally from region settings
+  const scenarioPeak = netSummary.peakFinal.value || 0;
+  const reserveMarginPct = scenarioPeak > 0
+    ? Math.round(((INSTALLED_CAPACITY_MW - scenarioPeak) / INSTALLED_CAPACITY_MW) * 100)
+    : null;
+  const reserveBreach = reserveMarginPct != null && reserveMarginPct < 15;
+
+  // Ramp Feasibility: count blocks where scenario creates ramp > 150 MW/15min
+  const RAMP_LIMIT_MW = 150;
+  const rampFeasibilityViolations = useMemo(() => {
+    if (scopeBlocks.length < 2) return 0;
+    let count = 0;
+    for (let i = 1; i < scopeBlocks.length; i++) {
+      const ramp = Math.abs((scopeBlocks[i].final_mw || 0) - (scopeBlocks[i - 1].final_mw || 0));
+      if (ramp > RAMP_LIMIT_MW) count++;
+    }
+    return count;
+  }, [scopeBlocks]);
   const confidencePct = exogInsight.weightConfidence * 100;
   const weatherTone = exogInsight.weatherTotal >= 0 ? "#F07825" : "#5B9FE4";
   const weatherSignalLabel = exogInsight.weatherTotal >= 0 ? "Weather Uplift" : "Weather Drag";
@@ -452,6 +472,20 @@ export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7
             sub={selectionLabel}
             tone="#ECEEF3"
           />
+          <KpiCard
+            label="Reserve Margin"
+            value={reserveMarginPct != null ? reserveMarginPct : "--"}
+            unit="%"
+            sub={reserveBreach ? `⚠ Breach — peak ${Math.round(scenarioPeak)} MW exceeds safe limit` : scenarioPeak > 0 ? `Scenario peak ${Math.round(scenarioPeak)} MW` : "No scenario peak"}
+            tone={reserveMarginPct == null ? "#ECEEF3" : reserveBreach ? "#F87171" : reserveMarginPct < 20 ? "#FBBF24" : "#34D399"}
+          />
+          <KpiCard
+            label="Ramp Feasibility"
+            value={rampFeasibilityViolations}
+            unit="violations"
+            sub={rampFeasibilityViolations === 0 ? `All ramps within ${RAMP_LIMIT_MW} MW/15min` : `${rampFeasibilityViolations} blocks exceed ${RAMP_LIMIT_MW} MW/15min`}
+            tone={rampFeasibilityViolations === 0 ? "#34D399" : rampFeasibilityViolations <= 3 ? "#FBBF24" : "#F87171"}
+          />
         </div>
 
         <div style={S.workspace}>
@@ -464,15 +498,42 @@ export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7
                   </button>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
                 <span style={S.miniBadge("#34D399")}>{seasonLabel}</span>
                 <span style={S.miniBadge("#5B9FE4")}>{calendarContextLabel}</span>
                 <span style={{ ...S.miniBadge("#F07825"), maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectionLabel}</span>
-                <button type="button" style={S.actionBtn} onClick={() => setCalendarPanelOpen(true)}>Choose Date</button>
-                <button type="button" style={S.actionBtn} onClick={() => setGridOpen(true)}>Open Block Grid</button>
-                {simulatorActionButtons.map((button) => (
-                  <button key={button.id} type="button" style={S.actionBtn} onClick={() => setOverlayPanel(button.id)}>
-                    {button.label}
+                {[
+                  { label: "Choose Date", sub: "Pick forecast date", color: "#FBBF24", onClick: () => setCalendarPanelOpen(true) },
+                  { label: "Block Grid", sub: "96-block schedule", color: "#5B9FE4", onClick: () => setGridOpen(true) },
+                  ...(activeTab === "simulation"
+                    ? [
+                        { label: "Weather Adj.", sub: "Temp · Humidity · Cloud", color: "#34D399", onClick: () => setOverlayPanel("adjustments") },
+                        { label: "Quick Scenarios", sub: "Preset load scenarios", color: "#C084FC", onClick: () => setOverlayPanel("scenarios") },
+                        { label: "Pattern Windows", sub: "Shape & period filters", color: "#F07825", onClick: () => setOverlayPanel("patterns") },
+                      ]
+                    : [
+                        { label: "Analytic Insights", sub: "Model diagnostics", color: "#34D399", onClick: () => setOverlayPanel("insights") },
+                        { label: "Variance Attribution", sub: "Error breakdown", color: "#C084FC", onClick: () => setOverlayPanel("attribution") },
+                        { label: "Weather Adj.", sub: "Temp · Humidity · Cloud", color: "#5B9FE4", onClick: () => setOverlayPanel("adjustments") },
+                      ]
+                  ),
+                ].map(({ label, sub, color, onClick }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={onClick}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5,
+                      minWidth: 130, padding: "10px 14px", borderRadius: 14,
+                      border: `1px solid ${color}33`,
+                      background: `${color}10`,
+                      color: "#ECEEF3",
+                      cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span style={{ fontSize: 8, letterSpacing: 1.1, textTransform: "uppercase", color: "#6B7186" }}>Quick panel</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color }}>{label}</span>
+                    <span style={{ fontSize: 9, color: "#6B7186" }}>{sub}</span>
                   </button>
                 ))}
               </div>

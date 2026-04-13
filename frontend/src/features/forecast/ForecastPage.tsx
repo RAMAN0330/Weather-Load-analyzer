@@ -4,10 +4,8 @@ import {
     AlertCircle,
     BarChart3,
     CalendarDays,
-    CheckCircle2,
     Clock3,
     Download,
-    Gauge,
     Table2,
     TrendingUp,
     Wind,
@@ -27,11 +25,14 @@ interface ForecastPageProps {
     canDownload?: boolean;
     fmt: (v: any) => string;
     chart: React.ReactNode;
+    t2Chart?: React.ReactNode;
+    t2LiveData?: any[];
+    t2Meta?: any;
     weatherStrip?: React.ReactNode;
     forecastTable?: React.ReactNode;
 }
 
-type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | null;
+type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | 'preview' | null;
 
 const blockTime = (block: number) => {
     const minutes = Math.max(0, block - 1) * 15;
@@ -84,26 +85,56 @@ const DetailOverlay = ({
 };
 
 const KpiCard = ({
-    label,
+    eyebrow,
+    title,
     value,
-    meta,
-    icon,
-    className = ''
+    unit,
+    tone = '#ECEEF3',
+    detail,
+    footer,
+    icon
 }: {
-    label: string;
+    eyebrow: string;
+    title: string;
     value: string;
-    meta: string;
-    icon: React.ReactNode;
-    className?: string;
+    unit?: string;
+    tone?: string;
+    detail?: string;
+    footer?: string;
+    icon?: React.ReactNode;
 }) => (
-    <article className={`fp-kpi-card ${className}`.trim()}>
-        <div className="fp-kpi-card__head">
-            <span>{label}</span>
-            <div className="fp-kpi-card__icon">{icon}</div>
+    <div
+        className="fp-kpi-card"
+        style={{
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            padding: '16px 18px',
+            gap: '8px',
+            minHeight: '132px',
+            background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+            borderRadius: '14px',
+            border: '1px solid #2A292F',
+            boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+            position: 'relative'
+        }}
+    >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: '8px', letterSpacing: '1.1px', textTransform: 'uppercase', color: '#6B7186' }}>{eyebrow}</div>
+            {icon && <div style={{ opacity: 0.5, color: '#A0A5B8' }}>{icon}</div>}
         </div>
-        <strong>{value}</strong>
-        <p>{meta}</p>
-    </article>
+        <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#A0A5B8', marginBottom: '8px' }}>{title}</div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '30px', lineHeight: 1, fontWeight: 700, color: tone }}>{value}</span>
+                {unit ? <span style={{ fontSize: '11px', color: '#6B7186' }}>{unit}</span> : null}
+            </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {detail ? <div style={{ fontSize: '10px', color: '#ECEEF3' }}>{detail}</div> : null}
+            {footer ? <div style={{ fontSize: '9px', color: '#6B7186' }}>{footer}</div> : null}
+        </div>
+    </div>
 );
 
 export const ForecastPage: React.FC<ForecastPageProps> = ({
@@ -118,11 +149,16 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
     canDownload = true,
     fmt,
     chart,
+    t2Chart,
+    t2LiveData,
+    t2Meta,
     weatherStrip,
     forecastTable
 }) => {
     const [activeOverlay, setActiveOverlay] = useState<OverlayKey>(null);
+    const [forecastHorizon, setForecastHorizon] = useState<'t1' | 't2'>('t1');
     const rows = useMemo(() => (Array.isArray(liveData) ? liveData : []), [liveData]);
+    const t2Rows = useMemo(() => (Array.isArray(t2LiveData) ? t2LiveData : []), [t2LiveData]);
 
     const summary = useMemo(() => {
         if (!rows.length) return null;
@@ -144,6 +180,49 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
         };
     }, [rows]);
 
+    const t2Summary = useMemo(() => {
+        if (!t2Rows.length) return null;
+        const peakRow = t2Rows.reduce(
+            (best: any, row: any) => ((row?.forecast_mw || 0) > (best?.forecast_mw || 0) ? row : best),
+            t2Rows[0]
+        );
+        const energy = t2Rows.reduce((acc: number, d: any) => acc + Number(d?.forecast_mw || 0), 0) * 0.25;
+        return {
+            peak: Number(peakRow?.forecast_mw || 0),
+            peakBlock: Number(peakRow?.block_number || 1),
+            peakTime: peakRow?.time || blockTime(Number(peakRow?.block_number || 1)),
+            energy,
+        };
+    }, [t2Rows]);
+
+    const activeSummary = forecastHorizon === 't2' ? t2Summary : summary;
+    const activeMeta = forecastHorizon === 't2' ? t2Meta : liveMeta;
+
+    // Ramp Risk: flag if max forecast ramp in next 6 blocks exceeds 150 MW (state ramp limit proxy)
+    const rampRisk = useMemo(() => {
+        if (!rows.length) return { level: 'none', maxRamp: 0, atBlock: null };
+        const nowBlock = rows.findIndex((r: any) => r.actual_mw == null || r.actual_mw <= 0);
+        const lookAhead = rows.slice(Math.max(0, nowBlock), nowBlock + 6);
+        if (lookAhead.length < 2) return { level: 'none', maxRamp: 0, atBlock: null };
+        let maxRamp = 0;
+        let atBlock: number | null = null;
+        for (let i = 1; i < lookAhead.length; i++) {
+            const ramp = Math.abs((lookAhead[i].forecast_mw || 0) - (lookAhead[i - 1].forecast_mw || 0));
+            if (ramp > maxRamp) { maxRamp = ramp; atBlock = lookAhead[i].block_number; }
+        }
+        const level = maxRamp > 200 ? 'alert' : maxRamp > 150 ? 'caution' : 'none';
+        return { level, maxRamp: Math.round(maxRamp), atBlock };
+    }, [rows]);
+
+    // Actuals coverage: elapsed blocks with actual readings
+    const actualsCoverage = useMemo(() => {
+        if (!rows.length) return { elapsed: 0, total: 96, pct: 0, energyMWh: 0 };
+        const withActuals = rows.filter((r: any) => r.actual_mw != null && r.actual_mw > 0);
+        const elapsed = withActuals.length;
+        const energyMWh = withActuals.reduce((acc: number, r: any) => acc + Number(r.actual_mw || 0) * 0.25, 0);
+        return { elapsed, total: 96, pct: Math.round((elapsed / 96) * 100), energyMWh };
+    }, [rows]);
+
     const insights = useMemo(() => {
         const raw = !liveMeta?.insights ? [] : Array.isArray(liveMeta.insights) ? liveMeta.insights : [liveMeta.insights];
         return raw
@@ -158,7 +237,7 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
 
     const drivers = useMemo(() => {
         return [...(driverContributions || [])]
-            .filter((d: any) => Math.abs(Number(d?.mw || 0)) > 0.5)
+            .filter((d: any) => Math.abs(Number(d?.mw || 0)) > 5)  // threshold raised from 0.5 to 5 MW to remove noise
             .sort((a: any, b: any) => Math.abs(Number(b?.mw || 0)) - Math.abs(Number(a?.mw || 0)));
     }, [driverContributions]);
 
@@ -203,7 +282,6 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
         ? signals.filter((signal: any) => signal.risk_flag !== 'low').reduce((acc: number, signal: any) => acc + Number(signal?.uncertainty_pct || 0), 0) / signalCount
         : 0;
     const driverPressure = drivers.reduce((acc: number, driver: any) => acc + Math.abs(Number(driver?.mw || 0)), 0);
-    const topInsight = insights[0];
 
     return (
         <main className="forecast-page">
@@ -223,14 +301,58 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
             )}
 
             <div className="fp-shell fp-shell--single-screen">
-                <section className="fp-topbar">
-                    <div className="fp-topbar__title">
-                        <span className="fp-card-label">Live Forecast</span>
-                        <h2>96-block operating view</h2>
-                    </div>
-                    <div className="fp-topbar__meta">
+                <section className="fp-kpi-grid" style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                    gap: '12px', 
+                    marginBottom: '20px' 
+                }}>
+                    <KpiCard 
+                        eyebrow="Peak posture"
+                        title="Peak Load" 
+                        value={activeSummary ? fmt(activeSummary.peak) : '--'} 
+                        unit="MW"
+                        tone="#F07825"
+                        detail={activeSummary ? `Expected at ${activeSummary.peakTime}` : 'No peak data'}
+                        footer={activeSummary ? `±1 blk · Block ${activeSummary.peakBlock}` : '--'}
+                        icon={<TrendingUp size={15} />} 
+                    />
+                    <KpiCard 
+                        eyebrow="Energy balance"
+                        title="Daily Energy" 
+                        value={activeSummary ? fmt(activeSummary.energy) : '--'} 
+                        unit="MWh"
+                        tone="#ECEEF3"
+                        detail={forecastHorizon === 't1' ? 'Σ 96 blocks × 15min' : 'T+2 pure forecast'}
+                        footer="Total daily throughput" 
+                        icon={<BarChart3 size={15} />} 
+                    />
+                    <KpiCard
+                        eyebrow="Live tracker"
+                        title="Actuals Coverage"
+                        value={forecastHorizon === 't1' ? `${actualsCoverage.pct}%` : 'N/A'}
+                        tone="#34D399"
+                        detail={forecastHorizon === 't1' ? `${fmt(actualsCoverage.energyMWh)} MWh accumulated` : 'T+2 has no actuals'}
+                        footer={forecastHorizon === 't1' ? `${actualsCoverage.elapsed}/96 blocks covered` : 'Pure forecast mode'}
+                        icon={<Activity size={15} />}
+                    />
+                    <KpiCard
+                        eyebrow="Operational risk"
+                        title="Ramp Severity"
+                        value={rampRisk.level === 'alert' ? 'Alert' : rampRisk.level === 'caution' ? 'Caution' : 'Clear'}
+                        tone={rampRisk.level === 'alert' ? '#F87171' : rampRisk.level === 'caution' ? '#FBBF24' : '#34D399'}
+                        detail={rampRisk.maxRamp > 0 ? `${rampRisk.maxRamp} MW/15m swing` : 'Stable load profile'}
+                        footer={rampRisk.atBlock ? `Critical window at B${rampRisk.atBlock}` : 'No immediate risks'}
+                        icon={<AlertCircle size={15} />}
+                    />
+                </section>
+
+                <section style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
                         <div className="fp-meta-pill"><CalendarDays size={14} /><span>{effectiveDate}</span></div>
                         <div className="fp-meta-pill"><Activity size={14} /><span>{titleCase(selectedRegion || 'all regions')}</span></div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
                         <button className="fp-action-btn" onClick={() => setActiveOverlay('weather')}><Wind size={14} />Weather</button>
                         <button className="fp-action-btn" onClick={() => setActiveOverlay('table')}><Table2 size={14} />Table</button>
                         <button className="fp-action-btn" onClick={onRefresh}><Zap size={14} />Refresh</button>
@@ -238,51 +360,100 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                     </div>
                 </section>
 
-                <section className="fp-kpi-grid fp-kpi-grid--compact">
-                    <KpiCard label="Current Actual" value={summary ? `${fmt(summary.lastActual)} MW` : '--'} meta={summary?.lastBlock ? `Block ${summary.lastBlock}` : 'Awaiting actuals'} icon={<Activity size={15} />} />
-                    <KpiCard label="Forecast Peak" value={summary ? `${fmt(summary.peak)} MW` : '--'} meta={summary ? `${summary.peakTime} • B${summary.peakBlock}` : 'No peak'} icon={<TrendingUp size={15} />} className="fp-kpi-card--good" />
-                    <KpiCard label="Day Energy" value={summary ? `${fmt(summary.energy)} MWh` : '--'} meta="Forecast energy" icon={<BarChart3 size={15} />} />
-                    <KpiCard label="Live MAPE" value={`${fmt(liveMeta?.mape_live ?? health.mape)}%`} meta={titleCase(health.status)} icon={<Gauge size={15} />} className={`fp-kpi-card--${health.status === 'critical' ? 'danger' : health.status === 'warning' ? 'warning' : 'good'}`} />
-                </section>
-
                 <section className="fp-single-layout">
                     <section className="fp-chart-panel fp-chart-panel--single">
                         <div className="fp-chart-header">
                             <div>
                                 <h3>Forecast Curve</h3>
-                                <span>Actual, forecast, and persistence over the full day.</span>
+                                <span>
+                                    {forecastHorizon === 't1'
+                                        ? 'Actual, forecast, and persistence over the full day.'
+                                        : 'T+2 pure forecast — no actuals available.'}
+                                </span>
                             </div>
-                            <div className="chip-group">
-                                <span className="chip actual">Actual</span>
-                                <span className="chip forecast">Forecast</span>
-                                <span className="chip baseline">Persistence</span>
+                            <div className="chip-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <div className="fp-horizon-tabs" style={{ display: 'inline-flex', gap: '4px', padding: '5px', background: '#141419', border: '1px solid #2A292F', borderRadius: '999px', marginRight: '16px' }}>
+                                    <button
+                                        style={{ 
+                                            flex: '0 0 auto',
+                                            padding: '6px 14px',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            letterSpacing: '0.3px',
+                                            cursor: 'pointer',
+                                            border: '1px solid transparent',
+                                            fontFamily: 'inherit',
+                                            borderRadius: '999px',
+                                            background: forecastHorizon === 't1' ? '#F0782518' : 'transparent',
+                                            color: forecastHorizon === 't1' ? '#F07825' : '#A0A5B8',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        onClick={() => setForecastHorizon('t1')}
+                                        title="T+1: Tomorrow (with actuals as they settle)"
+                                    >
+                                        T+1
+                                    </button>
+                                    <button
+                                        style={{ 
+                                            flex: '0 0 auto',
+                                            padding: '6px 14px',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            letterSpacing: '0.3px',
+                                            cursor: t2Chart ? 'pointer' : 'not-allowed',
+                                            border: '1px solid transparent',
+                                            fontFamily: 'inherit',
+                                            borderRadius: '999px',
+                                            background: forecastHorizon === 't2' ? '#F0782518' : 'transparent',
+                                            color: forecastHorizon === 't2' ? '#F07825' : '#A0A5B8',
+                                            opacity: t2Chart ? 1 : 0.5,
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                        onClick={() => setForecastHorizon('t2')}
+                                        disabled={!t2Chart}
+                                        title="T+2: Day after tomorrow"
+                                    >
+                                        T+2
+                                    </button>
+                                </div>
+                                {forecastHorizon === 't1' && (
+                                    <>
+                                        <span className="chip actual">Actual</span>
+                                        <span className="chip forecast">Forecast</span>
+                                        <span className="chip baseline">Persistence</span>
+                                    </>
+                                )}
+                                {forecastHorizon === 't2' && (
+                                    <>
+                                        <span className="chip forecast">T+2 Forecast</span>
+                                        <span className="chip baseline">Baseline</span>
+                                    </>
+                                )}
                             </div>
                         </div>
                         <div className="fp-chart-body fp-chart-body--single">
-                            {rows.length ? chart : <div className="chart-empty">No live data available for {effectiveDate}</div>}
+                            {forecastHorizon === 't1'
+                                ? (rows.length ? chart : <div className="chart-empty">No live data available for {effectiveDate}</div>)
+                                : (t2Chart || <div className="chart-empty">T+2 forecast not loaded. Click Refresh to generate.</div>)
+                            }
                         </div>
                         <div className="fp-chart-footer">
-                            <span>Peak {summary ? `${summary.peakTime} • ${fmt(summary.peak)} MW` : '--'}</span>
-                            <span>Health <strong style={{ color: health.color }}>{health.status === 'insufficient' ? 'settling' : `${fmt(liveMeta?.mape_live ?? health.mape)}%`}</strong></span>
+                            <span>Peak {activeSummary ? `${activeSummary.peakTime} • ${fmt(activeSummary.peak)} MW` : '--'}</span>
+                            {forecastHorizon === 't1'
+                                ? <span>Health <strong style={{ color: health.color }}>{health.status === 'insufficient' ? 'settling' : `${fmt(liveMeta?.mape_live ?? health.mape)}%`}</strong></span>
+                                : <span>Horizon <strong style={{ color: 'var(--accent)' }}>T+2 · No actuals</strong></span>
+                            }
                         </div>
                     </section>
 
-                    <aside className="fp-command-rail">
+                    <aside className="fp-command-rail" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                         <article className="fp-side-card fp-side-card--compact">
                             <div className="fp-card-label">Context</div>
                             <div className="fp-stat-list">
                                 <div className="fp-stat-row"><span>Date</span><strong>{effectiveDate}</strong></div>
                                 <div className="fp-stat-row"><span>Region</span><strong>{titleCase(selectedRegion || 'all regions')}</strong></div>
-                                <div className="fp-stat-row"><span>Status</span><strong className="fp-status-live">Live</strong></div>
-                                <div className="fp-stat-row"><span>Coverage</span><strong>{summary ? `${summary.actualCoverage}%` : '--'}</strong></div>
-                            </div>
-                        </article>
-
-                        <article className="fp-side-card fp-side-card--compact">
-                            <div className="fp-card-label">Operational Brief</div>
-                            <div className="fp-compact-brief">
-                                <strong>{topInsight?.title || 'System nominal'}</strong>
-                                <p>{topInsight?.text || 'Forecast is tracking within expected structure.'}</p>
+                                <div className="fp-stat-row"><span>Horizon</span><strong className="fp-status-live">{forecastHorizon === 't1' ? 'T+1 Live' : 'T+2 Pure'}</strong></div>
+                                <div className="fp-stat-row"><span>Coverage</span><strong>{forecastHorizon === 't1' ? (summary ? `${summary.actualCoverage}%` : '--') : 'N/A (T+2)'}</strong></div>
                             </div>
                         </article>
 
@@ -303,48 +474,16 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('drivers')}><span>Drivers</span><strong>{drivers.length}</strong></button>
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('signals')}><span>Signals</span><strong>{signals.length}</strong></button>
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('logs')}><span>Logs</span><strong>{Array.isArray(liveMeta?.logs) ? liveMeta.logs.length : 0}</strong></button>
+                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('preview')}><span>Preview</span><strong>{previewSignals.length + previewDrivers.length}</strong></button>
                             </div>
                         </article>
 
-                        <article className="fp-side-card fp-side-card--compact">
-                            <div className="fp-side-card__head">
-                                <div className="fp-card-label">Preview</div>
-                                {signalCount > previewSignals.length && <button className="fp-inline-link" onClick={() => setActiveOverlay('signals')}>All</button>}
-                            </div>
-                            <div className="fp-preview-dual">
-                                <div className="fp-preview-block">
-                                    <span className="fp-preview-block__label">Signals</span>
-                                    {previewSignals.length ? previewSignals.map((signal: any) => (
-                                        <div key={`${signal.block}-${signal.primary_driver}`} className={`fp-signal-card fp-signal-card--${signal.risk_flag}`}>
-                                            <div className="fp-signal-card__head"><span>B{signal.block}</span><strong>{signal.time || blockTime(Number(signal.block || 1))}</strong></div>
-                                            <p>{signal.primary_driver || 'Structural load shift'}</p>
-                                        </div>
-                                    )) : <div className="fp-empty-state">No active risk windows.</div>}
-                                </div>
-                                <div className="fp-preview-block">
-                                    <span className="fp-preview-block__label">Drivers</span>
-                                    {previewDrivers.length ? previewDrivers.map((driver: any) => {
-                                        const color = driver.color || (Number(driver.mw || 0) >= 0 ? 'var(--success)' : 'var(--danger)');
-                                        return (
-                                            <div key={driver.factor} className="fp-driver-item">
-                                                <div className="fp-driver-item__head">
-                                                    <span>{driver.factor}</span>
-                                                    <strong style={{ color }}>{Number(driver.mw || 0) > 0 ? '+' : ''}{fmt(driver.mw)}</strong>
-                                                </div>
-                                                <div className="fp-driver-item__bar"><div style={{ width: `${Math.min((Math.abs(Number(driver.pct || 0)) / maxDriverPct) * 100, 100)}%`, background: color }} /></div>
-                                            </div>
-                                        );
-                                    }) : <div className="fp-empty-state">No material driver pressure.</div>}
-                                </div>
-                            </div>
-                        </article>
-
-                        <article className="fp-side-card fp-side-card--compact">
+                        <article className="fp-side-card fp-side-card--compact" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                             <div className="fp-side-card__head">
                                 <div className="fp-card-label">Engine Log</div>
                                 {previewLogs.length > 0 && <button className="fp-inline-link" onClick={() => setActiveOverlay('logs')}>Open</button>}
                             </div>
-                            <div className="fp-log-preview">
+                            <div className="fp-log-preview" style={{ flexGrow: 1 }}>
                                 {previewLogs.length ? previewLogs.map((log: string, index: number) => (
                                     <div key={`${index}-${log}`} className="fp-log-line"><span>#{String(index + 1).padStart(2, '0')}</span><p>{log}</p></div>
                                 )) : <div className="fp-empty-state">Awaiting telemetry events.</div>}
@@ -353,6 +492,35 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                     </aside>
                 </section>
             </div>
+
+            <DetailOverlay open={activeOverlay === 'preview'} title="Preview" subtitle="Top signals and driver contributions" onClose={() => setActiveOverlay(null)}>
+                <div className="fp-preview-dual">
+                    <div className="fp-preview-block">
+                        <span className="fp-preview-block__label">Signals</span>
+                        {previewSignals.length ? previewSignals.map((signal: any) => (
+                            <div key={`${signal.block}-${signal.primary_driver}`} className={`fp-signal-card fp-signal-card--${signal.risk_flag}`}>
+                                <div className="fp-signal-card__head"><span>B{signal.block}</span><strong>{signal.time || blockTime(Number(signal.block || 1))}</strong></div>
+                                <p>{signal.primary_driver || 'Structural load shift'}</p>
+                            </div>
+                        )) : <div className="fp-empty-state">No active risk windows.</div>}
+                    </div>
+                    <div className="fp-preview-block">
+                        <span className="fp-preview-block__label">Drivers</span>
+                        {previewDrivers.length ? previewDrivers.map((driver: any) => {
+                            const color = driver.color || (Number(driver.mw || 0) >= 0 ? 'var(--success)' : 'var(--danger)');
+                            return (
+                                <div key={driver.factor} className="fp-driver-item">
+                                    <div className="fp-driver-item__head">
+                                        <span>{driver.factor}</span>
+                                        <strong style={{ color }}>{Number(driver.mw || 0) > 0 ? '+' : ''}{fmt(driver.mw)}</strong>
+                                    </div>
+                                    <div className="fp-driver-item__bar"><div style={{ width: `${Math.min((Math.abs(Number(driver.pct || 0)) / maxDriverPct) * 100, 100)}%`, background: color }} /></div>
+                                </div>
+                            );
+                        }) : <div className="fp-empty-state">No material driver pressure.</div>}
+                    </div>
+                </div>
+            </DetailOverlay>
 
             <DetailOverlay open={activeOverlay === 'intelligence'} title="Forecast Intelligence" subtitle={`${insights.length} note${insights.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
                 <div className="fp-modal-stack">
@@ -368,17 +536,24 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
             <DetailOverlay open={activeOverlay === 'drivers'} title="Driver Contribution Detail" subtitle={`${drivers.length} active driver${drivers.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
                 <div className="fp-modal-stack">
                     {drivers.length ? drivers.map((driver: any) => {
-                        const color = driver.color || (Number(driver.mw || 0) >= 0 ? 'var(--success)' : 'var(--danger)');
+                        const mwVal = Number(driver.mw || 0);
+                        const isPositive = mwVal >= 0;
+                        const color = driver.color || (isPositive ? 'var(--success)' : 'var(--accent)');
+                        const dirLabel = isPositive ? '▲ Load-adding' : '▼ Load-suppressing';
                         return (
                             <article key={driver.factor} className="fp-modal-driver">
                                 <div className="fp-modal-driver__head">
-                                    <div><strong>{driver.factor}</strong><span>{fmt(driver.pct)}% contribution share</span></div>
-                                    <div style={{ color }}>{Number(driver.mw || 0) > 0 ? '+' : ''}{fmt(driver.mw)} MW</div>
+                                    <div>
+                                        <strong>{driver.factor}</strong>
+                                        <span>{fmt(driver.pct)}% share</span>
+                                        <span style={{ fontSize: '11px', color, marginLeft: '6px' }}>{dirLabel}</span>
+                                    </div>
+                                    <div style={{ color, fontWeight: 600 }}>{mwVal > 0 ? '+' : ''}{fmt(mwVal)} MW</div>
                                 </div>
                                 <div className="fp-modal-driver__bar"><div style={{ width: `${Math.min((Math.abs(Number(driver.pct || 0)) / maxDriverPct) * 100, 100)}%`, background: color }} /></div>
                             </article>
                         );
-                    }) : <div className="fp-empty-state">No active drivers above the display threshold.</div>}
+                    }) : <div className="fp-empty-state">No active drivers above the 5 MW display threshold.</div>}
                 </div>
             </DetailOverlay>
 

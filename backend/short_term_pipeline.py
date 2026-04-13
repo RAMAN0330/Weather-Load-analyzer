@@ -1,7 +1,11 @@
+import os
 import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
+
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -33,6 +37,15 @@ try:
     from lightgbm import LGBMRegressor
 except Exception:
     LGBMRegressor = None
+
+try:
+    from .ml_baseline import compute_ml_baseline, blend_baselines
+except ImportError:
+    try:
+        from ml_baseline import compute_ml_baseline, blend_baselines
+    except ImportError:
+        compute_ml_baseline = None
+        blend_baselines = None
 
 try:
     import torch
@@ -261,13 +274,13 @@ class NHiTSRegressor:
                     bad_epochs += 1
 
                 if self.verbose and (epoch % 10 == 0 or epoch == max_epochs - 1):
-                    print(f"[N-HiTS] epoch={epoch:03d} train={train_loss:.6f} val={val_loss:.6f}")
+                    logger.debug("[N-HiTS] epoch=%03d train=%.6f val=%.6f", epoch, train_loss, val_loss)
 
                 if epoch + 1 >= min_epochs and bad_epochs >= patience:
                     break
             else:
                 if self.verbose and (epoch % 10 == 0 or epoch == max_epochs - 1):
-                    print(f"[N-HiTS] epoch={epoch:03d} train={train_loss:.6f}")
+                    logger.debug("[N-HiTS] epoch=%03d train=%.6f", epoch, train_loss)
 
         if best_state is not None:
             self._model.load_state_dict(best_state)
@@ -374,14 +387,14 @@ DEFAULT_CONFIG = {
         "blend_weight": 0.35,
         "min_blend_weight": 0.10,
         "max_blend_weight": 0.45,
-        "sequence_epochs": 60,
+        "sequence_epochs": 30,
         "random_state": 42,
     },
     "rain_coeffs": {"winter": 20.0, "spring": 18.0, "summer": 15.0, "fall": 18.0},
     "min_actual_blocks": 24,
-    "max_actual_blocks": 60,
+    "max_actual_blocks": 96,
     "weather_tune": True,
-    "weather_tune_iters": 20,
+    "weather_tune_iters": 10,
     "min_valid_load_mw": 100.0, # Minimum average load to consider a day valid for baseline
     "driver_sliders": {
         "temperature": 1.0,
@@ -1576,13 +1589,74 @@ def _prepare_inference_frame(
             col for col in union_cols
             if not (history[col].isna().all() and target[col].isna().all())
         ]
+        hist_part = history[usable_cols].dropna(axis=1, how="all")
+        tgt_part = target[usable_cols].dropna(axis=1, how="all")
         combined = pd.concat(
-            [history[usable_cols], target[usable_cols]],
+            [hist_part, tgt_part],
             ignore_index=True,
             sort=False,
         )
+        combined = combined.reindex(columns=sorted(combined.columns))
     prepared = _prepare_training(combined, load_source_col="load_feature_source")
     return prepared[prepared["_is_target_row"] == 1].copy()
+
+
+def _normalize_block_vector(values: Any, length: int = _BLOCK_COUNT, fill_value: float = 0.0) -> np.ndarray:
+    vec = np.asarray(values if values is not None else [], dtype=float).reshape(-1)
+    if vec.size == 0:
+        return np.full(length, float(fill_value), dtype=float)
+    if vec.size < length:
+        pad_value = float(vec[-1]) if vec.size else float(fill_value)
+        vec = np.pad(vec, (0, length - vec.size), mode="constant", constant_values=pad_value)
+    elif vec.size > length:
+        vec = vec[:length]
+    return vec.astype(float, copy=False)
+
+
+def _build_synthetic_forecast_day(
+    template_df: pd.DataFrame,
+    target_date: str,
+    forecast: Any,
+    zero_actuals: bool = False,
+) -> pd.DataFrame:
+    day = _coerce_day_to_96_blocks(template_df, fill_load=False)
+    if day.empty:
+        raise ValueError(f"Cannot synthesise day {target_date}: template day is empty.")
+
+    synthetic = day.copy()
+    synthetic["date"] = str(target_date)
+    synthetic["time_block"] = np.arange(1, _BLOCK_COUNT + 1, dtype=int)
+    synthetic["total_drawal"] = _normalize_block_vector(
+        np.zeros(_BLOCK_COUNT, dtype=float) if zero_actuals else forecast,
+        length=_BLOCK_COUNT,
+        fill_value=0.0,
+    )
+    return synthetic
+
+
+def _apply_seam_continuity(
+    forecast: Any,
+    previous_terminal_mw: float,
+    window: int = 8,
+) -> Tuple[np.ndarray, float, float]:
+    adjusted = _normalize_block_vector(forecast, length=_BLOCK_COUNT, fill_value=0.0)
+    gap_before = float(adjusted[0] - previous_terminal_mw)
+    if adjusted.size == 0 or window <= 0:
+        return adjusted, gap_before, gap_before
+
+    taper = min(int(window), adjusted.size)
+    if taper <= 1:
+        adjusted[0] = float(previous_terminal_mw)
+        return adjusted, gap_before, float(adjusted[0] - previous_terminal_mw)
+
+    delta = float(previous_terminal_mw - adjusted[0])
+    if abs(delta) < 1e-9:
+        return adjusted, gap_before, gap_before
+
+    taper_weights = 0.5 * (1.0 + np.cos(np.pi * np.arange(taper, dtype=float) / float(taper - 1)))
+    adjusted[:taper] = adjusted[:taper] + (delta * taper_weights)
+    gap_after = float(adjusted[0] - previous_terminal_mw)
+    return adjusted, gap_before, gap_after
 
 
 def _coerce_day_to_96_blocks(day_df: pd.DataFrame, fill_load: bool = False) -> pd.DataFrame:
@@ -1976,7 +2050,7 @@ def _build_weather_model() -> Any:
             reg_lambda=1.0,
             objective="reg:squarederror",
             n_jobs=4,
-            verbosity=0,
+            verbosity=1,
             random_state=42,
         )
     if LGBMRegressor is not None:
@@ -1990,7 +2064,7 @@ def _build_weather_model() -> Any:
             min_child_samples=20,
             reg_alpha=0.1,
             reg_lambda=1.0,
-            verbosity=-1,
+            verbosity=1,
             random_state=42,
         )
     return LinearRegression()
@@ -2034,7 +2108,8 @@ def _tune_xgb(X_train, y_train, X_val, y_val, n_iter: int, quantile: float = 0.5
             "random_state": 42,
         }
         model = XGBRegressor(**params)
-        model.fit(X_train, y_train)
+        print(f"\n[ML Pipeline] XGBoost tuning iteration... Training epochs:")
+        model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=100)
         preds = model.predict(X_val)
         score = _rmse(y_val, preds)
         if best_score is None or score < best_score:
@@ -2064,7 +2139,8 @@ def _tune_lgbm(X_train, y_train, X_val, y_val, n_iter: int, quantile: float = 0.
             "random_state": 42,
         }
         model = LGBMRegressor(**params)
-        model.fit(X_train, y_train)
+        print(f"\n[ML Pipeline] LightGBM tuning iteration... Training epochs:")
+        model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
         preds = model.predict(X_val)
         score = _rmse(y_val, preds)
         if best_score is None or score < best_score:
@@ -2150,14 +2226,9 @@ def _train_weather_model(df: pd.DataFrame, tune: bool = True, tune_iters: int = 
             lgbm_rmse = _rmse(y_val, lgbm_model.predict(X_val))
             models_with_rmse.append((lgbm_model, lgbm_rmse))
 
-        # Try NHiTS if available
-        try:
-            nhits = NHiTSRegressor(input_dim=len(features))
-            nhits.fit(X_train.values, y_train)
-            nhits_rmse = _rmse(y_val, nhits.predict(X_val.values))
-            models_with_rmse.append((nhits, nhits_rmse))
-        except Exception:
-            pass
+        # NHiTS removed from voting ensemble per ensemble_model_strategy.md:
+        # it has no weather/calendar conditioning and drags T+2 accuracy.
+        # XGBoost + LightGBM are the core ensemble; TiDE/PatchTST are planned replacements.
 
         if models_with_rmse:
             # RMSE-weighted ensemble (better models get more weight)
@@ -2168,7 +2239,8 @@ def _train_weather_model(df: pd.DataFrame, tune: bool = True, tune_iters: int = 
 
     if model is None:
         model = _build_weather_model()
-        model.fit(X, y)
+        print(f"\n[ML Pipeline] Training base weather model... Training epochs:")
+        model.fit(X, y) # Default fallback without eval_set avoids shape issues
     effects = _estimate_feature_effects(model, data, features)
     return model, data, effects
 
@@ -3236,6 +3308,48 @@ def run_weather_impact_elastic_net_engine(
     yday_load = _day_vector(prev_date, "total_drawal", fill=0.0)
     yday2_load = _day_vector(prev2_date, "total_drawal", fill=0.0)
 
+    # Baseline anomaly guard: if yesterday's total load is an outlier vs its
+    # same-weekday rolling window, fall back to the most-recent clean same-weekday
+    # day to avoid corrupting both the baseline and the momentum term.
+    if prev_date:
+        try:
+            prev_dt = pd.to_datetime(prev_date)
+            prev_weekday = prev_dt.weekday()
+            # Collect daily totals for same weekday in the training window (up to 8 weeks back)
+            _same_wd_totals: list[float] = []
+            for _d in reversed(dates[:target_idx - 1]):
+                _dt = pd.to_datetime(_d)
+                if _dt.weekday() == prev_weekday:
+                    _vec = _day_vector(_d, "total_drawal", fill=0.0)
+                    _tot = float(_vec.sum())
+                    if _tot > 0:
+                        _same_wd_totals.append(_tot)
+                if len(_same_wd_totals) >= 8:
+                    break
+            if len(_same_wd_totals) >= 3:
+                _sw_arr = np.asarray(_same_wd_totals, dtype=float)
+                _sw_mean = float(_sw_arr.mean())
+                _sw_std = float(_sw_arr.std())
+                _yday_total = float(yday_load.sum())
+                if _sw_std > 0 and abs(_yday_total - _sw_mean) > 2.0 * _sw_std:
+                    # Yesterday is anomalous — find the most recent clean same-weekday fallback
+                    logger.warning(
+                        "Yesterday (%s) total load %.0f MW is outside 2σ band "
+                        "[%.0f ± %.0f MW] — looking for clean same-weekday fallback.",
+                        prev_date, _yday_total, _sw_mean, _sw_std,
+                    )
+                    for _d in reversed(dates[:target_idx - 1]):
+                        _dt = pd.to_datetime(_d)
+                        if _dt.weekday() == prev_weekday:
+                            _vec = _day_vector(_d, "total_drawal", fill=0.0)
+                            _tot = float(_vec.sum())
+                            if _tot > 0 and abs(_tot - _sw_mean) <= 2.0 * _sw_std:
+                                logger.warning("Using %s as clean baseline day instead of %s.", _d, prev_date)
+                                yday_load = _vec
+                                break
+        except Exception as _e:
+            logger.debug("Baseline anomaly guard skipped: %s", _e)
+
     temp_delta = today_temp - yday_temp
     hum_delta = today_hum - yday_hum
     rain_delta = today_rain - yday_rain
@@ -3273,7 +3387,18 @@ def run_weather_impact_elastic_net_engine(
     )
     weather_impact_mw = base_vec * weather_impact_pct
 
-    lam = float(np.clip(float(momentum_lambda), 0.3, 0.6))
+    # Adaptive momentum lambda: on high-volatility days (large yesterday deviation)
+    # reduce lambda so we don't amplify an anomalous baseline.
+    _HIGH_VOLATILITY_MW = 150.0
+    deviation = float(np.abs(dod_load_delta).mean())
+    if deviation > _HIGH_VOLATILITY_MW:
+        lam = float(np.clip(float(momentum_lambda) * 0.4, 0.15, 0.25))
+        logger.debug(
+            "High dod_load_delta deviation %.1f MW > %.1f threshold — reducing lambda to %.3f",
+            deviation, _HIGH_VOLATILITY_MW, lam,
+        )
+    else:
+        lam = float(np.clip(float(momentum_lambda), 0.3, 0.6))
     momentum_impact_mw = lam * dod_load_delta
     momentum_base = np.divide(
         momentum_impact_mw,
@@ -3626,12 +3751,28 @@ def _recommended_action(primary_feature: str, risk_flag: str, net_impact_pct: fl
 
 
 def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: int = 40, config: Optional[Dict] = None) -> Dict:
+    import time as _time
+    _t0 = _time.monotonic()
+
     cfg = DEFAULT_CONFIG.copy()
     if config:
         cfg.update(config)
+    # Extract callback (not a real config param, remove before use)
+    _progress_cb = cfg.pop("progress_callback", None)
+
+    def _step(msg: str):
+        elapsed = _time.monotonic() - _t0
+        logger.info("[pipeline:%s] %s  (%.1fs elapsed)", target_date, msg, elapsed)
+        if _progress_cb:
+            try:
+                _progress_cb({"type": "progress", "message": msg, "elapsed": round(elapsed, 1)})
+            except Exception:
+                pass
+
+    _step("▶ START")
     cfg["similarity_weights"] = _normalize_similarity_weights(cfg.get("similarity_weights", {}))
-    actual_blocks = int(np.clip(actual_blocks, 0, cfg["max_actual_blocks"]))
-    if actual_blocks < 10:
+    actual_blocks = int(np.clip(actual_blocks, 0, 96))  # cap at full day, no static config limit
+    if actual_blocks < 2:
         actual_blocks = 0
 
     df = df.copy()
@@ -3662,11 +3803,13 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         "diagnostics": {},
     }
     if bool(cfg.get("auto_similarity_from_data", True)):
+        _step("1/7 computing similarity profile...")
         similarity_profile = _compute_similarity_profile_from_data(df, target_date, cfg)
         cfg["similarity_weights"] = _normalize_similarity_weights(similarity_profile.get("weights", {}))
         if bool(cfg.get("auto_require_rain_match", True)):
             cfg["require_rain_match"] = bool(similarity_profile.get("require_rain_match", True))
 
+    _step("2/7 selecting best baseline window...")
     best_window, best_mape = _best_baseline_window(
         df,
         target_date,
@@ -3675,7 +3818,34 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         weather_weight=float(cfg.get("baseline_weather_weight", 0.0)),
     )
 
+    _step("3/7 finding similar days for baseline...")
     baseline_hist, similar_days = _similar_day_baseline(df, target_date, cfg)
+
+    # ------------------------------------------------------------------
+    # ML Baseline (Option 1 — hybrid upgrade)
+    # Train an XGBoost/LightGBM/Ridge model on the full history and blend
+    # its prediction with the similar-day baseline.  The delta engine is
+    # unchanged — ML only improves the baseline it starts from.
+    # ------------------------------------------------------------------
+    _step("4/7 training ML baseline (XGBoost/LightGBM/Ridge)...")
+    _ml_baseline_vec = np.zeros(_BLOCK_COUNT, dtype=float)
+    _ml_baseline_meta: dict = {"model_name": "disabled"}
+    if compute_ml_baseline is not None and blend_baselines is not None:
+        try:
+            _ml_baseline_vec, _ml_baseline_meta = compute_ml_baseline(df, target_date)
+            if np.any(_ml_baseline_vec > 0):
+                baseline_hist = blend_baselines(
+                    ml_baseline=_ml_baseline_vec,
+                    stat_baseline=baseline_hist,
+                )
+                logger.info(
+                    "ML baseline blended (%s, blend_weight=%.2f, cached=%s).",
+                    _ml_baseline_meta.get("model_name"),
+                    _ml_baseline_meta.get("blend_weight", 0.45),
+                    _ml_baseline_meta.get("is_cached", False),
+                )
+        except Exception as _ml_err:
+            logger.warning("ML baseline failed, using similar-day baseline only: %s", _ml_err)
 
     target_df = _coerce_day_to_96_blocks(df[df["date"] == target_date], fill_load=False)
     if target_df.empty:
@@ -3719,6 +3889,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     if train_df.empty:
         train_df = df[df["date"] != target_date]
 
+    _step("5/7 training weather model (ElasticNet/Ridge)...")
     weather_model, weather_training_frame, weather_effects = _train_weather_model(
         train_df,
         tune=bool(cfg.get("weather_tune", True)),
@@ -3937,20 +4108,40 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             trend_correction = np.full(96, trend_mw, dtype=float)
 
     # ── Component 4: Boundary Correction (anchor to actual level) ──────
-    # How much actual deviates from baseline in recent blocks
-    boundary_window = min(12, actual_blocks)
+    # Ratio-based correction over a wide window captures proportional level deviation.
+    # Additive correction captures residual absolute offset. Both decay over 48 blocks (~12 hrs).
+    boundary_window = min(12, actual_blocks)   # additive window (recent blocks)
+    ratio_window = min(32, actual_blocks)       # ratio window (wider = more representative)
+    boundary_bias_mw = 0.0
+    level_ratio = 1.0
     if boundary_window > 0:
         recent_actual = actual_partial[-boundary_window:]
         recent_baseline = baseline_hist[actual_blocks - boundary_window:actual_blocks]
         boundary_bias_mw = float(np.median(recent_actual - recent_baseline))
-    else:
-        boundary_bias_mw = 0.0
+    if ratio_window > 0:
+        ratio_actual = actual_partial[-ratio_window:]
+        ratio_baseline = baseline_hist[actual_blocks - ratio_window:actual_blocks]
+        _valid = ratio_baseline > 100
+        if _valid.sum() >= 2:
+            level_ratio = float(np.clip(
+                np.median(ratio_actual[_valid] / ratio_baseline[_valid]),
+                0.75, 1.25,
+            ))
 
-    # Decay the boundary correction — near blocks trust it more, far blocks trust model
+    # Level-adjust baseline_hist only for the actual period so the Pattern Fit chart
+    # shows baseline aligned with actual. Forecast period baseline is left unchanged
+    # (the boundary_correction below handles the smooth level transition there).
+    if level_ratio != 1.0 and actual_blocks > 0:
+        for b in range(actual_blocks):
+            baseline_hist[b] = baseline_hist[b] * level_ratio
+        safe_baseline = np.maximum(baseline_hist, 1.0)
+
+    # Additive boundary correction for forecast period — ratio already applied to actual
+    # blocks above; don't re-apply ratio to forecast (causes overshot jump).
     boundary_correction = np.zeros(96, dtype=float)
     for b in range(actual_blocks, 96):
         distance = b - actual_blocks + 1
-        decay = np.exp(-0.693 * distance / 24.0)  # halflife = 24 blocks (~6 hours)
+        decay = np.exp(-0.693 * distance / 48.0)
         boundary_correction[b] = boundary_bias_mw * decay
 
     # ── Similar-day residual shape (intraday pattern from historical days) ──
@@ -3964,23 +4155,42 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         if resid_stack:
             sim_residual_shape = np.median(np.vstack(resid_stack), axis=0)
 
+    _step("6/7 applying India-specific adjustments...")
     # ── India-Specific Adjustments (agriculture, festivals, events) ───
     india_adj = np.zeros(96, dtype=float)
     india_meta = {}
     if compute_india_adjustments is not None:
         try:
             india_region = cfg.get("region", "punjab")
+            # Extract per-block temperatures if available (enables CDH model)
+            _block_temps = None
+            _avg_temp = 25.0
+            _avg_hum  = 50.0
+            if target_df is not None and not target_df.empty:
+                if "temperature" in target_df.columns:
+                    _t = target_df.sort_values("time_block")["temperature"].to_numpy()
+                    if len(_t) > 0:
+                        _avg_temp = float(np.nanmean(_t))
+                        _block_temps = _t if len(_t) == 96 else None
+                if "humidity" in target_df.columns:
+                    _h = target_df["humidity"].to_numpy()
+                    if len(_h) > 0:
+                        _avg_hum = float(np.nanmean(_h))
             india_result = compute_india_adjustments(
                 state=india_region,
                 target_date=str(target_date),
                 baseline=baseline_hist,
                 config=cfg,
+                temperature=_avg_temp,
+                humidity=_avg_hum,
+                block_temps=_block_temps,
             )
             india_adj = np.asarray(india_result.get("total_adj_mw", np.zeros(96)), dtype=float)
             india_meta = india_result
         except Exception as _e:
             logger.warning(f"India intelligence failed: {_e}")
 
+    _step("7/7 assembling final forecast...")
     # ── Assemble Final Forecast ────────────────────────────────────────
     forecast = np.zeros(96, dtype=float)
     for b in range(96):
@@ -4028,14 +4238,14 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     residuals = actual_partial - hybrid[:actual_blocks]
     residuals_clean = residuals.copy()
 
-    # ── Stitch: exact actuals + smooth 4-block taper into forecast ─────
+    # ── Stitch: exact actuals + smooth 8-block cosine taper into forecast ─────
     stitched = forecast.copy()
     stitched[:actual_blocks] = actual_partial
-    taper_len = min(4, 96 - actual_blocks)
+    taper_len = min(8, 96 - actual_blocks)
     if taper_len > 0 and actual_blocks > 0 and len(actual_partial) > 0:
         for t in range(taper_len):
             b = actual_blocks + t
-            w = (t + 1) / (taper_len + 1)  # 0.2, 0.4, 0.6, 0.8
+            w = 0.5 * (1.0 - np.cos(np.pi * (t + 1) / (taper_len + 1)))  # cosine ease-in
             stitched[b] = actual_partial[-1] * (1.0 - w) + forecast[b] * w
 
     shrink_cfg = cfg.get("forecast_shrinkage", {}) if isinstance(cfg.get("forecast_shrinkage", {}), dict) else {}
@@ -4057,6 +4267,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     stitched[:actual_blocks] = actual_partial
     stitched_pre_hybrid_ai = stitched.copy()
 
+    _step("  → hybrid AI engine (ResNet-LSTM blend)...")
     hybrid_ai_result = None
     hybrid_ai_cfg = cfg.get("hybrid_ai", {}) if isinstance(cfg.get("hybrid_ai", {}), dict) else {}
     if bool(hybrid_ai_cfg.get("enabled", True)) and HybridForecastingEngine is not None and HybridForecastConfig is not None:
@@ -4427,7 +4638,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "residual_correction": float(residual_correction[i]),
             "human_behaviour": float(human_behaviour_adj[i]),
             "forecast": float(stitched[i]),
-            "actual": float(actual_full[i]) if i < len(actual_full) else None,
+            "actual": float(actual_full[i]) if (i < actual_blocks and i < len(actual_full)) else None,
             "is_actual": i < actual_blocks,
         })
 
@@ -4544,6 +4755,8 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         "series": {
             "blocks": list(range(1, 97)),
             "historical_baseline": baseline_hist.tolist(),
+            "ml_baseline": _ml_baseline_vec.tolist(),
+            "ml_baseline_meta": _ml_baseline_meta,
             "weather_feature_deltas": {
                 "temperature": temp_delta.tolist(),
                 "humidity": hum_delta.tolist(),
@@ -4600,7 +4813,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "forecast": stitched.tolist(),
             "final_load": final_load.tolist(),
             "selection_mask": selection_mask.tolist(),
-            "actual": actual_full.tolist(),
+            "actual": [float(actual_full[i]) if i < actual_blocks else None for i in range(len(actual_full))],
         },
         "explanation": hybrid_ai_result.explanation if hybrid_ai_result is not None else "Forecast generated by statistical fallback pipeline.",
         "bias_factor": round(bias_factor, 4),
@@ -4620,4 +4833,117 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         "top_contributor_slots": top_contributor_slots,
     }
 
+    _step("✓ DONE — pipeline complete")
     return response
+
+
+# ── T+2 (Day-After-Tomorrow) Forecast Pipeline ────────────────────────────────
+def run_t2_pipeline(
+    df: pd.DataFrame,
+    t1_date: str,
+    config: Optional[Dict] = None,
+) -> Dict:
+    """
+    Run the short-term pipeline for T+2 (the day after t1_date).
+
+    Strategy:
+    - Forecast T+1 first with actual_blocks=0.
+    - Replace the T+1 day in the history panel with the forecasted T+1 curve so
+      the T+2 run sees a sequential prior day rather than hidden actuals or a
+      separate baseline lookup.
+    - Forecast T+2 with actual_blocks=0.
+    - Apply a short seam taper so T+1 block 96 and T+2 block 1 remain continuous.
+    """
+    try:
+        t1_dt = pd.Timestamp(t1_date)
+    except Exception:
+        raise ValueError(f"Invalid t1_date: {t1_date!r}")
+
+    t2_dt = t1_dt + pd.Timedelta(days=1)
+    t2_date = t2_dt.strftime("%Y-%m-%d")
+
+    cfg = dict(config or {})
+    seam_cfg = cfg.get("t2_seam_bridge", {}) if isinstance(cfg.get("t2_seam_bridge", {}), dict) else {}
+    seam_window = int(np.clip(int(seam_cfg.get("window_blocks", 8)), 1, _BLOCK_COUNT))
+
+    t1_rows = df[df["date"].astype(str) == t1_date].copy()
+    if t1_rows.empty:
+        raise ValueError(f"T+1 date {t1_date} not found in dataframe; cannot forecast sequential T+2.")
+
+    t1_result = run_short_term_pipeline(
+        df=df,
+        target_date=t1_date,
+        actual_blocks=0,  # No actuals for T+2
+        config=cfg,
+    )
+    t1_forecast = _normalize_block_vector(
+        ((t1_result.get("series") or {}).get("forecast") if isinstance(t1_result, dict) else None),
+        length=_BLOCK_COUNT,
+        fill_value=0.0,
+    )
+
+    t1_synthetic = _build_synthetic_forecast_day(
+        template_df=t1_rows,
+        target_date=t1_date,
+        forecast=t1_forecast,
+        zero_actuals=False,
+    )
+
+    dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+    if t2_date in dates_in_df:
+        t2_rows = df[df["date"].astype(str) == t2_date].copy()
+    else:
+        t2_rows = _build_synthetic_forecast_day(
+            template_df=t1_rows,
+            target_date=t2_date,
+            forecast=np.zeros(_BLOCK_COUNT, dtype=float),
+            zero_actuals=True,
+        )
+
+    history_without_t1 = df[df["date"].astype(str) != t1_date].copy()
+    history_without_t1_t2 = history_without_t1[history_without_t1["date"].astype(str) != t2_date].copy()
+    df_extended = pd.concat([history_without_t1_t2, t1_synthetic, t2_rows], ignore_index=True)
+
+    result = run_short_term_pipeline(
+        df=df_extended,
+        target_date=t2_date,
+        actual_blocks=0,
+        config=cfg,
+    )
+
+    result_series = result.get("series", {}) if isinstance(result, dict) else {}
+    t2_forecast = _normalize_block_vector(result_series.get("forecast"), length=_BLOCK_COUNT, fill_value=0.0)
+    t2_adjusted, seam_gap_before, seam_gap_after = _apply_seam_continuity(
+        forecast=t2_forecast,
+        previous_terminal_mw=float(t1_forecast[-1]),
+        window=seam_window,
+    )
+
+    if isinstance(result_series, dict):
+        result_series["forecast"] = t2_adjusted.tolist()
+        if "final_load" in result_series:
+            result_series["final_load"] = t2_adjusted.tolist()
+        if "hybrid_ai_forecast" in result_series:
+            result_series["hybrid_ai_forecast"] = t2_adjusted.tolist()
+
+    if isinstance(result.get("forecast_df"), list):
+        for idx, row in enumerate(result["forecast_df"][:_BLOCK_COUNT]):
+            if isinstance(row, dict):
+                row["forecast"] = float(t2_adjusted[idx])
+
+    metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+    if isinstance(metadata, dict):
+        metadata["sequential_forecast"] = {
+            "enabled": True,
+            "t1_seed_date": str(t1_date),
+            "t2_target_date": str(t2_date),
+            "seam_window_blocks": int(seam_window),
+            "seam_gap_before_mw": round(float(seam_gap_before), 3),
+            "seam_gap_after_mw": round(float(seam_gap_after), 3),
+        }
+
+    result["horizon"] = "t2"
+    result["t1_date"] = t1_date
+    result["t2_date"] = t2_date
+    result["t1_forecast"] = t1_forecast.tolist()
+    return result

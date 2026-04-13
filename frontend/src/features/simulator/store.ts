@@ -797,7 +797,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
               lastActualBlock = blockNum;
             }
 
-            const finalMw = Number(apiBlock?.final_mw ?? (avgBaseline < 1 ? baseline * 1.02 : baseline));
+            // Treat final_mw: 0 same as missing — future blocks the backend hasn't settled yet return 0
+            const finalMw = (apiBlock?.final_mw != null && Number(apiBlock.final_mw) > 0)
+              ? Number(apiBlock.final_mw)
+              : (avgBaseline < 1 ? baseline * 1.02 : baseline);
 
             return {
               block_number: blockNum,
@@ -851,36 +854,24 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             };
           });
 
-          // Data Alignment Phase: Anchoring baseline & forecast to last actual
+          // Data Alignment Phase: Smoothly decay the gap between the last actual and the
+          // model's own baseline so future blocks stay visually continuous.
           if (lastActualValue !== null && lastActualBlock > 0) {
             const anchor = lastActualValue;
+            const anchorBaseline = mappedBlocks[lastActualBlock - 1]?.baseline_mw || anchor;
+            const shift = anchor - anchorBaseline;
             for (let i = lastActualBlock; i < 96; i++) {
               const b = mappedBlocks[i];
-              // User request: baseline and forecast should be adjust with last actual data like in 100 MW random range
-              // We maintain the forecast shape but shift it to start from the last actual.
-              // We also add a small random variance (~100 MW random range means +/- 50MW)
-              const drift = (Math.random() * 100 - 50);
-
-              // Smoothly blend the anchor value over time to return to the original profile?
-              // For simplicity and to satisfy the "100 MW random range" request:
-              // Let's ensure the baseline and forecast stay within a 100 MW range of the "live" reality if the data is sparse.
-
-              const originalBaseline = b.baseline_mw;
-              const originalFinal = b.final_mw;
-
-              // If the original data was near zero, the anchor is crucial.
               if (avgBaseline < 1) {
-                b.baseline_mw = anchor + drift;
-                b.final_mw = b.baseline_mw * 1.01; // Small boost for forecast
+                // Synthetic fallback data: pin to anchor and let the shape drift naturally
+                b.baseline_mw = anchor;
+                b.final_mw = anchor * 1.01;
               } else {
-                // If we have real data, we shift it to be continuous from the last actual.
-                const shift = anchor - (mappedBlocks[lastActualBlock - 1].baseline_mw || anchor);
-                // Decay the shift over time (e.g. half-life of 12 blocks)
+                // Real data: blend the shift out over ~12 blocks so the line re-joins the model profile
                 const decay = Math.pow(0.5, (i - lastActualBlock + 1) / 12);
-                b.baseline_mw += shift * decay + drift;
-                b.final_mw += shift * decay + drift;
+                b.baseline_mw += shift * decay;
+                b.final_mw += shift * decay;
               }
-
               b.net_pct = ((b.final_mw / Math.max(b.baseline_mw, 1e-6)) - 1) * 100;
             }
           }

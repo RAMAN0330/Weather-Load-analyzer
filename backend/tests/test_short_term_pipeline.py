@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+import types
 
 import numpy as np
 import pandas as pd
@@ -194,6 +195,109 @@ class TestDayAheadMetadata(unittest.TestCase):
         self.assertEqual(metadata["model_scope"], "global")
         self.assertIn("weather_engine", metadata)
         self.assertIn("features", metadata["weather_engine"])
+
+
+class TestEngineHolidayFeatures(unittest.TestCase):
+    def test_engine_marks_known_holiday_for_default_region(self):
+        from backend.engine import EDAEngine
+
+        class FakeIndia(dict):
+            def __init__(self, *args, **kwargs):
+                super().__init__({pd.Timestamp("2024-01-26").date(): "Republic Day"})
+
+        fake_holidays = types.SimpleNamespace(India=FakeIndia)
+
+        df = pd.DataFrame(
+            [
+                {
+                    "date": "2024-01-26",
+                    "time_block": block,
+                    "total_drawal": 1000.0 + block,
+                    "temperature": 18.0,
+                    "humidity": 55.0,
+                    "precipitation": 0.0,
+                }
+                for block in range(1, 97)
+            ]
+        )
+
+        with patch.dict("sys.modules", {"holidays": fake_holidays}), patch.object(
+            EDAEngine, "_load_data_static", wraps=EDAEngine._load_data_static
+        ) as wrapped_loader, patch("backend.engine.os.path.exists", return_value=True), patch(
+            "backend.engine.pd.read_csv", return_value=df
+        ):
+            engine = EDAEngine("dummy.csv")
+
+        self.assertEqual(wrapped_loader.call_args.kwargs.get("region"), "haryana")
+        self.assertTrue((engine._df["is_holiday"] == 1).all())
+
+
+class TestT2Pipeline(unittest.TestCase):
+    def test_run_t2_pipeline_uses_t1_forecast_as_sequential_history(self):
+        import backend.short_term_pipeline as stp
+
+        df = _build_history(days=14)
+        t1_date = "2024-01-14"
+        t2_date = "2024-01-15"
+        t1_forecast = np.linspace(2100.0, 2195.0, 96)
+        t2_forecast = np.linspace(1200.0, 1295.0, 96)
+        call_log = []
+
+        def fake_run_short_term_pipeline(df, target_date, actual_blocks=40, config=None):
+            call_log.append(
+                {
+                    "df": df.copy(),
+                    "target_date": target_date,
+                    "actual_blocks": actual_blocks,
+                }
+            )
+            if target_date == t1_date:
+                return {
+                    "series": {"forecast": t1_forecast.tolist()},
+                }
+            if target_date == t2_date:
+                return {
+                    "series": {
+                        "forecast": t2_forecast.tolist(),
+                        "final_load": t2_forecast.tolist(),
+                        "hybrid_ai_forecast": t2_forecast.tolist(),
+                    },
+                    "metadata": {},
+                    "forecast_df": [
+                        {"time_block": idx + 1, "forecast": float(val)}
+                        for idx, val in enumerate(t2_forecast)
+                    ],
+                }
+            raise AssertionError(f"Unexpected target_date {target_date}")
+
+        with patch.object(stp, "run_short_term_pipeline", side_effect=fake_run_short_term_pipeline):
+            result = stp.run_t2_pipeline(
+                df=df,
+                t1_date=t1_date,
+                config={"t2_seam_bridge": {"window_blocks": 4}},
+            )
+
+        self.assertEqual(len(call_log), 2)
+        self.assertEqual(call_log[0]["target_date"], t1_date)
+        self.assertEqual(call_log[1]["target_date"], t2_date)
+        self.assertEqual(call_log[0]["actual_blocks"], 0)
+        self.assertEqual(call_log[1]["actual_blocks"], 0)
+
+        second_df = call_log[1]["df"]
+        seeded_t1 = second_df[second_df["date"].astype(str) == t1_date].sort_values("time_block")
+        seeded_t2 = second_df[second_df["date"].astype(str) == t2_date].sort_values("time_block")
+
+        self.assertEqual(len(seeded_t1), 96)
+        self.assertEqual(len(seeded_t2), 96)
+        np.testing.assert_allclose(seeded_t1["total_drawal"].to_numpy(dtype=float), t1_forecast, atol=1e-6)
+
+        self.assertAlmostEqual(result["series"]["forecast"][0], float(t1_forecast[-1]), places=6)
+        self.assertAlmostEqual(result["forecast_df"][0]["forecast"], float(t1_forecast[-1]), places=6)
+        self.assertEqual(result["t1_date"], t1_date)
+        self.assertEqual(result["t2_date"], t2_date)
+        self.assertTrue(result["metadata"]["sequential_forecast"]["enabled"])
+        self.assertGreater(abs(result["metadata"]["sequential_forecast"]["seam_gap_before_mw"]), 100.0)
+        self.assertEqual(result["metadata"]["sequential_forecast"]["seam_gap_after_mw"], 0.0)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,34 @@
       "Bash(python process_data.py)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" -e \"console.log\\(''checking python syntax...''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''short_term_pipeline.py: OK''\\)\")",
-      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''OK''\\)\")"
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''short_term_pipeline.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "WebFetch(domain:lobehub.com)",
+      "Bash(python -c \"from backend.main import app; print\\('OK:', len\\(list\\(app.routes\\)\\), 'routes'\\)\")",
+      "Bash(curl -s http://localhost:8000/api/v2/config)",
+      "Bash(curl -s http://localhost:3000/api/v2/config)",
+      "Bash(python -c ':*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8000)",
+      "Bash(findstr \":3000 \")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(awk -F: '$2 > 4000')",
+      "Bash(python3 -c ':*)",
+      "Read(//c/mnt/c/Users/RamanSharma/**)",
+      "Bash(sqlite3 pipeline.db \".tables\")",
+      "Bash(python \"c:/Users/RamanSharma/OneDrive - GNA-Energy/Desktop/RD/api.py\")",
+      "Bash(python build_final_data.py --state HARYANA --days 30)",
+      "Bash(node_modules/.bin/vite build:*)",
+      "Bash(node_modules/vite/bin/vite.js build:*)",
+      "Bash(python -c \"import openpyxl; print\\('openpyxl ok', openpyxl.__version__\\)\")",
+      "Bash(python -c \"import ast, sys; ast.parse\\(open\\('backend/main.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(node -e ':*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\RamanSharma\\.claude\\plugins\\marketplaces\\claude-plugins-official\\plugins\\time-series-forecaster\\skills\\time-series-forecaster",
+      "C:\\Users\\RamanSharma\\.claude\\plugins\\marketplaces\\claude-plugins-official\\plugins\\time-series-forecaster"
     ]
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
 
@@ -25,6 +25,16 @@ const blockToTime = (b) => {
 };
 const fmt = (v, d = 1) => v == null || !Number.isFinite(v) ? '--' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: d });
 const sgn = (v) => (v >= 0 ? '+' : '') + fmt(v, 1);
+
+const normalizeBase = (base) => {
+  if (!base) return '/api';
+  const trimmed = base.replace(/\/$/, '');
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+};
+
+const WEATHER_API_BASE = import.meta.env.VITE_API_BASE_URL
+  ? normalizeBase(import.meta.env.VITE_API_BASE_URL)
+  : (import.meta.env.DEV ? '/api' : 'http://localhost:8000/api');
 
 /* ─── Spearman ─── */
 function spearman(x, y) {
@@ -202,6 +212,48 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
   const [dodDates, setDodDates] = useState([]);
   const [dodDateData, setDodDateData] = useState({}); // { date: { temperature: [...96], humidity: [...96], ... } }
   const [dodLoading, setDodLoading] = useState(false);
+  const [fallbackDayAhead, setFallbackDayAhead] = useState(null);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [fallbackError, setFallbackError] = useState('');
+  const [hasTriedFallback, setHasTriedFallback] = useState(false);
+  // Pipeline DB weather state
+
+  const loadWeatherFallback = useCallback(async () => {
+    if (!effectiveDate) return;
+    setHasTriedFallback(true);
+    setFallbackLoading(true);
+    setFallbackError('');
+    try {
+      const res = await axios.post(`/api/v2/dayahead`, {
+        date: effectiveDate,
+        baseline_days: 7,
+        region: selectedRegion || 'odisha',
+      }, { timeout: 60000 });
+      setFallbackDayAhead(res.data || null);
+    } catch (e) {
+      setFallbackError(e?.response?.data?.detail || e?.message || 'Unable to load weather analysis.');
+    } finally {
+      setFallbackLoading(false);
+    }
+  }, [effectiveDate, selectedRegion]);
+
+  useEffect(() => {
+    setFallbackDayAhead(null);
+    setFallbackError('');
+    setHasTriedFallback(false);
+  }, [effectiveDate, selectedRegion]);
+
+  useEffect(() => {
+    if (dayAheadData?.weather_analysis || dayAheadData?.series) {
+      setFallbackDayAhead(null);
+      setFallbackError('');
+      return;
+    }
+    if (fallbackDayAhead?.weather_analysis || fallbackDayAhead?.series) return;
+    if (!effectiveDate || fallbackLoading || hasTriedFallback) return;
+    loadWeatherFallback();
+  }, [dayAheadData, effectiveDate, loadWeatherFallback, fallbackLoading, fallbackDayAhead, hasTriedFallback]);
+
 
   const addDodDate = useCallback(async (date) => {
     if (!date || dodDates.includes(date) || date === effectiveDate) return;
@@ -209,9 +261,9 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
     if (dodDateData[date]) return; // already fetched
     setDodLoading(true);
     try {
-      const res = await axios.post((window.__API_BASE || 'http://localhost:8000') + '/api/v2/dayahead', {
+      const res = await axios.post(`/api/v2/dayahead`, {
         date, baseline_days: 7, region: selectedRegion || 'odisha',
-      });
+      }, { timeout: 60000 });
       const intra = res.data?.weather_analysis?.intraday;
       if (intra) {
         setDodDateData(prev => ({
@@ -235,11 +287,12 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
   }, []);
 
   // ─── Extract real data ───
-  const wa = dayAheadData?.weather_analysis;
+  const resolvedDayAhead = dayAheadData || fallbackDayAhead;
+  const wa = resolvedDayAhead?.weather_analysis;
   const intra = wa?.intraday;
-  const series = dayAheadSeries;
-  const meta = dayAheadData?.metadata;
-  const kpis = dayAheadData?.kpis_full;
+  const series = dayAheadSeries || resolvedDayAhead?.series;
+  const meta = resolvedDayAhead?.metadata;
+  const kpis = resolvedDayAhead?.kpis_full;
   const sensitivity = wa?.sensitivity;
   const peakWindows = wa?.peak_windows;
   const rainMetrics = wa?.rain_metrics;
@@ -347,13 +400,25 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
     const corrMatrix = {};
     corrKeys.forEach(k1 => { corrMatrix[k1] = {}; corrKeys.forEach(k2 => { corrMatrix[k1][k2] = spearman(allFeatures[k1], allFeatures[k2]); }); });
 
+    // Solar Ramp Risk (Rajasthan): if solar drops >30% between blocks 32-48 (8AM-12PM)
+    let solarRampRisk = null;
+    if (solarActual.length >= 48) {
+      const solarWindow = solarActual.slice(31, 48); // blocks 32-48
+      const maxSolar = Math.max(...solarWindow);
+      const minSolar = Math.min(...solarWindow);
+      if (maxSolar > 50) { // only flag if there's meaningful solar generation
+        const dropPct = (maxSolar - minSolar) / maxSolar * 100;
+        solarRampRisk = { dropPct: Math.round(dropPct), flag: dropPct > 30 };
+      }
+    }
+
     return {
       avgTemp, maxTemp, minTemp, avgHum, totalPrecip, avgCloud, avgSolar,
       cdd, hdd, regime, comfort, blockMW,
       mwTemp, mwHum, mwCloud, mwRain, mwWind, totalMW, netMW, compoundMult, compounds,
       netImpactMW, peakImpactMW,
       corrTemp, corrHum, corrCloud, corrPrecip, corrSolar,
-      corrMatrix, corrKeys,
+      corrMatrix, corrKeys, solarRampRisk,
     };
   }, [tempActual, humActual, precipActual, cloudActual, solarActual, loadActual, loadBaseline, weatherImpact]);
 
@@ -366,8 +431,23 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
   if (!wa && !series) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.muted, fontFamily: "'IBM Plex Mono', monospace" }}>
-        <div style={{ fontSize: 18, marginBottom: 8 }}>No weather data available</div>
-        <div style={{ fontSize: 12 }}>Run a forecast to generate weather analysis</div>
+        <div style={{ fontSize: 18, marginBottom: 8 }}>
+          {fallbackLoading ? 'Preparing weather analysis' : 'Weather analysis is unavailable'}
+        </div>
+        <div style={{ fontSize: 12, marginBottom: 16 }}>
+          {fallbackLoading
+            ? 'Fetching day-ahead weather data for this state.'
+            : (fallbackError || 'Unable to load weather data for the selected date.')}
+        </div>
+        {!fallbackLoading && (
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => loadWeatherFallback()}
+          >
+            Retry Weather Data
+          </button>
+        )}
       </div>
     );
   }
@@ -699,6 +779,15 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
           sub={`≈ ${sgn(computed.cdd * 20)} MW load`} />
         <MetricCard label="Comfort Score" value={computed.comfort} unit="/100"
           color={computed.comfort > 60 ? C._green : computed.comfort > 40 ? C._warn : C._red} />
+        {computed.solarRampRisk && (
+          <MetricCard
+            label="Solar Ramp Risk"
+            value={computed.solarRampRisk.flag ? 'RISK' : 'Clear'}
+            unit=""
+            color={computed.solarRampRisk.flag ? C._red : C._green}
+            sub={`${computed.solarRampRisk.dropPct}% solar drop · Blocks 32–48 (08:00–12:00)`}
+          />
+        )}
       </div>
 
       {/* ═══ MAIN CHART AREA ═══ */}
@@ -779,6 +868,9 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>Detail Panels</span>
+              <button onClick={() => setActivePanel('coefs')} style={{ fontSize: 10, fontWeight: 600, padding: '7px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: C._surface, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                MW Attribution Coefficients
+              </button>
               <button onClick={() => setActivePanel('attribution')} style={{ fontSize: 10, fontWeight: 600, padding: '7px 12px', borderRadius: 999, border: `1px solid ${C._border}`, background: `${C._accent}10`, color: C._text, cursor: 'pointer', fontFamily: 'inherit' }}>
                 Open MW Attribution
               </button>
@@ -795,11 +887,31 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
         <div style={{ padding: '10px 12px 16px', background: 'linear-gradient(180deg, rgba(32, 31, 37, 0.96), rgba(26, 25, 30, 0.96))', flex: 1, minHeight: 0, display: 'flex' }}>
           <div style={{ background: 'rgba(36, 35, 42, 0.9)', border: `1px solid ${C._border}`, borderRadius: 14, padding: '10px 10px 18px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)', display: 'flex', flex: 1, minHeight: 0 }}>
             <div style={{ height: '100%', width: '100%', minHeight: 320 }}>
-              <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: '100%', width: '100%' }} notMerge={true} />
+              <ReactECharts option={chartOptions[chartTab]?.()} style={{ height: '100%', width: '100%' }} notMerge lazyUpdate />
             </div>
           </div>
         </div>
       </div>
+
+      <DetailOverlay open={activePanel === 'coefs'} title="MW Attribution Coefficients" subtitle="These coefficients drive the Total Weather MW figure" onClose={() => setActivePanel(null)}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          {Object.entries(MW_COEFS).map(([key, def]) => {
+            const mwValue = key === 'temperature' ? computed.mwTemp : key === 'humidity' ? computed.mwHum : key === 'cloud' ? computed.mwCloud : key === 'rain' ? computed.mwRain : computed.mwWind;
+            return (
+              <div key={key} style={{ background: '#0E0D12', borderRadius: 10, padding: '12px 16px', border: '1px solid #2A292F' }}>
+                <div style={{ fontSize: 9, color: C._muted, textTransform: 'uppercase', letterSpacing: 1 }}>{def.label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: mwValue >= 0 ? C._red : C._green, marginTop: 4 }}>{mwValue >= 0 ? '+' : ''}{fmt(mwValue, 0)} MW</div>
+                <div style={{ fontSize: 9, color: C._muted, marginTop: 4 }}>{def.coef > 0 ? '+' : ''}{def.coef} {def.unit}{def.threshold ? ` above ${def.threshold}` : ''}</div>
+              </div>
+            );
+          })}
+          <div style={{ background: '#0E0D12', borderRadius: 10, padding: '12px 16px', border: `1px solid ${C._accent}44` }}>
+            <div style={{ fontSize: 9, color: C._muted, textTransform: 'uppercase', letterSpacing: 1 }}>Total Weather MW</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: computed.totalMW >= 0 ? C._red : C._green, marginTop: 4 }}>{computed.totalMW >= 0 ? '+' : ''}{fmt(computed.totalMW, 0)} MW</div>
+            {computed.compoundMult !== 1.0 && <div style={{ fontSize: 9, color: C._accent, marginTop: 4 }}>×{computed.compoundMult.toFixed(2)} compound effect</div>}
+          </div>
+        </div>
+      </DetailOverlay>
 
       <DetailOverlay open={activePanel === 'attribution'} title="MW Attribution & Adjustment" subtitle="Moved into a detail panel to preserve the single-screen weather layout" onClose={() => setActivePanel(null)}>
         {attributionPanel}

@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Database, Globe, Plus, Shield, UserCircle2, Workflow } from 'lucide-react';
+import { CheckCircle2, Database, Globe, Plus, Shield, UserCircle2, Workflow } from 'lucide-react';
 
 const TABS = [
   { id: 'profile', label: 'User Profile' },
-  { id: 'sources', label: 'Data Sources' },
-  { id: 'databases', label: 'Databases' },
+  { id: 'databases', label: 'Data Source' },
   { id: 'workspace', label: 'Workspace' },
 ];
 
@@ -210,35 +209,6 @@ const S = {
   },
 };
 
-const SourceCard = ({ source }) => (
-  <article style={S.sourceCard}>
-    <div style={S.sourceHead}>
-      <div>
-        <div style={S.sourceName}>{source.name}</div>
-        <div style={S.sourceDesc}>{source.description}</div>
-      </div>
-      <span style={S.badge(source.statusColor)}>{source.status}</span>
-    </div>
-    <div style={S.sourceMeta}>
-      <div style={S.smallField}>
-        <div style={S.smallLabel}>Type</div>
-        <div style={S.smallValue}>{source.type}</div>
-      </div>
-      <div style={S.smallField}>
-        <div style={S.smallLabel}>Endpoint</div>
-        <div style={S.smallValue}>{source.endpoint}</div>
-      </div>
-      <div style={S.smallField}>
-        <div style={S.smallLabel}>Auth</div>
-        <div style={S.smallValue}>{source.auth}</div>
-      </div>
-      <div style={S.smallField}>
-        <div style={S.smallLabel}>Last Sync</div>
-        <div style={S.smallValue}>{source.lastSync}</div>
-      </div>
-    </div>
-  </article>
-);
 
 export default function SettingsPage({
   settings,
@@ -262,109 +232,36 @@ export default function SettingsPage({
   const [profile, setProfile] = useState(derivedProfile);
   useEffect(() => setProfile(derivedProfile), [derivedProfile]);
 
-  const derivedSources = useMemo(() => ([
-    {
-      name: 'Forecast API',
-      description: 'Primary service for config, settings, live forecast, and operational metadata.',
-      type: 'REST API',
-      endpoint: `${apiBaseUrl || '--'}/v2`,
-      auth: 'Bearer / Session',
-      lastSync: config?.partial_latest_date || effectiveDate || '--',
-      status: 'Connected',
-      statusColor: '#34D399',
-    },
-    {
-      name: 'Day-Ahead Input Feed',
-      description: 'Date-driven load and weather payload used for analysis, optimizer, and simulator pages.',
-      type: 'Structured Dataset',
-      endpoint: effectiveDate || '--',
-      auth: 'Internal',
-      lastSync: config?.latest_date || '--',
-      status: effectiveDate ? 'Ready' : 'Waiting',
-      statusColor: effectiveDate ? '#5B9FE4' : '#FBBF24',
-    },
-    {
-      name: 'Actuals / Intraday Stream',
-      description: 'Partial-day actuals and refresh feed used for forecast monitoring and live health signals.',
-      type: 'Streaming / Incremental',
-      endpoint: config?.partial_latest_date || '--',
-      auth: 'Internal',
-      lastSync: config?.partial_latest_date || 'Not available',
-      status: config?.partial_latest_date ? 'Streaming' : 'Standby',
-      statusColor: config?.partial_latest_date ? '#F07825' : '#6B7186',
-    },
-  ]), [apiBaseUrl, config?.latest_date, config?.partial_latest_date, effectiveDate]);
 
-  const [sources, setSources] = useState(derivedSources);
-  useEffect(() => setSources(derivedSources), [derivedSources]);
-
-  const [newSource, setNewSource] = useState({
-    name: '',
-    type: 'REST API',
-    endpoint: '',
-    auth: 'Bearer / Session',
-    description: '',
-  });
+  const [activeDbSource, setActiveDbSource] = useState(null); // null = file mode, 'mysql' | 'postgres' = DB mode
 
   const [databases, setDatabases] = useState([
     {
       id: 'mysql',
       label: 'MySQL',
-      host: 'mysql.internal.company',
+      host: '',
       port: '3306',
-      database: 'forecast_ops',
-      schema: 'public',
+      database: '',
+      username: '',
+      password: '',
       ssl: 'required',
-      status: 'Available',
-      statusColor: '#5B9FE4',
-      description: 'Operational source for structured marts, tariff tables, and transaction-style histories.',
+      description: 'Connect to a MySQL database to load historical and live drawal data instead of reading from CSV files.',
     },
     {
       id: 'postgres',
       label: 'PostgreSQL',
-      host: 'postgres.analytics.company',
+      host: '',
       port: '5432',
-      database: 'load_analytics',
-      schema: 'forecast',
-      ssl: 'required',
-      status: 'Available',
-      statusColor: '#34D399',
-      description: 'Analytics warehouse target for model outputs, historical backfills, and feature stores.',
+      database: '',
+      username: '',
+      password: '',
+      ssl: 'require',
+      description: 'Connect to a PostgreSQL database to load historical and live drawal data instead of reading from CSV files.',
     },
   ]);
 
   const handleProfileChange = (key, value) => {
     setProfile((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSourceChange = (key, value) => {
-    setNewSource((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleAddSource = () => {
-    const name = String(newSource.name || '').trim();
-    const endpoint = String(newSource.endpoint || '').trim();
-    if (!name || !endpoint) return;
-    setSources((prev) => ([
-      ...prev,
-      {
-        name,
-        description: String(newSource.description || '').trim() || 'User-added source configuration.',
-        type: newSource.type,
-        endpoint,
-        auth: newSource.auth,
-        lastSync: 'Pending test',
-        status: 'Draft',
-        statusColor: '#FBBF24',
-      },
-    ]));
-    setNewSource({
-      name: '',
-      type: 'REST API',
-      endpoint: '',
-      auth: 'Bearer / Session',
-      description: '',
-    });
   };
 
   const handleDatabaseChange = (id, key, value) => {
@@ -454,92 +351,106 @@ export default function SettingsPage({
             </div>
           )}
 
-          {activeTab === 'sources' && (
-            <div style={S.grid2}>
-              <div style={S.card}>
-                <div style={S.cardHeader}>
-                  <div style={S.cardTitle}>Connected Sources</div>
-                  <span style={S.badge('#34D399')}>{sources.length} linked</span>
-                </div>
-                <div style={S.cardBody}>
-                  <div style={S.sourceStack}>
-                    {sources.map((source) => <SourceCard key={`${source.name}-${source.endpoint}`} source={source} />)}
-                  </div>
-                </div>
-              </div>
-
-              <div style={S.card}>
-                <div style={S.cardHeader}>
-                  <div style={S.cardTitle}>Add Data Source</div>
-                  <span style={S.badge('#F07825')}><Plus size={12} /> New Link</span>
-                </div>
-                <div style={S.cardBody}>
-                  <div style={S.fieldGrid}>
-                    <div style={S.fieldBlock}>
-                      <label style={S.fieldLabel}>Source Name</label>
-                      <input style={S.input} value={newSource.name} onChange={(e) => handleSourceChange('name', e.target.value)} placeholder="SCADA Actuals" />
-                    </div>
-                    <div style={S.fieldBlock}>
-                      <label style={S.fieldLabel}>Type</label>
-                      <input style={S.input} value={newSource.type} onChange={(e) => handleSourceChange('type', e.target.value)} />
-                    </div>
-                    <div style={S.fieldBlock}>
-                      <label style={S.fieldLabel}>Endpoint / Path</label>
-                      <input style={S.input} value={newSource.endpoint} onChange={(e) => handleSourceChange('endpoint', e.target.value)} placeholder="https://source.example/api" />
-                    </div>
-                    <div style={S.fieldBlock}>
-                      <label style={S.fieldLabel}>Authentication</label>
-                      <input style={S.input} value={newSource.auth} onChange={(e) => handleSourceChange('auth', e.target.value)} />
-                    </div>
-                    <div style={{ ...S.fieldBlock, gridColumn: '1 / -1' }}>
-                      <label style={S.fieldLabel}>Description</label>
-                      <textarea style={{ ...S.input, minHeight: 104, resize: 'vertical' }} value={newSource.description} onChange={(e) => handleSourceChange('description', e.target.value)} placeholder="What this source provides and where it is used." />
-                      <div style={S.helper}>Adding a source updates the connected source list on this page immediately.</div>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 14 }}>
-                    <button type="button" style={S.actionBtn} onClick={handleAddSource}><Plus size={14} />Add Data Source</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'databases' && (
-            <div style={S.gridAuto}>
-              {databases.map((db) => (
-                <div key={db.id} style={S.card}>
-                  <div style={S.cardHeader}>
-                    <div style={S.cardTitle}>{db.label}</div>
-                    <span style={S.badge(db.statusColor)}><Database size={12} /> {db.status}</span>
-                  </div>
-                  <div style={S.cardBody}>
-                    <div style={{ ...S.helper, marginBottom: 12 }}>{db.description}</div>
-                    <div style={S.fieldGrid}>
-                      <div style={S.fieldBlock}>
-                        <label style={S.fieldLabel}>Host</label>
-                        <input style={S.input} value={db.host} onChange={(e) => handleDatabaseChange(db.id, 'host', e.target.value)} />
-                      </div>
-                      <div style={S.fieldBlock}>
-                        <label style={S.fieldLabel}>Port</label>
-                        <input style={S.input} value={db.port} onChange={(e) => handleDatabaseChange(db.id, 'port', e.target.value)} />
-                      </div>
-                      <div style={S.fieldBlock}>
-                        <label style={S.fieldLabel}>Database</label>
-                        <input style={S.input} value={db.database} onChange={(e) => handleDatabaseChange(db.id, 'database', e.target.value)} />
-                      </div>
-                      <div style={S.fieldBlock}>
-                        <label style={S.fieldLabel}>Schema</label>
-                        <input style={S.input} value={db.schema} onChange={(e) => handleDatabaseChange(db.id, 'schema', e.target.value)} />
-                      </div>
-                      <div style={S.fieldBlock}>
-                        <label style={S.fieldLabel}>SSL Mode</label>
-                        <input style={S.input} value={db.ssl} onChange={(e) => handleDatabaseChange(db.id, 'ssl', e.target.value)} />
-                      </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Active mode banner */}
+              <div style={{
+                background: activeDbSource
+                  ? 'linear-gradient(135deg, rgba(52,211,153,0.08), rgba(52,211,153,0.04))'
+                  : 'linear-gradient(135deg, rgba(240,120,37,0.08), rgba(240,120,37,0.04))',
+                border: `1px solid ${activeDbSource ? '#34D39333' : '#F0782533'}`,
+                borderRadius: 14,
+                padding: '14px 18px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Database size={16} color={activeDbSource ? '#34D399' : '#F07825'} />
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#ECEEF3' }}>
+                      {activeDbSource
+                        ? `Using ${databases.find(d => d.id === activeDbSource)?.label} as data source`
+                        : 'Using file-based data (CSV)'}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#8A90A7', marginTop: 2 }}>
+                      {activeDbSource
+                        ? 'Data will be read from the connected database instead of local files.'
+                        : 'Configure a database below and click "Use as Data Source" to switch.'}
                     </div>
                   </div>
                 </div>
-              ))}
+                {activeDbSource && (
+                  <button type="button" style={{ ...S.actionBtn, borderColor: 'rgba(107,113,134,0.4)', background: 'rgba(107,113,134,0.1)', color: '#A0A5B8' }}
+                    onClick={() => setActiveDbSource(null)}>
+                    Switch back to File
+                  </button>
+                )}
+              </div>
+
+              {/* DB cards */}
+              <div style={S.gridAuto}>
+                {databases.map((db) => {
+                  const isActive = activeDbSource === db.id;
+                  return (
+                    <div key={db.id} style={{ ...S.card, border: isActive ? '1px solid #34D39966' : '1px solid #2A292F' }}>
+                      <div style={S.cardHeader}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Database size={14} color={isActive ? '#34D399' : '#5B9FE4'} />
+                          <div style={S.cardTitle}>{db.label}</div>
+                        </div>
+                        {isActive && <span style={S.badge('#34D399')}><CheckCircle2 size={11} /> Active Source</span>}
+                      </div>
+                      <div style={S.cardBody}>
+                        <div style={{ ...S.helper, marginBottom: 14 }}>{db.description}</div>
+                        <div style={S.fieldGrid}>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>Host</label>
+                            <input style={S.input} value={db.host} placeholder="localhost" onChange={(e) => handleDatabaseChange(db.id, 'host', e.target.value)} />
+                          </div>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>Port</label>
+                            <input style={S.input} value={db.port} onChange={(e) => handleDatabaseChange(db.id, 'port', e.target.value)} />
+                          </div>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>Database Name</label>
+                            <input style={S.input} value={db.database} placeholder="forecast_db" onChange={(e) => handleDatabaseChange(db.id, 'database', e.target.value)} />
+                          </div>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>SSL Mode</label>
+                            <input style={S.input} value={db.ssl} onChange={(e) => handleDatabaseChange(db.id, 'ssl', e.target.value)} />
+                          </div>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>Username</label>
+                            <input style={S.input} value={db.username} placeholder="db_user" onChange={(e) => handleDatabaseChange(db.id, 'username', e.target.value)} />
+                          </div>
+                          <div style={S.fieldBlock}>
+                            <label style={S.fieldLabel}>Password</label>
+                            <input style={S.input} type="password" value={db.password} placeholder="••••••••" onChange={(e) => handleDatabaseChange(db.id, 'password', e.target.value)} />
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
+                          <button
+                            type="button"
+                            style={{
+                              ...S.actionBtn,
+                              ...(isActive
+                                ? { borderColor: '#34D39944', background: 'rgba(52,211,153,0.12)', color: '#34D399' }
+                                : {}),
+                            }}
+                            onClick={() => setActiveDbSource(isActive ? null : db.id)}
+                          >
+                            {isActive ? <CheckCircle2 size={14} /> : <Database size={14} />}
+                            {isActive ? 'Active — Click to Deactivate' : 'Use as Data Source'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -587,6 +498,46 @@ export default function SettingsPage({
                       <label style={S.fieldLabel}>Settings Endpoint</label>
                       <input style={S.input} value={apiBaseUrl ? `${apiBaseUrl}/v2/settings` : '--'} readOnly />
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={S.card}>
+                <div style={S.cardHeader}>
+                  <div style={S.cardTitle}>Region Calibration</div>
+                  <span style={S.badge('#34D399')}><Shield size={12} /> Operational</span>
+                </div>
+                <div style={S.cardBody}>
+                  <div style={{ fontSize: 10, color: '#8A90A7', marginBottom: 12, lineHeight: 1.6 }}>
+                    These values feed Capacity Utilisation KPI, Ramp Risk alerts, and Reserve Margin calculations. Defaults shown — update per region commissioning report.
+                  </div>
+                  <div style={S.fieldGrid}>
+                    {[
+                      { region: 'Odisha', capacity: 5500, rampLimit: 180, eveningPeak: '68–83' },
+                      { region: 'Rajasthan', capacity: 7200, rampLimit: 160, eveningPeak: '70–88 (summer)' },
+                      { region: 'Haryana', capacity: 4800, rampLimit: 140, eveningPeak: '66–82' },
+                    ].map(({ region, capacity, rampLimit, eveningPeak }) => (
+                      <div key={region} style={{ ...S.fieldBlock, background: '#0E0D12', borderRadius: 10, padding: '12px 14px', border: '1px solid #2A292F' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#F07825', marginBottom: 8, letterSpacing: 0.5 }}>{region}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                            <span style={{ color: '#8A90A7' }}>Installed Capacity</span>
+                            <span style={{ color: '#ECEEF3', fontWeight: 600 }}>{capacity.toLocaleString('en-IN')} MW</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                            <span style={{ color: '#8A90A7' }}>Ramp Rate Limit</span>
+                            <span style={{ color: selectedRegion?.toLowerCase() === region.toLowerCase() && rampLimit < 160 ? '#F87171' : '#ECEEF3', fontWeight: 600 }}>{rampLimit} MW/15min</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                            <span style={{ color: '#8A90A7' }}>Evening Peak Blocks</span>
+                            <span style={{ color: '#ECEEF3', fontWeight: 600 }}>{eveningPeak}</span>
+                          </div>
+                          {selectedRegion?.toLowerCase() === region.toLowerCase() && (
+                            <div style={{ marginTop: 4, fontSize: 9, color: '#34D399', fontWeight: 600 }}>▶ ACTIVE REGION</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>

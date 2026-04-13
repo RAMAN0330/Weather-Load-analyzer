@@ -94,7 +94,7 @@ const CommandStrip = ({
           {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
         </button>
         {onDownload && (
-          <button className="cs-action-btn" onClick={onDownload} disabled={!canDownload} title="Download CSV">
+          <button className="cs-action-btn" onClick={onDownload} disabled={!canDownload} title="Download T+1 / T+2 Forecast (Excel)">
             <Download size={14} />
           </button>
         )}
