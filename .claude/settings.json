@@ -46,7 +46,14 @@
       "Bash(node_modules/vite/bin/vite.js build:*)",
       "Bash(python -c \"import openpyxl; print\\('openpyxl ok', openpyxl.__version__\\)\")",
       "Bash(python -c \"import ast, sys; ast.parse\\(open\\('backend/main.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(python manage.py makemigrations accounts)",
+      "Bash(python manage.py migrate accounts)",
+      "Bash(cat frontend/vite.config.js)",
+      "Bash(cat frontend/vite.config.ts)",
+      "Bash(pip show:*)",
+      "Bash(node --input-type=module --eval \"import\\('./src/components/HorizonToggle.jsx'\\)\")",
+      "Bash(node -e \"const z = require\\('./node_modules/zustand/middleware'\\); console.log\\(Object.keys\\(z\\)\\)\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\RamanSharma\\.claude\\plugins\\marketplaces\\claude-plugins-official\\plugins\\time-series-forecaster\\skills\\time-series-forecaster",

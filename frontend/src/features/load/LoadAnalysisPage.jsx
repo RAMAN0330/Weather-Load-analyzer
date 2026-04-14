@@ -1,6 +1,7 @@
 import axios from 'axios';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
+import HorizonToggle from '../../components/HorizonToggle';
 
 const fmt = (v, d = 1) => (
   v == null || !Number.isFinite(v)
@@ -191,7 +192,13 @@ export default function LoadAnalysisPage({
   liveData,
   dayAheadData,
   apiUrl,
+  horizon = 't1',
+  setHorizon,
+  t2Date,
+  liveT2,
 }) {
+  // When T+2 is active, use T+2 live series for forecast/regime analysis
+  const activeLiveData = horizon === 't2' && liveT2 ? liveT2 : liveData;
   const [mainTab, setMainTab] = useState('benchmark');
   const [compareDates, setCompareDates] = useState(multiSelectedDates || []);
   const [overlayPanel, setOverlayPanel] = useState(null);
@@ -264,19 +271,19 @@ export default function LoadAnalysisPage({
   const yMaxRampDown = yRamps.length ? Math.min(...yRamps) : 0;
 
   const dayRegime = useMemo(() => {
-    const fc = liveData?.series?.forecast || [];
-    const bl = liveData?.series?.hybrid_baseline || [];
+    const fc = activeLiveData?.series?.forecast || [];
+    const bl = activeLiveData?.series?.hybrid_baseline || [];
     if (!fc.length || !bl.length) {
-      const d = new Date(effectiveDate).getDay();
+      const d = new Date(horizon === 't2' && t2Date ? t2Date : effectiveDate).getDay();
       return d === 0 || d === 6 ? 'Weekend' : 'Weekday';
     }
     const r = fc.reduce((a, b) => a + b, 0) / Math.max(bl.reduce((a, b) => a + b, 0), 1);
-    if (liveData?.metadata?.holiday_flags?.is_holiday) return 'Holiday';
+    if (activeLiveData?.metadata?.holiday_flags?.is_holiday) return 'Holiday';
     if (r > 1.15) return 'High Load';
     if (r < 0.85) return 'Low Demand';
-    const d = new Date(effectiveDate).getDay();
+    const d = new Date(horizon === 't2' && t2Date ? t2Date : effectiveDate).getDay();
     return d === 0 || d === 6 ? 'Weekend' : 'Weekday';
-  }, [liveData, effectiveDate]);
+  }, [activeLiveData, effectiveDate, horizon, t2Date]);
 
   const normalizedMomentum = useMemo(() => {
     const source = localMomentum || momentumChange;
@@ -297,7 +304,7 @@ export default function LoadAnalysisPage({
     };
   }, [normalizedMomentum]);
 
-  const similarDays = liveData?.metadata?.similar_days || [];
+  const similarDays = activeLiveData?.metadata?.similar_days || [];
   const hasData = today.length > 0;
 
   const peakShiftBlocks = peakIdx >= 0 && yPeakIdx >= 0 ? peakIdx - yPeakIdx : null;
@@ -901,6 +908,15 @@ export default function LoadAnalysisPage({
 
   return (
     <div style={S.page}>
+      {/* ─── HORIZON TOGGLE ─── */}
+      {setHorizon && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 0', flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: 'uppercase' }}>
+            Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${effectiveDate}`}</strong>
+          </span>
+          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+        </div>
+      )}
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
           <div style={{ fontSize: 16, marginBottom: 6 }}>

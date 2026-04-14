@@ -272,6 +272,25 @@ async def _run_forecast_job(job_id: str) -> None:
             )
             job["result"] = processed
 
+        # ── Persist result to Django DB via HTTP ───────────────────────────
+        if job.get("result"):
+            try:
+                import requests as _req
+                _django_base = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001")
+                _req.post(
+                    f"{_django_base}/auth/results/save",
+                    json={
+                        "job_id": job_id,
+                        "date": job["date"],
+                        "region": job["region"],
+                        "baseline_days": job["baseline_days"],
+                        "result": job["result"],
+                    },
+                    timeout=10,
+                )
+            except Exception as _db_exc:
+                logger.warning("Could not persist forecast result to Django: %s", _db_exc)
+
         job["status"] = "done"
         job["completed_at"] = _time_module.time()
         _PROGRESS_BUS.publish(job_id, {"type": "done", "message": "✓ Forecast ready"}, loop)
@@ -2715,6 +2734,21 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
             weights_df["weight_confidence"] = 0.5
             
         weights_source = "linear_regression"
+        # ── Persist weights to Django DB via HTTP ──────────────────────────
+        try:
+            import requests as _req2
+            _django_base2 = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001")
+            _req2.post(
+                f"{_django_base2}/auth/weights/save",
+                json={
+                    "region": req.region if hasattr(req, "region") else "unknown",
+                    "weights_type": "block_driver",
+                    "weights": weights_df.to_dict(orient="list"),
+                },
+                timeout=10,
+            )
+        except Exception as _wdb_exc:
+            logger.warning("Could not persist block driver weights to Django: %s", _wdb_exc)
     except Exception as e:
         logger.warning("Error in api_simulator_blocks weights: %s", e)
         # Fallback
@@ -4059,7 +4093,7 @@ def v2_forecast_t2(payload: dict):
 
     config = {"region": region, "candidate_lookback_days": 45}
     try:
-        result = run_t2_pipeline(df=df, t1_date=resolved, config=config)
+        result = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
 
@@ -4100,7 +4134,7 @@ def v2_forecast_export(payload: dict = None):
     # --- T+2 ---
     config = {"region": region, "candidate_lookback_days": 45}
     try:
-        t2_raw = run_t2_pipeline(df=df, t1_date=resolved, config=config)
+        t2_raw = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
 

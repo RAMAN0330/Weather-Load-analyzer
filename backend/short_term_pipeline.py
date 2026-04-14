@@ -4837,11 +4837,85 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     return response
 
 
+# ── Weather DB fetch helper ───────────────────────────────────────────────────
+def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFrame]:
+    """
+    Fetch block-level weather for t2_date from the Django pipeline API
+    (weather_mean table in MySQL).  Returns a 96-row DataFrame with columns
+    matching the pipeline schema, or None if unavailable.
+    """
+    import requests as _req
+
+    pipeline_base = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001").rstrip("/")
+    api_token     = os.environ.get("PIPELINE_API_TOKEN", os.environ.get("API_SECRET_KEY", "flagbearer"))
+    state         = region.upper().replace(" ", "_").replace("-", "_")
+
+    try:
+        resp = _req.get(
+            f"{pipeline_base}/weather/mean",
+            params={"state": state, "date": t2_date, "limit": 100},
+            headers={"Authorization": f"Bearer {api_token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+
+        wdf = pd.DataFrame(rows)
+        wdf["date"]       = pd.to_datetime(wdf["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        wdf["time_block"] = pd.to_numeric(wdf.get("time_block", wdf.get("block", pd.Series(dtype=float))),
+                                          errors="coerce").astype("Int64")
+        wdf = wdf[wdf["time_block"].between(1, 96)].sort_values("time_block").reset_index(drop=True)
+        if len(wdf) < 10:
+            return None
+        return wdf
+    except Exception as _e:
+        logging.getLogger(__name__).warning("T+2 weather DB fetch failed for %s %s: %s", region, t2_date, _e)
+        return None
+
+
+def _inject_weather_into_rows(target_df: pd.DataFrame, weather_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Overwrite weather columns in target_df with values from weather_df,
+    matched by time_block.  Any column present in weather_df but not in
+    target_df is added.  time_block must be an integer key in both frames.
+    """
+    WEATHER_COLS = [
+        "temperature", "humidity", "precipitation",
+        "apparent_temperature", "cloud_cover", "cloud_cover_low",
+        "sunshine_duration", "direct_radiation", "wind_speed_10m",
+    ]
+
+    result = target_df.copy()
+    result["time_block"] = pd.to_numeric(result["time_block"], errors="coerce").astype("Int64")
+    wdf = weather_df.copy()
+    wdf["time_block"] = pd.to_numeric(wdf["time_block"], errors="coerce").astype("Int64")
+
+    available = [c for c in WEATHER_COLS if c in wdf.columns]
+    if not available:
+        return result
+
+    # Reindex weather to cover all 96 blocks, forward-fill gaps
+    wdf_full = wdf.set_index("time_block")[available].reindex(range(1, 97)).ffill().bfill()
+
+    for col in available:
+        vals = wdf_full[col].values
+        if col not in result.columns:
+            result[col] = 0.0
+        # Align by time_block index
+        tb = result["time_block"].to_numpy(dtype=int)
+        result[col] = [float(vals[b - 1]) if 1 <= b <= 96 else float(vals[0]) for b in tb]
+
+    return result
+
+
 # ── T+2 (Day-After-Tomorrow) Forecast Pipeline ────────────────────────────────
 def run_t2_pipeline(
     df: pd.DataFrame,
     t1_date: str,
     config: Optional[Dict] = None,
+    region: Optional[str] = None,
 ) -> Dict:
     """
     Run the short-term pipeline for T+2 (the day after t1_date).
@@ -4870,10 +4944,11 @@ def run_t2_pipeline(
     if t1_rows.empty:
         raise ValueError(f"T+1 date {t1_date} not found in dataframe; cannot forecast sequential T+2.")
 
+    # ── Step 1: Forecast T+1 with zero actuals (pure forward forecast) ───────
     t1_result = run_short_term_pipeline(
         df=df,
         target_date=t1_date,
-        actual_blocks=0,  # No actuals for T+2
+        actual_blocks=0,
         config=cfg,
     )
     t1_forecast = _normalize_block_vector(
@@ -4882,6 +4957,8 @@ def run_t2_pipeline(
         fill_value=0.0,
     )
 
+    # ── Step 2: Build T+1 synthetic row using forecasted load as history ─────
+    #   Weather columns are kept from the real T+1 day (they already exist in df).
     t1_synthetic = _build_synthetic_forecast_day(
         template_df=t1_rows,
         target_date=t1_date,
@@ -4889,17 +4966,41 @@ def run_t2_pipeline(
         zero_actuals=False,
     )
 
+    # ── Step 3: Build T+2 rows — use DB weather if available ─────────────────
     dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+
+    # Fetch real T+2 weather from MySQL via Django API
+    t2_weather_df = None
+    if region:
+        t2_weather_df = _fetch_t2_weather_from_db(t2_date, region)
+        if t2_weather_df is not None:
+            logging.getLogger(__name__).info(
+                "[T+2] Fetched %d weather blocks for %s %s from DB",
+                len(t2_weather_df), region, t2_date,
+            )
+        else:
+            logging.getLogger(__name__).warning(
+                "[T+2] No DB weather for %s %s — using T+1 weather as proxy", region, t2_date,
+            )
+
     if t2_date in dates_in_df:
+        # T+2 already in df — use it but override weather with fresh DB data
         t2_rows = df[df["date"].astype(str) == t2_date].copy()
+        if t2_weather_df is not None:
+            t2_rows = _inject_weather_into_rows(t2_rows, t2_weather_df)
     else:
+        # T+2 not in df — synthesise from T+1 template, then inject DB weather
         t2_rows = _build_synthetic_forecast_day(
             template_df=t1_rows,
             target_date=t2_date,
             forecast=np.zeros(_BLOCK_COUNT, dtype=float),
             zero_actuals=True,
         )
+        if t2_weather_df is not None:
+            t2_rows = _inject_weather_into_rows(t2_rows, t2_weather_df)
 
+    # ── Step 4: Build extended history — replace T+1 actual with T+1 forecast -
+    #   History up to (not including) T+1, then T+1-as-forecast, then T+2.
     history_without_t1 = df[df["date"].astype(str) != t1_date].copy()
     history_without_t1_t2 = history_without_t1[history_without_t1["date"].astype(str) != t2_date].copy()
     df_extended = pd.concat([history_without_t1_t2, t1_synthetic, t2_rows], ignore_index=True)

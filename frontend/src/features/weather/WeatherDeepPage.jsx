@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
+import HorizonToggle from '../../components/HorizonToggle';
 
 /* ═══════════════════════════════════════════════════════════════
    VidyutPragya — Weather Intelligence Page
@@ -201,7 +202,7 @@ function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
-export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadSeries, liveData, selectedRegion }) {
+export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadSeries, liveData, selectedRegion, horizon = 't1', setHorizon, t2Date, dayAheadT2 }) {
   const [chartTab, setChartTab] = useState('intraday');
   const [weatherFeature, setWeatherFeature] = useState('temperature');
   const [showNormal, setShowNormal] = useState(true);
@@ -287,7 +288,10 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
   }, []);
 
   // ─── Extract real data ───
-  const resolvedDayAhead = dayAheadData || fallbackDayAhead;
+  // When T+2 is active, prefer dayAheadT2 (fetched for t2_date); fall back to fallbackDayAhead.
+  const resolvedDayAhead = horizon === 't2'
+    ? (dayAheadT2 || fallbackDayAhead)
+    : (dayAheadData || fallbackDayAhead);
   const wa = resolvedDayAhead?.weather_analysis;
   const intra = wa?.intraday;
   const series = dayAheadSeries || resolvedDayAhead?.series;
@@ -759,6 +763,16 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
      ═══════════════════════════════════════════════════════════════ */
   return (
     <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: C.text, minHeight: 0, height: '100%', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 14, padding: '10px 16px 14px' }}>
+
+      {/* ═══ HORIZON TOGGLE ═══ */}
+      {setHorizon && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: C._muted, letterSpacing: 1, textTransform: 'uppercase' }}>
+            Viewing: <strong style={{ color: C._text }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${effectiveDate}`}</strong>
+          </span>
+          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+        </div>
+      )}
 
       {/* ═══ TOP METRICS ═══ */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>

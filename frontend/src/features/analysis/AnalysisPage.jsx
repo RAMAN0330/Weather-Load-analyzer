@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
+import HorizonToggle from '../../components/HorizonToggle';
 
 /* ─── Spearman ─── */
 function computeSpearmanRho(xArr, yArr) {
@@ -139,6 +140,7 @@ const S = {
 
 /* ─── ECharts base ─── */
 const ecBase = () => ({
+  animation: false,
   backgroundColor: 'transparent',
   textStyle: { color: '#A0A5B8', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 },
   grid: { top: 36, right: 20, bottom: 32, left: 50, containLabel: false },
@@ -282,8 +284,9 @@ function DetailOverlay({ open, title, subtitle, onClose, children, contentStyle,
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
-export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, liveForecastData }) {
-  const dateStr = propDate || new Date().toISOString().slice(0, 10);
+export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, liveForecastData, horizon = 't1', setHorizon, t2Date, dayAheadT2 }) {
+  const activeData = horizon === 't2' ? (dayAheadT2 || dayAheadData) : dayAheadData;
+  const dateStr = (horizon === 't2' ? t2Date : propDate) || new Date().toISOString().slice(0, 10);
   const [clock, setClock] = useState(new Date());
   const [chartTab, setChartTab] = useState('load_curve');
   const [weatherOverlay, setWeatherOverlay] = useState('temperature');
@@ -294,8 +297,8 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
 
   /* ─── Extract data ─── */
   const { loads, yLoads, temps, hums, precips, clouds, timeLabels } = useMemo(() => {
-    const s = dayAheadData?.series || liveForecastData?.series;
-    const intra = dayAheadData?.weather_analysis?.intraday || {};
+    const s = activeData?.series || liveForecastData?.series;
+    const intra = activeData?.weather_analysis?.intraday || {};
     const blocks = s?.blocks || Array.from({ length: 96 }, (_, i) => i + 1);
     const actual = s?.actual || s?.forecast || [];
     const baseline = s?.baseline || s?.hybrid_baseline || [];
@@ -308,7 +311,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
       clouds: (intra.cloud_cover?.actual || []).map(v => Number(v) || 0),
       timeLabels: blocks.map(blockToTime),
     };
-  }, [dayAheadData, liveForecastData]);
+  }, [activeData, liveForecastData]);
 
   /* ─── Current block ─── */
   const nowHour = clock.getHours(), nowMin = clock.getMinutes();
@@ -331,7 +334,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   const maxRampIdx = ramps.indexOf(maxRamp) + 1;
 
   // Region-aware capacity: use prop if available, else fall back to 6500
-  const regionCapacity = dayAheadData?.metadata?.region_capacity_mw || liveForecastData?.metadata?.region_capacity_mw || CAPACITY;
+  const regionCapacity = activeData?.metadata?.region_capacity_mw || liveForecastData?.metadata?.region_capacity_mw || CAPACITY;
   const healthPct = (peakLoad / regionCapacity) * 100;
   const healthBadge = healthPct > 85 ? { l: 'RED', c: '#F87171' } : healthPct > 70 ? { l: 'AMBER', c: '#FBBF24' } : { l: 'GREEN', c: '#34D399' };
 
@@ -373,14 +376,14 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
 
   // Bias Trend: rolling 7-day mean signed error
   const biasTrend = useMemo(() => {
-    const s = dayAheadData?.series || liveForecastData?.series;
+    const s = activeData?.series || liveForecastData?.series;
     const f = (s?.forecast || []).map(Number).filter(Number.isFinite);
     const a = (s?.actual || []).map(Number).filter(Number.isFinite);
     if (f.length < 4 || a.length < 4) return null;
     const n = Math.min(f.length, a.length);
     const errors = Array.from({ length: n }, (_, i) => f[i] - a[i]);
     return Math.round(errors.reduce((s, v) => s + v, 0) / errors.length);
-  }, [dayAheadData, liveForecastData]);
+  }, [activeData, liveForecastData]);
 
   /* ─── Correlations ─── */
   const rhoTemp = computeSpearmanRho(temps, loads);
@@ -587,6 +590,15 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   /* ═══ RENDER ═══ */
   return (
     <div style={S.page}>
+      {/* ─── HORIZON TOGGLE ─── */}
+      {setHorizon && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 0', flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: 'uppercase' }}>
+            Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${propDate || dateStr}`}</strong>
+          </span>
+          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+        </div>
+      )}
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
           <div style={{ fontSize: 16, marginBottom: 6 }}>No data available</div>

@@ -10,7 +10,8 @@ const safeFetch = (url) =>
 
 export const fetchPipelineStates = () => safeFetch(`${BASE}/states`)
 
-export const fetchPipelineWeather = (state, days = 60) =>
+// Use days=62 so the query window always includes T+1 and T+2 (today + tomorrow)
+export const fetchPipelineWeather = (state, days = 62) =>
   safeFetch(`${BASE}/weather/${encodeURIComponent(state)}?days=${days}`)
 
 export const fetchPipelineWeatherLoc = (state, days = 60) =>

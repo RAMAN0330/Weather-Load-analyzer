@@ -429,13 +429,31 @@ def pipeline_get_engine_data(state: str):
             load_dates = set(load_df['date'].astype(str).unique())
             last_load_date = max(load_dates)
 
+            # Always ensure we cover exactly 2 days ahead from today:
+            #   T+1 = today (or next day if today already has load)
+            #   T+2 = today + 1
+            from datetime import date as _date, timedelta as _td
+            _today = _date.today()
+            _t1_str = _today.isoformat()
+            _t2_str = (_today + _td(days=1)).isoformat()
+            _forecast_dates = {_t1_str, _t2_str}
+
             hist_wx = wx_df[wx_df['date'] <= last_load_date].copy()
-            fore_wx = wx_df[wx_df['date'] > last_load_date].copy()
+
+            # fore_wx = weather rows for dates that are either:
+            #   (a) strictly after last_load_date, OR
+            #   (b) one of the 2 explicit forward dates (T+1 / T+2)
+            # This guarantees both T+1 and T+2 weather are always present
+            # regardless of where last_load_date falls relative to today.
+            fore_mask = (wx_df['date'] > last_load_date) | (wx_df['date'].isin(_forecast_dates))
+            # Exclude dates that already have actual load so we don't double-append
+            fore_mask &= ~wx_df['date'].isin(load_dates)
+            fore_wx = wx_df[fore_mask].copy()
 
             # Merge historical weather with load (training data)
             merged = pd.merge(load_df, hist_wx, on=['date', 'time_block'], how='left')
 
-            # Append forecasted weather rows for future dates with no actual load.
+            # Append forecasted weather rows for T+1/T+2 with no actual load.
             # The pipeline will pick these up as target_df weather for T+1/T+2.
             if not fore_wx.empty:
                 fore_wx = fore_wx.copy()

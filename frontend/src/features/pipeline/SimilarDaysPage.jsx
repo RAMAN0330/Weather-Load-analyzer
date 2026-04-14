@@ -8,6 +8,7 @@ import {
   fetchPipelineSimilarity,
   buildTimeAxis,
 } from './pipelineApi'
+import HorizonToggle from '../../components/HorizonToggle'
 
 const COLORS = ['#F07825', '#5B9FE4', '#34D399', '#F87171', '#FBBF24', '#C084FC', '#45b7d1', '#F472B6']
 
@@ -106,7 +107,7 @@ const S = {
   metricValue: { fontSize: 16, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
 
-export default function SimilarDaysPage() {
+export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) {
   const [dbState, setDbState] = useState('HARYANA')
   const [targetDate, setTargetDate] = useState('')
   const [method, setMethod] = useState('euclidean')
@@ -122,6 +123,11 @@ export default function SimilarDaysPage() {
 
   const [activeTab, setActiveTab] = useState('weather')
   const [selectedSimilar, setSelectedSimilar] = useState([])
+
+  // Auto-update targetDate when horizon switches to T+2
+  useEffect(() => {
+    if (horizon === 't2' && t2Date) setTargetDate(t2Date)
+  }, [horizon, t2Date])
 
   useEffect(() => {
     setDataLoading(true)
@@ -269,6 +275,9 @@ export default function SimilarDaysPage() {
           {running ? 'Searching…' : 'Find Similar Days'}
         </button>
         {runError && <span style={{ fontSize: 11, color: '#F87171' }}>{runError}</span>}
+        {setHorizon && (
+          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} style={{ marginLeft: 'auto' }} />
+        )}
       </div>
 
       {/* Metrics row */}

@@ -20,6 +20,7 @@ import {
   Layers,
   LayoutGrid,
   Loader2,
+  LogOut,
   MapPin,
   Play,
   Settings,
@@ -79,7 +80,6 @@ const OPTIMIZER_TABS = [
   { key: 'errors', label: 'Error Diagnostics', icon: BarChart3 }
 ];
 
-const MONITOR_PLACEHOLDER_WIDTHS = [84, 78, 72, 88, 69, 81];
 
 const LIVE_INSIGHT_OPTIONS = [
   { key: 'similar_day_matches', label: 'Similar Day Matches', subtitle: 'Top-N ranked by similarity score' },
@@ -1098,7 +1098,445 @@ function DataViewerTable({ rows, keys, fmt }) {
   );
 }
 
-export default function App() {
+/* ═══════════════════════════════════════════════════════════════
+   MONITOR PAGE  –  Similar Days & Statistics
+   ═══════════════════════════════════════════════════════════════ */
+function MonitorPage({ live, dayAhead, effectiveDate }) {
+  const [activeKpi, setActiveKpi] = React.useState(null);
+  const [statTab, setStatTab] = React.useState('central');
+  const [simSort, setSimSort] = React.useState({ col: 'rank', dir: 'asc' });
+  const [simFilter, setSimFilter] = React.useState('all');
+  const [selectedSimRow, setSelectedSimRow] = React.useState(null);
+  const [activeBin, setActiveBin] = React.useState(null);
+  const [activeError, setActiveError] = React.useState(null);
+
+  /* ── data ── */
+  const monSeries = live?.series || dayAhead?.series;
+  const monActual = monSeries?.actual || monSeries?.forecast || [];
+  const monBaseline = monSeries?.baseline || monSeries?.hybrid_baseline || [];
+  const monBlocks = monSeries?.blocks || Array.from({ length: 96 }, (_, i) => i + 1);
+  const monLoads = monBlocks.map((_, i) => Number.isFinite(monActual[i]) ? Math.round(monActual[i]) : 0);
+  const monYLoads = monBlocks.map((_, i) => Number.isFinite(monBaseline[i]) ? Math.round(monBaseline[i]) : 0);
+  const monMeta = live?.metadata || dayAhead?.metadata || {};
+  const monIntra = live?.weather_analysis?.intraday || dayAhead?.weather_analysis?.intraday || {};
+  const monTemps = (monIntra.temperature?.actual || []).map(Number);
+
+  /* ── similar days ── */
+  const rawSim = monMeta?.similar_days || live?.similar_days || [];
+
+  /* ── statistics ── */
+  const validLoads = monLoads.filter(v => v > 0);
+  const peak    = validLoads.length ? Math.max(...validLoads) : 0;
+  const valley  = validLoads.length ? Math.min(...validLoads) : 0;
+  const energy  = monLoads.reduce((s, v) => s + v * 0.25, 0);
+  const avgLoad = validLoads.length ? validLoads.reduce((a, b) => a + b, 0) / validLoads.length : 0;
+  const loadFactor = peak > 0 ? (avgLoad / peak) * 100 : 0;
+  const sorted  = [...validLoads].sort((a, b) => a - b);
+  const median  = sorted.length ? (sorted.length % 2 ? sorted[Math.floor(sorted.length / 2)] : (sorted[Math.floor(sorted.length / 2) - 1] + sorted[Math.floor(sorted.length / 2)]) / 2) : 0;
+  const q1  = sorted.length >= 4 ? sorted[Math.floor(sorted.length * 0.25)] : 0;
+  const q3  = sorted.length >= 4 ? sorted[Math.floor(sorted.length * 0.75)] : 0;
+  const iqr = q3 - q1;
+  const stdDev = validLoads.length > 1 ? Math.sqrt(validLoads.reduce((s, v) => s + (v - avgLoad) ** 2, 0) / validLoads.length) : 0;
+  const cv   = avgLoad > 0 ? (stdDev / avgLoad) * 100 : 0;
+  const ramps = monLoads.slice(1).map((v, i) => v - monLoads[i]);
+  const maxRampUp   = ramps.length ? Math.max(...ramps) : 0;
+  const maxRampDown = ramps.length ? Math.min(...ramps) : 0;
+  const pvRatio  = valley > 0 ? peak / valley : null;
+  const mape     = monMeta?.mape_live;
+  const nowBlk   = (() => { const n = new Date(); return Math.min(95, n.getHours() * 4 + Math.floor(n.getMinutes() / 15)); })();
+  const peakIdx  = monLoads.indexOf(peak);
+  const peakTime = peakIdx >= 0 ? `${String(Math.floor(peakIdx / 4)).padStart(2,'0')}:${String((peakIdx % 4) * 15).padStart(2,'0')}` : '--';
+  const valleyIdx  = monLoads.indexOf(valley);
+  const valleyTime = valleyIdx >= 0 ? `${String(Math.floor(valleyIdx / 4)).padStart(2,'0')}:${String((valleyIdx % 4) * 15).padStart(2,'0')}` : '--';
+
+  /* ── ramp profile ── */
+  const topRamps = React.useMemo(() => {
+    return ramps.map((v, i) => ({ v, t: `${String(Math.floor((i+1)/4)).padStart(2,'0')}:${String(((i+1)%4)*15).padStart(2,'0')}` }))
+      .sort((a,b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, 5);
+  }, [ramps]);
+
+  /* ── error vs baseline ── */
+  const errorPairs = monLoads.map((v, i) => ({ a: v, f: monYLoads[i] })).filter(({ a, f }) => a > 100 && f > 0);
+  const maeVal  = errorPairs.length ? errorPairs.reduce((s, { a, f }) => s + Math.abs(a - f), 0) / errorPairs.length : null;
+  const rmseVal = errorPairs.length ? Math.sqrt(errorPairs.reduce((s, { a, f }) => s + (a - f) ** 2, 0) / errorPairs.length) : null;
+  const mapeVal = errorPairs.length ? errorPairs.reduce((s, { a, f }) => s + Math.abs(a - f) / a, 0) / errorPairs.length * 100 : null;
+  const biasVal = errorPairs.length ? errorPairs.reduce((s, { a, f }) => s + (f - a), 0) / errorPairs.length : null;
+
+  const fmtN = (v, d = 0) => v == null || !Number.isFinite(v) ? '--' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: d });
+
+  /* ── distribution buckets ── */
+  const binSize = 250;
+  const lo  = validLoads.length ? Math.floor(Math.min(...validLoads) / binSize) * binSize : 0;
+  const hi  = validLoads.length ? Math.ceil(Math.max(...validLoads) / binSize) * binSize : 0;
+  const bins = [];
+  for (let b = lo; b < hi; b += binSize) bins.push({ label: `${(b / 1000).toFixed(1)}k`, lo: b, hi: b + binSize, count: validLoads.filter(v => v >= b && v < b + binSize).length });
+  const maxBin = bins.length ? Math.max(...bins.map(b => b.count)) : 1;
+
+  /* ── similar days: filter + sort ── */
+  const dayOfWeek = (ds) => { try { return new Date(ds + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' }); } catch { return ''; } };
+  const simColor  = (s) => s >= 85 ? '#34D399' : s >= 70 ? '#FBBF24' : '#F87171';
+
+  const filteredSim = React.useMemo(() => {
+    let rows = rawSim.map((d, i) => ({ ...d, _rank: i }));
+    if (simFilter !== 'all') rows = rows.filter(d => (d.category || d.day_type || 'working') === simFilter);
+    rows.sort((a, b) => {
+      let va, vb;
+      if (simSort.col === 'rank')      { va = a._rank; vb = b._rank; }
+      else if (simSort.col === 'sim')  { va = (a.similarity_score ?? a.score ?? 0); vb = (b.similarity_score ?? b.score ?? 0); }
+      else if (simSort.col === 'date') { va = a.date ?? ''; vb = b.date ?? ''; }
+      else if (simSort.col === 'temp') { va = Math.abs(a.temp_diff ?? 0); vb = Math.abs(b.temp_diff ?? 0); }
+      else if (simSort.col === 'hum')  { va = Math.abs(a.hum_diff ?? 0); vb = Math.abs(b.hum_diff ?? 0); }
+      else { va = 0; vb = 0; }
+      return simSort.dir === 'asc' ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+    });
+    return rows;
+  }, [rawSim, simFilter, simSort]);
+
+  /* ── selected similar day detail ── */
+  const selDay = selectedSimRow != null ? rawSim.find(d => d.date === selectedSimRow) : null;
+
+  /* ── stat tabs ── */
+  const statGroups = {
+    central:  [['Peak Load', fmtN(peak,0), 'MW', '#F07825', `Occurs at ${peakTime}`], ['Valley Load', fmtN(valley,0), 'MW', '#5B9FE4', `Occurs at ${valleyTime}`], ['Mean Load', fmtN(avgLoad,0), 'MW', '#ECEEF3', 'Simple arithmetic mean of all valid blocks'], ['Median Load', fmtN(median,0), 'MW', '#FBBF24', '50th percentile — robust to outliers'], ['Day Energy', fmtN(energy,0), 'MWh', '#ECEEF3', 'Sum of load × 0.25 h across all 96 blocks'], ['Load Factor', fmtN(loadFactor,2), '%', loadFactor>=70?'#34D399':'#FBBF24', 'Mean/Peak — higher = more efficient utilisation']],
+    spread:   [['Std Deviation', fmtN(stdDev,0), 'MW', '#C084FC', 'Square root of variance — measures load volatility'], ['IQR (Q3−Q1)', fmtN(iqr,0), 'MW', '#C084FC', 'Middle 50% spread — resistant to extremes'], ['Q1 (25th pct)', fmtN(q1,0), 'MW', '#5B9FE4', 'Bottom quartile load threshold'], ['Q3 (75th pct)', fmtN(q3,0), 'MW', '#C084FC', 'Top quartile load threshold'], ['CV %', fmtN(cv,2), '%', '#C084FC', 'Std Dev / Mean × 100 — normalised volatility'], ['P/V Ratio', pvRatio!=null?pvRatio.toFixed(3):'--', '', '#ECEEF3', 'Peak-to-valley — higher = greater storage opportunity']],
+    ramp:     [['Max Ramp Up', fmtN(maxRampUp,0), 'MW/15m', maxRampUp>200?'#F87171':'#FBBF24', 'Largest positive 15-min delta'], ['Max Ramp Down', fmtN(Math.abs(maxRampDown),0), 'MW/15m', '#5B9FE4', 'Largest negative 15-min delta (absolute)'], ['Valid Blocks', validLoads.length, '/ 96', '#ECEEF3', 'Blocks with non-zero load observed'], ['Peak Time', peakTime, '', '#F07825', 'Clock time of peak block'], ['Valley Time', valleyTime, '', '#5B9FE4', 'Clock time of lowest load block'], ['Temp Now', monTemps[nowBlk]!=null?`${monTemps[nowBlk].toFixed(1)}°C`:'--', '', '#FBBF24', 'Ambient temperature at current block']],
+    perf:     [['MAPE (meta)', mape!=null?`${mape.toFixed(2)}%`:'--', '', mape!=null&&mape<3?'#34D399':'#F87171', 'Mean Absolute % Error from API metadata'], ['MAPE (calc)', mapeVal!=null?`${mapeVal.toFixed(2)}%`:'--', '', mapeVal!=null&&mapeVal<3?'#34D399':mapeVal!=null&&mapeVal<6?'#FBBF24':'#F87171', 'Computed from actual vs baseline pairs'], ['MAE', fmtN(maeVal,0), 'MW', '#5B9FE4', 'Mean Absolute Error in MW'], ['RMSE', fmtN(rmseVal,0), 'MW', '#C084FC', 'Root Mean Squared Error — penalises large errors'], ['Bias', biasVal!=null?`${biasVal>0?'+':''}${fmtN(biasVal,0)}`:'--', 'MW', biasVal!=null&&Math.abs(biasVal)<50?'#34D399':'#FBBF24', 'Signed mean error — positive = over-forecast'], ['Error Pairs', errorPairs.length, 'blocks', '#ECEEF3', 'Blocks used for error calculation']],
+  };
+
+  /* ── KPI card drill-down detail ── */
+  const kpiDetail = {
+    'Peak Load':     { title: 'Peak Load Deep-Dive', lines: [`Observed at ${peakTime}`, `Range spread: ${fmtN(peak-valley,0)} MW`, `Load Factor: ${fmtN(loadFactor,1)}%`, `Top 5 ramp events near peak shown in Ramp tab`] },
+    'Valley Load':   { title: 'Valley Analysis', lines: [`Observed at ${valleyTime}`, `Night base demand: ${fmtN(valley,0)} MW`, `P/V Ratio: ${pvRatio!=null?pvRatio.toFixed(2):'--'}`, `Higher P/V ratio → more storage opportunity`] },
+    'Day Energy':    { title: 'Energy Balance', lines: [`Total: ${fmtN(energy,0)} MWh`, `Average load: ${fmtN(avgLoad,0)} MW`, `Load factor: ${fmtN(loadFactor,1)}%`, `Valid blocks contributing: ${validLoads.length}/96`] },
+    'Load Factor':   { title: 'Load Factor Explained', lines: [`Formula: Mean Load / Peak Load × 100`, `Mean: ${fmtN(avgLoad,0)} MW  Peak: ${fmtN(peak,0)} MW`, `Result: ${fmtN(loadFactor,1)}%`, loadFactor>=70?'✓ Good utilisation (≥70%)':'⚠ Low utilisation (<70%)'] },
+    'Std Deviation': { title: 'Load Volatility', lines: [`Std Dev: ${fmtN(stdDev,0)} MW`, `CV: ${fmtN(cv,1)}% (Std/Mean)`, `IQR: ${fmtN(iqr,0)} MW`, cv>15?'⚠ High volatility — consider storage dispatch':'✓ Stable load profile'] },
+    'Max Ramp Up':   { title: 'Ramp Events', lines: [`Steepest up: +${fmtN(maxRampUp,0)} MW/15m`, `Steepest down: −${fmtN(Math.abs(maxRampDown),0)} MW/15m`, `Top events listed in Ramp Stats tab`, maxRampUp>200?'⚠ High ramp — hydro / gas response needed':'✓ Within normal ramp range'] },
+  };
+
+  /* ── error explanations ── */
+  const errorInfo = {
+    MAPE:  'Mean Absolute % Error. Industry threshold: <3% excellent, <6% acceptable, >6% review needed.',
+    MAE:   'Mean Absolute Error in MW. Direct measure of average miss magnitude. No penalty weighting.',
+    RMSE:  'Root Mean Squared Error. Penalises large errors more heavily than MAE — critical for peak blocks.',
+    Bias:  'Signed mean error. Positive = model over-forecasts. Negative = model under-forecasts. Target: near zero.',
+  };
+
+  /* ── styles ── */
+  const cardS = { background: 'linear-gradient(180deg,rgba(26,25,30,.98),rgba(20,20,24,.96))', borderRadius: 14, border: '1px solid #2A292F', overflow: 'hidden', display: 'flex', flexDirection: 'column' };
+  const headS = { padding: '12px 16px', borderBottom: '1px solid #2A292F', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 };
+  const titleS = { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: '#A0A5B8', fontFamily: "'IBM Plex Mono',monospace" };
+  const badge  = (c) => ({ fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: `${c}18`, color: c, border: `1px solid ${c}33` });
+  const tabBtn = (active) => ({ fontSize: 9, fontWeight: 600, letterSpacing: 0.8, padding: '5px 12px', borderRadius: 999, border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#6B7186', cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase', transition: 'all 0.12s' });
+  const sortTh = (col) => ({ padding: '8px 10px', textAlign: 'left', fontSize: 8, letterSpacing: 1, textTransform: 'uppercase', color: simSort.col === col ? '#F07825' : '#4A4D5E', borderBottom: '1px solid #2A292F', fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s' });
+  const onSort = (col) => setSimSort(s => ({ col, dir: s.col === col && s.dir === 'asc' ? 'desc' : 'asc' }));
+  const sortIcon = (col) => simSort.col === col ? (simSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+
+  return (
+    <main style={{ fontFamily: "'IBM Plex Mono',monospace", color: '#ECEEF3', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '14px 16px 24px' }}>
+
+      {/* ── HEADER ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.6, textTransform: 'uppercase', color: '#ECEEF3' }}>Similar Days &amp; Statistics</div>
+          <div style={{ fontSize: 9, color: '#4A4D5E', marginTop: 3 }}>Click any KPI card · Sort table columns · Filter by day type · Click a bin to narrow similar days</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {mape != null && <span style={badge('#F07825')}>{`MAPE ${mape.toFixed(1)}%`}</span>}
+          <span style={badge('#34D399')}>{effectiveDate || new Date().toISOString().slice(0,10)}</span>
+        </div>
+      </div>
+
+      {/* ── KPI STRIP (clickable) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, flexShrink: 0 }}>
+        {[
+          { label: 'Peak Load',     value: fmtN(peak),           unit: 'MW',     color: '#F07825', sub: `at ${peakTime}` },
+          { label: 'Valley Load',   value: fmtN(valley),         unit: 'MW',     color: '#5B9FE4', sub: `at ${valleyTime}` },
+          { label: 'Day Energy',    value: fmtN(energy,0),       unit: 'MWh',    color: '#ECEEF3', sub: `Avg ${fmtN(avgLoad,0)} MW` },
+          { label: 'Load Factor',   value: fmtN(loadFactor,1),   unit: '%',      color: loadFactor>=70?'#34D399':'#FBBF24', sub: `P/V ${pvRatio!=null?pvRatio.toFixed(2):'--'}` },
+          { label: 'Std Deviation', value: fmtN(stdDev,0),       unit: 'MW',     color: '#C084FC', sub: `CV ${fmtN(cv,1)}%` },
+          { label: 'Max Ramp Up',   value: fmtN(maxRampUp,0),    unit: 'MW/15m', color: maxRampUp>200?'#F87171':'#FBBF24', sub: `Down ${fmtN(Math.abs(maxRampDown),0)}` },
+        ].map(k => {
+          const isActive = activeKpi === k.label;
+          return (
+            <button key={k.label} onClick={() => setActiveKpi(isActive ? null : k.label)}
+              style={{ ...cardS, padding: '14px 14px 12px', cursor: 'pointer', textAlign: 'left', border: `1px solid ${isActive ? k.color+'66' : '#2A292F'}`, boxShadow: isActive ? `0 0 16px ${k.color}18` : 'none', transition: 'all 0.15s' }}>
+              <div style={{ fontSize: 8, letterSpacing: 1.2, textTransform: 'uppercase', color: isActive ? k.color : '#4A4D5E', marginBottom: 6 }}>{k.label}</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginBottom: 4 }}>
+                <span style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: k.color }}>{k.value}</span>
+                <span style={{ fontSize: 9, color: '#6B7186' }}>{k.unit}</span>
+              </div>
+              <div style={{ fontSize: 9, color: isActive ? k.color+'aa' : '#4A4D5E' }}>{k.sub}</div>
+              {isActive && <div style={{ marginTop: 6, width: 20, height: 2, borderRadius: 1, background: k.color }} />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── KPI DRILL-DOWN PANEL ── */}
+      {activeKpi && kpiDetail[activeKpi] && (
+        <div style={{ ...cardS, flexShrink: 0, border: `1px solid ${['#F07825','#5B9FE4','#ECEEF3','#34D399','#C084FC','#FBBF24'].find((_,i)=>['Peak Load','Valley Load','Day Energy','Load Factor','Std Deviation','Max Ramp Up'][i]===activeKpi)||'#2A292F'}33` }}>
+          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: '#6B7186', marginBottom: 8 }}>{kpiDetail[activeKpi].title}</div>
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                {kpiDetail[activeKpi].lines.map((l, i) => (
+                  <div key={i} style={{ fontSize: 10, color: l.startsWith('⚠') ? '#F87171' : l.startsWith('✓') ? '#34D399' : '#ECEEF3', lineHeight: 1.6 }}>{l}</div>
+                ))}
+              </div>
+            </div>
+            <button onClick={() => setActiveKpi(null)} style={{ fontSize: 14, background: 'none', border: 'none', color: '#4A4D5E', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>×</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MAIN GRID ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 14, flex: 1, minHeight: 400 }}>
+
+        {/* LEFT: similar days */}
+        <div style={cardS}>
+          <div style={headS}>
+            <div>
+              <div style={titleS}>Similar Historical Days</div>
+              <div style={{ fontSize: 9, color: '#4A4D5E', marginTop: 2 }}>Click column headers to sort · Click a row to inspect · Use filters below</div>
+            </div>
+            <span style={badge('#5B9FE4')}>{rawSim.length ? `${rawSim.length} matches` : 'No data'}</span>
+          </div>
+
+          {/* filter + bin-clear row */}
+          <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid #2A292F', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+            {['all','working','sunday','holiday'].map(f => (
+              <button key={f} onClick={() => setSimFilter(f)} style={tabBtn(simFilter === f)}>{f}</button>
+            ))}
+          </div>
+
+          {rawSim.length === 0 ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4A4D5E', fontSize: 10, flexDirection: 'column', gap: 6, padding: 32 }}>
+              <div style={{ fontSize: 24, opacity: 0.3 }}>◈</div>
+              <div>Run a forecast to surface similar days</div>
+            </div>
+          ) : (
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255,255,255,0.02)', position: 'sticky', top: 0, zIndex: 1 }}>
+                    <th style={sortTh('rank')} onClick={() => onSort('rank')}>Rank{sortIcon('rank')}</th>
+                    <th style={sortTh('date')} onClick={() => onSort('date')}>Date{sortIcon('date')}</th>
+                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Day</th>
+                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Type</th>
+                    <th style={sortTh('sim')} onClick={() => onSort('sim')}>Similarity{sortIcon('sim')}</th>
+                    <th style={sortTh('temp')} onClick={() => onSort('temp')}>Temp Δ °C{sortIcon('temp')}</th>
+                    <th style={sortTh('hum')} onClick={() => onSort('hum')}>Hum Δ %{sortIcon('hum')}</th>
+                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Rain Match</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSim.map((d) => {
+                    const score = d.similarity_score != null ? d.similarity_score * 100 : d.score != null ? d.score * 100 : null;
+                    const sc = score != null ? simColor(score) : '#6B7186';
+                    const tempDiff = d.temp_diff ?? null;
+                    const humDiff  = d.hum_diff  ?? null;
+                    const rainMatch = d.rain_match;
+                    const isSelected = selectedSimRow === d.date;
+                    return (
+                      <React.Fragment key={d.date || d._rank}>
+                        <tr
+                          onClick={() => setSelectedSimRow(isSelected ? null : d.date)}
+                          style={{ borderBottom: '1px solid #2A292F18', background: isSelected ? 'rgba(91,159,228,0.07)' : d._rank === 0 ? 'rgba(240,120,37,0.04)' : 'transparent', cursor: 'pointer', transition: 'background 0.12s' }}>
+                          <td style={{ padding: '9px 10px', color: d._rank === 0 ? '#F07825' : '#6B7186', fontWeight: d._rank === 0 ? 700 : 400 }}>
+                            {d._rank === 0 ? '★' : `#${d._rank + 1}`}
+                          </td>
+                          <td style={{ padding: '9px 10px', fontWeight: 600, color: isSelected ? '#5B9FE4' : '#ECEEF3', whiteSpace: 'nowrap' }}>{d.date || '--'}</td>
+                          <td style={{ padding: '9px 10px', color: '#6B7186' }}>{d.date ? dayOfWeek(d.date) : '--'}</td>
+                          <td style={{ padding: '9px 10px' }}>
+                            <span style={{ ...badge(d.category==='holiday'?'#C084FC':d.category==='sunday'?'#5B9FE4':'#FBBF24'), fontSize: 8 }}>
+                              {d.category || d.day_type || 'working'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '9px 10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 56, height: 4, borderRadius: 2, background: '#1E1D24', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${Math.min(100, score ?? 0)}%`, background: sc, borderRadius: 2 }} />
+                              </div>
+                              <span style={{ color: sc, fontWeight: 700 }}>{score != null ? `${score.toFixed(0)}%` : '--'}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '9px 10px', color: tempDiff == null ? '#4A4D5E' : Math.abs(tempDiff) > 3 ? '#F87171' : '#34D399', fontWeight: 600 }}>
+                            {tempDiff != null ? `${tempDiff > 0 ? '+' : ''}${tempDiff.toFixed(1)}` : '--'}
+                          </td>
+                          <td style={{ padding: '9px 10px', color: humDiff == null ? '#4A4D5E' : Math.abs(humDiff) > 10 ? '#F87171' : '#34D399', fontWeight: 600 }}>
+                            {humDiff != null ? `${humDiff > 0 ? '+' : ''}${humDiff.toFixed(1)}` : '--'}
+                          </td>
+                          <td style={{ padding: '9px 10px' }}>
+                            {rainMatch == null
+                              ? <span style={{ color: '#4A4D5E' }}>--</span>
+                              : <span style={{ ...badge(rainMatch ? '#34D399' : '#F87171'), fontSize: 8 }}>{rainMatch ? '✓ Yes' : '✗ No'}</span>
+                            }
+                          </td>
+                        </tr>
+                        {isSelected && (
+                          <tr style={{ background: 'rgba(91,159,228,0.04)' }}>
+                            <td colSpan={8} style={{ padding: '10px 16px', borderBottom: '1px solid #2A292F' }}>
+                              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                                <div>
+                                  <div style={{ fontSize: 8, color: '#4A4D5E', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Selected Day</div>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: '#5B9FE4' }}>{d.date}</div>
+                                  <div style={{ fontSize: 9, color: '#6B7186', marginTop: 2 }}>{dayOfWeek(d.date)} · {d.category || d.day_type || 'working'}</div>
+                                </div>
+                                {[
+                                  ['Similarity', score != null ? `${score.toFixed(1)}%` : '--', sc],
+                                  ['Temp Δ', tempDiff != null ? `${tempDiff > 0 ? '+' : ''}${tempDiff.toFixed(1)} °C` : '--', Math.abs(tempDiff??0) > 3 ? '#F87171' : '#34D399'],
+                                  ['Humidity Δ', humDiff != null ? `${humDiff > 0 ? '+' : ''}${humDiff.toFixed(1)}%` : '--', Math.abs(humDiff??0) > 10 ? '#F87171' : '#34D399'],
+                                  ['Rain Match', rainMatch == null ? '--' : rainMatch ? '✓ Yes' : '✗ No', rainMatch ? '#34D399' : '#F87171'],
+                                ].map(([l, v, c]) => (
+                                  <div key={l}>
+                                    <div style={{ fontSize: 8, color: '#4A4D5E', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>{l}</div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</div>
+                                  </div>
+                                ))}
+                                <button onClick={(e) => { e.stopPropagation(); setSelectedSimRow(null); }} style={{ marginLeft: 'auto', fontSize: 9, padding: '4px 10px', borderRadius: 6, border: '1px solid #2A292F', background: 'transparent', color: '#6B7186', cursor: 'pointer', fontFamily: 'inherit', alignSelf: 'center' }}>Close</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  {filteredSim.length === 0 && (
+                    <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#4A4D5E', fontSize: 9 }}>No matches for current filter</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
+
+          {/* Load Distribution (bins are clickable) */}
+          <div style={{ ...cardS, flex: 1, minHeight: 0 }}>
+            <div style={headS}>
+              <div style={titleS}>Load Distribution</div>
+              <span style={{ fontSize: 9, color: '#4A4D5E' }}>Click a bin to filter similar days</span>
+            </div>
+            <div style={{ flex: 1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 4, overflow: 'auto' }}>
+              {bins.length === 0 ? (
+                <div style={{ color: '#4A4D5E', fontSize: 10, textAlign: 'center', padding: '20px 0' }}>No data</div>
+              ) : bins.map((b, i) => {
+                const isActiveBin = activeBin === i;
+                return (
+                  <button key={b.label} onClick={() => setActiveBin(isActiveBin ? null : i)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, background: isActiveBin ? '#F0782508' : 'transparent', border: `1px solid ${isActiveBin ? '#F0782540' : 'transparent'}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', transition: 'all 0.12s' }}>
+                    <div style={{ fontSize: 9, color: isActiveBin ? '#F07825' : '#6B7186', width: 34, textAlign: 'right', flexShrink: 0 }}>{b.label}</div>
+                    <div style={{ flex: 1, height: 14, background: '#1A191E', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(b.count / maxBin) * 100}%`, background: isActiveBin ? '#F07825' : 'linear-gradient(90deg,#F0782550,#F07825)', borderRadius: 3 }} />
+                    </div>
+                    <div style={{ fontSize: 9, color: isActiveBin ? '#F07825' : '#A0A5B8', width: 22, textAlign: 'right', flexShrink: 0, fontWeight: isActiveBin ? 700 : 400 }}>{b.count}</div>
+                  </button>
+                );
+              })}
+              {validLoads.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, padding: '8px 4px 0', borderTop: '1px solid #2A292F' }}>
+                  {[['Q1', q1, '#5B9FE4'], ['Median', median, '#FBBF24'], ['Q3', q3, '#C084FC']].map(([l, v, c]) => (
+                    <div key={l} style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 8, color: '#4A4D5E' }}>{l}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: c }}>{fmtN(v, 0)}</div>
+                      <div style={{ fontSize: 8, color: '#4A4D5E' }}>MW</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Error Diagnostics (click for explanation) */}
+          <div style={cardS}>
+            <div style={headS}>
+              <div style={titleS}>Error Diagnostics</div>
+              <span style={{ fontSize: 9, color: '#4A4D5E' }}>Click to explain</span>
+            </div>
+            <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {[
+                { label: 'MAPE', value: mapeVal, unit: '%', color: mapeVal!=null&&mapeVal<3?'#34D399':mapeVal!=null&&mapeVal<6?'#FBBF24':'#F87171', fmt: v => v.toFixed(2) },
+                { label: 'MAE',  value: maeVal,  unit: 'MW', color: '#5B9FE4', fmt: v => fmtN(v, 0) },
+                { label: 'RMSE', value: rmseVal, unit: 'MW', color: '#C084FC', fmt: v => fmtN(v, 0) },
+                { label: 'Bias', value: biasVal, unit: 'MW', color: biasVal!=null&&Math.abs(biasVal)<50?'#34D399':'#FBBF24', fmt: v => `${v>0?'+':''}${fmtN(v,0)}` },
+              ].map(e => {
+                const isExpanded = activeError === e.label;
+                return (
+                  <div key={e.label}>
+                    <button onClick={() => setActiveError(isExpanded ? null : e.label)}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: isExpanded ? '#ffffff04' : 'transparent', border: `1px solid ${isExpanded ? '#2A292F' : 'transparent'}`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', transition: 'all 0.12s' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 3, height: 14, borderRadius: 2, background: e.value != null ? e.color : '#2A292F' }} />
+                        <span style={{ fontSize: 9, color: isExpanded ? '#ECEEF3' : '#6B7186', letterSpacing: 0.8, fontFamily: 'inherit' }}>{e.label}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: e.value!=null ? e.color : '#2A292F', fontFamily: 'inherit' }}>{e.value!=null ? e.fmt(e.value) : '--'}</span>
+                        <span style={{ fontSize: 8, color: '#4A4D5E', fontFamily: 'inherit' }}>{e.unit}</span>
+                        <span style={{ fontSize: 9, color: '#4A4D5E', marginLeft: 4, fontFamily: 'inherit' }}>{isExpanded ? '▲' : '▾'}</span>
+                      </div>
+                    </button>
+                    {isExpanded && (
+                      <div style={{ padding: '6px 10px 8px 21px', fontSize: 9, color: '#A0A5B8', lineHeight: 1.7, borderBottom: '1px solid #2A292F18' }}>
+                        {errorInfo[e.label]}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {errorPairs.length === 0 && <div style={{ fontSize: 9, color: '#4A4D5E', textAlign: 'center', padding: '6px 0' }}>Baseline required for error metrics</div>}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* ── TABBED STATISTICS ── */}
+      <div style={cardS}>
+        <div style={headS}>
+          <div style={titleS}>Descriptive Statistics</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[['central','Central Tendency'],['spread','Spread'],['ramp','Ramp & Shape'],['perf','Performance']].map(([id, label]) => (
+              <button key={id} onClick={() => setStatTab(id)} style={tabBtn(statTab === id)}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 0 }}>
+          {(statGroups[statTab] || []).map(([label, val, unit, color, hint], i) => (
+            <div key={label} style={{ padding: '14px 16px', borderRight: i % 6 !== 5 ? '1px solid #2A292F22' : 'none', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ fontSize: 8, color: '#4A4D5E', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 5 }}>
+                <span style={{ fontSize: 18, fontWeight: 700, color }}>{val}</span>
+                {unit && <span style={{ fontSize: 8, color: '#4A4D5E' }}>{unit}</span>}
+              </div>
+              <div style={{ fontSize: 8, color: '#4A4D5E', lineHeight: 1.5 }}>{hint}</div>
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: `${color}20` }} />
+            </div>
+          ))}
+        </div>
+
+        {/* Ramp top-events (only in ramp tab) */}
+        {statTab === 'ramp' && topRamps.length > 0 && (
+          <div style={{ padding: '10px 16px 14px', borderTop: '1px solid #2A292F' }}>
+            <div style={{ fontSize: 8, color: '#4A4D5E', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>Top 5 Ramp Events</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {topRamps.map((r, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, background: r.v > 0 ? '#F8717118' : '#34D39918', border: `1px solid ${r.v>0?'#F8717133':'#34D39933'}` }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: r.v>0?'#F87171':'#34D399' }}>{r.v>0?'+':''}{fmtN(r.v,0)}</span>
+                  <span style={{ fontSize: 8, color: '#6B7186' }}>MW at {r.t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+    </main>
+  );
+}
+
+export default function App({ authUser, onLogout }) {
   const weatherComponentSliders = useSimulatorStore((s) => s.weatherComponentSliders);
   const setWeatherComponentSlider = useSimulatorStore((s) => s.setWeatherComponentSlider);
   const loadFromFileData = useSimulatorStore((s) => s.loadFromFileData);
@@ -1131,7 +1569,9 @@ export default function App() {
   const [initPhase, setInitPhase] = useState('idle'); // 'idle'|'config'|'data'|'ready'|'training'|'done'
   const [trainingProgress, setTrainingProgress] = useState([]);
   const forecastWorkerRef = useRef(null);
+  const [horizon, setHorizon] = useState('t1');
   const [dayAhead, setDayAhead] = useState(null);
+  const [dayAheadT2, setDayAheadT2] = useState(null);
   const [live, setLive] = useState(null);
   const [liveT2, setLiveT2] = useState(null);
   const [actualBlocks, setActualBlocks] = useState(0);
@@ -1200,6 +1640,8 @@ export default function App() {
   };
 
   const effectiveDate = date || config?.latest_date || dayAhead?.metadata?.effective_date || '';
+  const t2Date = liveT2?.t2_date || '';
+
   const detectedSeason = useMemo(() => detectSeason(effectiveDate), [effectiveDate]);
   const liveEffectiveDate = config?.partial_latest_date || effectiveDate;
   const inferredDayType = dayType(effectiveDate).toLowerCase();
@@ -1319,6 +1761,24 @@ export default function App() {
         axios.post(API_URL('/v2/analysis'), { date: d, region: regionToUse }, { timeout: 15000 })
           .then(r => { if (r.data && !r.data.error) setAnalysis(r.data); })
           .catch(e => console.warn('analysis failed:', e?.message)),
+
+        // ── T+2 forecast — fetch on startup so the toggle is ready on any tab ──
+        axios.post(API_URL('/v2/forecast/t2'), {
+          date: d, region: regionToUse, baseline_days: bl,
+        }, { timeout: 180000 })
+          .then(r => {
+            setLiveT2(r.data);
+            const t2DateVal = r.data?.t2_date;
+            if (t2DateVal && regionToUse) {
+              axios.post(API_URL('/v2/dayahead'), {
+                date: t2DateVal, baseline_days: bl,
+                calendar_config: calendarConfig, region: regionToUse,
+              }, { timeout: FORECAST_REQUEST_TIMEOUT_MS })
+                .then(r2 => setDayAheadT2(r2.data))
+                .catch(() => {});
+            }
+          })
+          .catch(e => console.warn('T+2 startup fetch failed:', e?.message)),
       ]);
 
       // ── Phase 3: UI is now fully rendered with all prepared data ──────────
@@ -1550,7 +2010,20 @@ export default function App() {
         }
       }
       if (t2Res.status === 'fulfilled') {
-        setLiveT2(t2Res.value.data);
+        const t2Data = t2Res.value.data;
+        setLiveT2(t2Data);
+        // Fetch day-ahead analysis for the T+2 date so weather/analysis pages have full data
+        const t2DateVal = t2Data?.t2_date;
+        if (t2DateVal && selectedRegion) {
+          axios.post(API_URL('/v2/dayahead'), {
+            date: t2DateVal,
+            baseline_days: baselineDays,
+            calendar_config: calendarConfig,
+            region: selectedRegion,
+          }, { timeout: FORECAST_REQUEST_TIMEOUT_MS })
+            .then(r => setDayAheadT2(r.data))
+            .catch(e => console.warn('[T+2 dayahead] fetch failed:', e?.message));
+        }
       }
     } finally {
       setLoading(false);
@@ -1631,12 +2104,8 @@ export default function App() {
   }, [active, date, baselineDays, initPhase]);
 
   useEffect(() => {
-    if (active === 'forecast') {
-      // Live data might need more frequent updates, but for tab switching, we can cache.
-      // Only fetch if we don't have live data yet.
-      if (!live) {
-        fetchLive();
-      }
+    if ((active === 'forecast' || active === 'load_analysis') && !live) {
+      fetchLive();
     }
   }, [active]);
 
@@ -2726,6 +3195,15 @@ export default function App() {
           })}
         </div>
         <div className="sidebar-bottom">
+          {authUser && (
+            <div
+              className="sidebar-btn"
+              style={{ fontSize: 9, color: 'var(--muted)', textAlign: 'center', cursor: 'default', lineHeight: 1.2, padding: '4px 2px' }}
+              title={authUser.email}
+            >
+              {authUser.username.slice(0, 6)}
+            </div>
+          )}
           <button
             className={`sidebar-btn ${active === 'settings' ? 'active' : ''}`}
             onClick={() => setActive('settings')}
@@ -2733,6 +3211,15 @@ export default function App() {
             title="Settings"
           >
             <Settings size={18} />
+          </button>
+          <button
+            className="sidebar-btn"
+            onClick={onLogout}
+            data-tooltip="Sign Out"
+            title={`Sign out (${authUser?.username || ''})`}
+            style={{ color: 'var(--muted)' }}
+          >
+            <LogOut size={18} />
           </button>
         </div>
       </nav>
@@ -2849,6 +3336,10 @@ export default function App() {
             liveData={live}
             dayAheadData={dayAhead}
             apiUrl={API_URL}
+            horizon={horizon}
+            setHorizon={setHorizon}
+            t2Date={t2Date}
+            liveT2={liveT2}
           />
         </Suspense>
       )}
@@ -2862,6 +3353,10 @@ export default function App() {
               dayAheadSeries={dayAheadSeries}
               liveData={live}
               selectedRegion={selectedRegion}
+              horizon={horizon}
+              setHorizon={setHorizon}
+              t2Date={t2Date}
+              dayAheadT2={dayAheadT2}
             />
           </Suspense>
         )
@@ -2889,7 +3384,15 @@ export default function App() {
 
       {active === 'analysis' && (
         <Suspense fallback={<ViewLoading label="Loading analysis..." />}>
-          <AnalysisPage effectiveDate={effectiveDate} dayAheadData={dayAhead} liveForecastData={live} />
+          <AnalysisPage
+            effectiveDate={effectiveDate}
+            dayAheadData={dayAhead}
+            liveForecastData={live}
+            horizon={horizon}
+            setHorizon={setHorizon}
+            t2Date={t2Date}
+            dayAheadT2={dayAheadT2}
+          />
         </Suspense>
       )}
 
@@ -2951,116 +3454,15 @@ export default function App() {
 
       {/* Simulator and Analysis handled above */}
 
-      {
-        active === 'monitor' && (
-          <main className="page page-full">
-            <section className="hero">
-              <div>
-                <h1>Model Performance Monitor</h1>
-                <p>Daily accuracy scorecard, drift detection, and operator annotations</p>
-              </div>
-            </section>
-
-            <div className="grid grid-cols-4 gap-4 mt-4">
-              <div className="glass-panel p-4">
-                <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">30-Day MAPE</div>
-                <div className="text-2xl font-bold text-[var(--accent)]">
-                  {live?.metadata?.mape_live ? `${live.metadata.mape_live.toFixed(1)}%` : '--'}
-                </div>
-              </div>
-              <div className="glass-panel p-4">
-                <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">Model Version</div>
-                <div className="text-lg font-bold">v3.0-additive</div>
-                <div className="text-[10px] text-[var(--muted)]">Hybrid Additive Model</div>
-              </div>
-              <div className="glass-panel p-4">
-                <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">Last Retrain</div>
-                <div className="text-lg font-bold text-[var(--warning)]">--</div>
-                <div className="text-[10px] text-[var(--muted)]">Auto-retrain on Sundays</div>
-              </div>
-              <div className="glass-panel p-4">
-                <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">Drift Status</div>
-                <div className="text-lg font-bold text-[var(--success)]">Stable</div>
-                <div className="text-[10px] text-[var(--muted)]">No degradation detected</div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mt-4">
-              <div className="glass-panel p-4">
-                <div className="panel-header mb-3">
-                  <h3>Accuracy by Segment</h3>
-                  <span>Performance breakdown by day type and weather regime</span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  {['Weekday', 'Weekend', 'Holiday', 'Hot', 'Cold', 'Monsoon'].map((seg, idx) => (
-                    <div key={seg} className="flex justify-between items-center text-xs">
-                      <span>{seg}</span>
-                      <div className="flex items-center gap-2">
-                        <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div className="h-full bg-[var(--accent)] rounded-full" style={{ width: `${MONITOR_PLACEHOLDER_WIDTHS[idx]}%` }} />
-                        </div>
-                        <span className="text-[var(--muted)] w-12 text-right">--</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-[10px] text-[var(--muted)] mt-3 italic">Run /api/v2/backtest to populate real metrics</div>
-              </div>
-
-              <div className="glass-panel p-4">
-                <div className="panel-header mb-3">
-                  <h3>Operator Annotations</h3>
-                  <span>Tag days with special events or notes</span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Add note for today..."
-                      className="flex-1 bg-white/5 border border-[var(--outline)] rounded-lg p-2 text-xs text-white"
-                    />
-                    <button className="primary-btn text-xs px-3">Save</button>
-                  </div>
-                  <div className="flex gap-1 flex-wrap">
-                    {['Outage', 'Festival', 'Fog', 'Industrial Shutdown', 'IPL Match'].map((tag) => (
-                      <button key={tag} className="text-[9px] px-2 py-1 rounded-full bg-white/5 border border-[var(--outline)] text-[var(--muted)] hover:bg-white/10 transition-colors">
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="glass-panel p-4 mt-4">
-              <div className="panel-header mb-3">
-                <h3>Recalibration Schedule</h3>
-                <span>Seasonal recalibration at season transitions</span>
-              </div>
-              <div className="grid grid-cols-4 gap-4">
-                {[
-                  { season: 'Summer', month: 'March', status: 'upcoming' },
-                  { season: 'Monsoon', month: 'June', status: 'pending' },
-                  { season: 'Post-Monsoon', month: 'September', status: 'pending' },
-                  { season: 'Winter', month: 'December', status: 'pending' },
-                ].map((cal) => (
-                  <div key={cal.season} className={`p-3 rounded-lg ${cal.status === 'upcoming' ? 'bg-yellow-500/10 border border-[var(--warning)]' : 'bg-white/5'}`}>
-                    <div className="text-xs font-bold">{cal.season}</div>
-                    <div className="text-[10px] text-[var(--muted)]">{cal.month}</div>
-                    <div className={`text-[9px] mt-1 ${cal.status === 'upcoming' ? 'text-[var(--warning)]' : 'text-[var(--muted)]'}`}>
-                      {cal.status === 'upcoming' ? 'Due Soon' : 'Scheduled'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </main>
-        )
-      }
+      {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} />}
 
       {active === 'similar_days' && (
         <Suspense fallback={<ViewLoading label="Loading Similar Days..." />}>
-          <SimilarDaysPage />
+          <SimilarDaysPage
+            horizon={horizon}
+            setHorizon={setHorizon}
+            t2Date={t2Date}
+          />
         </Suspense>
       )}
 
