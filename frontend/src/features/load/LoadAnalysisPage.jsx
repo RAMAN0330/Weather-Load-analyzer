@@ -1,7 +1,7 @@
 import axios from 'axios';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import HorizonToggle from '../../components/HorizonToggle';
+
 
 const fmt = (v, d = 1) => (
   v == null || !Number.isFinite(v)
@@ -47,14 +47,14 @@ const S = {
     boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
   },
   cardTitle: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: 700,
-    letterSpacing: 1.2,
-    color: '#A0A5B8',
+    letterSpacing: 0.6,
+    color: '#B8BDCC',
     textTransform: 'uppercase',
   },
   badge: (color) => ({
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: 700,
     padding: '4px 10px',
     borderRadius: 999,
@@ -63,20 +63,21 @@ const S = {
     border: `1px solid ${color}33`,
   }),
   th: {
-    fontSize: 9,
-    color: '#6B7186',
+    fontSize: 11,
+    color: '#8A90A6',
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
     padding: '10px 12px',
     borderBottom: '1px solid #2A292F',
     textAlign: 'right',
     fontWeight: 600,
   },
   td: {
-    fontSize: 11,
+    fontSize: 13,
     padding: '10px 12px',
     borderBottom: '1px solid rgba(42, 41, 47, 0.7)',
     textAlign: 'right',
+    color: '#F0F2F8',
   },
   tabBar: {
     display: 'inline-flex',
@@ -89,14 +90,14 @@ const S = {
   },
   tab: (active) => ({
     padding: '7px 14px',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
     border: '1px solid transparent',
     fontFamily: 'inherit',
     borderRadius: 999,
     background: active ? 'rgba(240, 120, 37, 0.14)' : 'transparent',
-    color: active ? '#F07825' : '#A0A5B8',
+    color: active ? '#F07825' : '#B8BDCC',
     transition: 'all 0.15s ease',
   }),
   actionBtn: (active) => ({
@@ -116,36 +117,36 @@ const S = {
     transition: 'all 0.15s ease',
   }),
   miniLabel: {
-    fontSize: 8,
-    letterSpacing: 1.1,
+    fontSize: 11,
+    letterSpacing: 0.5,
     textTransform: 'uppercase',
-    color: '#6B7186',
+    color: '#8A90A6',
   },
 };
 
 const ecBase = () => ({
   backgroundColor: 'transparent',
-  textStyle: { color: '#A0A5B8', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 },
+  textStyle: { color: '#B8BDCC', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 },
   grid: { top: 36, right: 20, bottom: 36, left: 55 },
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#1A191E',
     borderColor: '#2A292F',
     borderWidth: 1,
-    textStyle: { color: '#ECEEF3', fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" },
+    textStyle: { color: '#F0F2F8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
     confine: true,
   },
-  legend: { textStyle: { color: '#A0A5B8', fontSize: 9 }, top: 4, right: 8, itemWidth: 12, itemHeight: 3 },
+  legend: { textStyle: { color: '#B8BDCC', fontSize: 12 }, top: 4, right: 8, itemWidth: 12, itemHeight: 3 },
   xAxis: {
     type: 'category',
     axisLine: { lineStyle: { color: '#2A292F' } },
-    axisLabel: { color: '#6B7186', fontSize: 9 },
+    axisLabel: { color: '#8A90A6', fontSize: 11 },
     splitLine: { show: false },
   },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
-    axisLabel: { color: '#6B7186', fontSize: 9 },
+    axisLabel: { color: '#8A90A6', fontSize: 11 },
     splitLine: { lineStyle: { color: '#2A292F', type: 'dashed', opacity: 0.3 } },
   },
 });
@@ -175,8 +176,8 @@ const KpiCard = ({ eyebrow, title, value, unit, tone = '#ECEEF3', detail, footer
       </div>
     </div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {detail ? <div style={{ fontSize: 10, color: '#ECEEF3' }}>{detail}</div> : null}
-      {footer ? <div style={{ fontSize: 9, color: '#6B7186' }}>{footer}</div> : null}
+      {detail ? <div style={{ fontSize: 12, color: '#F0F2F8' }}>{detail}</div> : null}
+      {footer ? <div style={{ fontSize: 11, color: '#8A90A6' }}>{footer}</div> : null}
     </div>
   </div>
 );
@@ -211,11 +212,11 @@ export default function LoadAnalysisPage({
   useEffect(() => {
     if (benchmarkData || selfBenchmark || selfFetching || !effectiveDate) return;
     setSelfFetching(true);
-    axios.post('/api/v2/load_benchmarks', { date: effectiveDate })
+    axios.post(apiUrl('/v2/load_benchmarks'), { date: effectiveDate })
       .then(res => setSelfBenchmark(res.data))
       .catch(e => console.warn('load_benchmarks self-fetch failed:', e?.message))
       .finally(() => setSelfFetching(false));
-  }, [effectiveDate, benchmarkData, selfBenchmark, selfFetching]);
+  }, [effectiveDate, benchmarkData, selfBenchmark, selfFetching, apiUrl]);
 
   const resolvedBenchmark = benchmarkData || selfBenchmark;
 
@@ -487,7 +488,7 @@ export default function LoadAnalysisPage({
             data: [{
               type: 'max',
               symbolSize: 30,
-              label: { formatter: (p) => `${fmt(p.value, 0)}`, fontSize: 9, color: '#F07825', fontWeight: 700 },
+              label: { formatter: (p) => `${fmt(p.value, 0)}`, fontSize: 12, color: '#F07825', fontWeight: 700 },
             }],
             itemStyle: { color: '#F07825' },
           },
@@ -497,7 +498,7 @@ export default function LoadAnalysisPage({
             data: [{
               xAxis: blockToTime(nowBlk + 1),
               lineStyle: { color: '#F87171', type: 'dashed', width: 1 },
-              label: { formatter: 'NOW', fontSize: 8, color: '#F87171' },
+              label: { formatter: 'NOW', fontSize: 12, color: '#F87171' },
             }],
           },
         },
@@ -565,7 +566,7 @@ export default function LoadAnalysisPage({
             {
               coord: [0, sortedLoad[0]],
               symbolSize: 20,
-              label: { formatter: `Peak\n${fmt(sortedLoad[0], 0)}`, fontSize: 8, color: '#F87171' },
+              label: { formatter: `Peak\n${fmt(sortedLoad[0], 0)}`, fontSize: 12, color: '#F87171' },
               itemStyle: { color: '#F87171' },
             },
             {
@@ -576,7 +577,7 @@ export default function LoadAnalysisPage({
               symbolSize: 16,
               label: {
                 formatter: `P50\n${fmt(sortedLoad[Math.floor(sortedLoad.length * 0.5)], 0)}`,
-                fontSize: 8,
+                fontSize: 12,
                 color: '#FBBF24',
               },
               itemStyle: { color: '#FBBF24' },
@@ -754,19 +755,19 @@ export default function LoadAnalysisPage({
               <strong style={{ fontSize: 22, color: '#F07825' }}>
                 {peakShiftBlocks == null ? '--' : `${peakShiftBlocks > 0 ? '+' : ''}${peakShiftBlocks}`}
               </strong>
-              <span style={{ fontSize: 9, color: '#6B7186' }}>15-min blocks vs yesterday</span>
+              <span style={{ fontSize: 12, color: '#8A90A6' }}>15-min blocks vs yesterday</span>
             </div>
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Largest block delta</span>
               <strong style={{ fontSize: 22, color: '#F87171' }}>{fmt(absDeviation[maxDevBlock], 0)} MW</strong>
-              <span style={{ fontSize: 9, color: '#6B7186' }}>
+              <span style={{ fontSize: 12, color: '#8A90A6' }}>
                 {maxDevBlock >= 0 ? `Around ${blockToTime(maxDevBlock + 1)}` : 'Not available'}
               </span>
             </div>
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Ramp spread</span>
               <strong style={{ fontSize: 22, color: '#34D399' }}>{fmt(maxRampUp - maxRampDown, 0)} MW</strong>
-              <span style={{ fontSize: 9, color: '#6B7186' }}>Intraday movement envelope</span>
+              <span style={{ fontSize: 12, color: '#8A90A6' }}>Intraday movement envelope</span>
             </div>
           </div>
           <div style={{ ...S.card, borderRadius: 14 }}>
@@ -842,7 +843,7 @@ export default function LoadAnalysisPage({
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#ECEEF3' }}>{item.date}</div>
-                <div style={{ fontSize: 9, color: '#6B7186', marginTop: 4 }}>{item.day_type || 'Historical day pattern'}</div>
+                <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 4 }}>{item.day_type || 'Historical day pattern'}</div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <div style={{ width: 92, height: 8, background: '#2A292F', borderRadius: 999, overflow: 'hidden' }}>
@@ -883,7 +884,7 @@ export default function LoadAnalysisPage({
             <div key={row.l} style={{ ...S.card, padding: '14px 16px', gap: 6, borderRadius: 14 }}>
               <span style={S.miniLabel}>{row.l}</span>
               <strong style={{ fontSize: 21, color: row.c, lineHeight: 1.15 }}>{row.v}</strong>
-              <span style={{ fontSize: 9, color: '#6B7186' }}>
+              <span style={{ fontSize: 12, color: '#8A90A6' }}>
                 {row.l === 'Peak Hour' ? 'Shape anchor for intraday operations' : 'Fingerprint trait for today'}
               </span>
             </div>
@@ -908,15 +909,7 @@ export default function LoadAnalysisPage({
 
   return (
     <div style={S.page}>
-      {/* ─── HORIZON TOGGLE ─── */}
-      {setHorizon && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 0', flexShrink: 0 }}>
-          <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: 'uppercase' }}>
-            Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${effectiveDate}`}</strong>
-          </span>
-          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
-        </div>
-      )}
+
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
           <div style={{ fontSize: 16, marginBottom: 6 }}>
@@ -953,7 +946,7 @@ export default function LoadAnalysisPage({
                     <div style={S.cardTitle}>Hourly Load vs Yesterday</div>
                     <div style={{ fontSize: 10, color: '#6B7186', whiteSpace: 'nowrap' }}>Fast hourly heatbar to spot where the shape drifted.</div>
                   </div>
-                  <div style={{ display: 'flex', gap: 12, fontSize: 9, color: '#6B7186' }}>
+                  <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#8A90A6' }}>
                     <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#34D399', marginRight: 4 }} />Lower</span>
                     <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#F87171', marginRight: 4 }} />Higher</span>
                   </div>
@@ -1068,7 +1061,7 @@ export default function LoadAnalysisPage({
                         >
                           <span style={S.miniLabel}>{active ? 'Close overlay' : 'Quick panel'}</span>
                           <span style={{ fontSize: 11, fontWeight: 700 }}>{panel.label}</span>
-                          <span style={{ fontSize: 9, color: active ? '#F5B17D' : '#6B7186' }}>{meta}</span>
+                          <span style={{ fontSize: 12, color: active ? '#F5B17D' : '#8A90A6' }}>{meta}</span>
                         </button>
                       );
                     })}

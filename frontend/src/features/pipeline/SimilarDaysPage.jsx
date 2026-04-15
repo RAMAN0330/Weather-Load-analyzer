@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import ReactECharts from 'echarts-for-react'
 import { Loader2 } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   DB_STATES,
   fetchPipelineWeather,
@@ -17,19 +18,19 @@ const DARK_TOOLTIP = {
   backgroundColor: 'rgba(20,19,26,0.95)',
   borderColor: 'rgba(255,255,255,0.1)',
   borderWidth: 1,
-  textStyle: { color: '#ECEEF3', fontSize: 12 },
+  textStyle: { color: '#F0F2F8', fontSize: 13 },
 }
 
 const DARK_LEGEND = {
   type: 'scroll', bottom: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8,
-  textStyle: { fontSize: 11, color: '#A0A5B8' },
+  textStyle: { fontSize: 12, color: '#B8BDCC' },
 }
 
 const DARK_AXIS = {
-  axisLine: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
+  axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } },
   axisTick: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
-  axisLabel: { color: '#A0A5B8' },
-  splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)', type: 'dashed' } },
+  axisLabel: { color: '#B8BDCC', fontSize: 12 },
+  splitLine: { lineStyle: { color: 'rgba(255,255,255,0.07)', type: 'dashed' } },
 }
 
 const DAY_BADGE_COLOR = { working: '#34D399', sunday: '#FBBF24', holiday: '#F87171' }
@@ -45,14 +46,14 @@ const S = {
     display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', flexShrink: 0,
     borderBottom: '1px solid var(--outline)', background: 'var(--bg-elevated)', flexWrap: 'wrap',
   },
-  label: { fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' },
+  label: { fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' },
   input: {
     background: 'var(--bg-surface)', color: 'var(--text)', border: '1px solid var(--outline)',
-    borderRadius: 6, padding: '4px 8px', fontSize: 12,
+    borderRadius: 6, padding: '4px 8px', fontSize: 13,
   },
   btn: {
     background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6,
-    padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    padding: '5px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   btnDisabled: { opacity: 0.5, cursor: 'not-allowed' },
   body: { display: 'flex', flex: 1, overflow: 'hidden', gap: 0 },
@@ -62,19 +63,19 @@ const S = {
   },
   right: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   panelTitle: {
-    padding: '8px 12px', fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
-    textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid var(--outline)',
+    padding: '8px 12px', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)',
+    textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--outline)',
     background: 'var(--bg-elevated)', flexShrink: 0,
   },
   tableWrap: { flex: 1, overflow: 'auto', padding: '8px 12px' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
   th: {
     padding: '6px 8px', textAlign: 'left', borderBottom: '1px solid var(--outline)',
-    color: 'var(--text-secondary)', fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap',
+    color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
   },
-  td: { padding: '5px 8px', borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text)' },
+  td: { padding: '5px 8px', borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text)', fontSize: 13 },
   badge: (cat) => ({
-    display: 'inline-block', padding: '1px 6px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+    display: 'inline-block', padding: '2px 7px', borderRadius: 10, fontSize: 11, fontWeight: 600,
     background: (DAY_BADGE_COLOR[cat] || '#aaa') + '22',
     color: DAY_BADGE_COLOR[cat] || '#aaa',
     border: `1px solid ${(DAY_BADGE_COLOR[cat] || '#aaa')}55`,
@@ -84,7 +85,7 @@ const S = {
     padding: '0 12px', flexShrink: 0,
   },
   tab: (active) => ({
-    padding: '8px 14px', fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+    padding: '8px 14px', fontSize: 13, fontWeight: active ? 700 : 500, cursor: 'pointer',
     background: 'none', border: 'none', borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
     color: active ? 'var(--accent)' : 'var(--text-secondary)', transition: 'all 0.15s',
   }),
@@ -93,7 +94,7 @@ const S = {
     flex: 1, background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--outline)',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
-  chartTitle: { padding: '10px 14px', fontSize: 12, fontWeight: 600, color: 'var(--text)', borderBottom: '1px solid var(--outline)', flexShrink: 0 },
+  chartTitle: { padding: '10px 14px', fontSize: 13, fontWeight: 600, color: 'var(--text)', borderBottom: '1px solid var(--outline)', flexShrink: 0 },
   empty: { display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-secondary)', fontSize: 13 },
   metricsRow: {
     display: 'flex', gap: 8, padding: '8px 12px', flexShrink: 0, borderBottom: '1px solid var(--outline)',
@@ -103,11 +104,43 @@ const S = {
     flex: 1, background: 'var(--bg-surface)', borderRadius: 8, padding: '8px 10px',
     borderTop: `2px solid ${color}`, minWidth: 0,
   }),
-  metricLabel: { fontSize: 10, color: 'var(--text-secondary)', marginBottom: 2 },
+  metricLabel: { fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 },
   metricValue: { fontSize: 16, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
 
-export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) {
+const SIMILAR_ROW_H = 36
+const LOAD_ROW_H    = 32
+
+function VirtualTable({ rows, columns, rowHeight, maxHeight, renderRow, keyFn }) {
+  const parentRef = useRef(null)
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 5,
+  })
+  const totalH = virtualizer.getTotalSize()
+  const items  = virtualizer.getVirtualItems()
+
+  return (
+    <div ref={parentRef} style={{ maxHeight, overflowY: 'auto', position: 'relative' }}>
+      <div style={{ height: totalH, width: '100%', position: 'relative' }}>
+        {items.map(vi => (
+          <div
+            key={keyFn(rows[vi.index], vi.index)}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)` }}
+          >
+            {renderRow(rows[vi.index], vi.index)}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1Forecast = [] }) {
   const [dbState, setDbState] = useState('HARYANA')
   const [targetDate, setTargetDate] = useState('')
   const [method, setMethod] = useState('euclidean')
@@ -201,9 +234,9 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) 
         { type: 'category', data: xData, gridIndex: 2, boundaryGap: false, name: 'Block', ...axisStyle },
       ],
       yAxis: [
-        { type: 'value', name: 'Temp (°C)', gridIndex: 0, nameTextStyle: { fontSize: 10, color: '#A0A5B8' }, ...axisStyle },
-        { type: 'value', name: 'Humidity (%)', gridIndex: 1, nameTextStyle: { fontSize: 10, color: '#A0A5B8' }, ...axisStyle },
-        { type: 'value', name: 'Precip (mm)', gridIndex: 2, nameTextStyle: { fontSize: 10, color: '#A0A5B8' }, ...axisStyle },
+        { type: 'value', name: 'Temp (°C)', gridIndex: 0, nameTextStyle: { fontSize: 12, color: '#B8BDCC' }, ...axisStyle },
+        { type: 'value', name: 'Humidity (%)', gridIndex: 1, nameTextStyle: { fontSize: 12, color: '#B8BDCC' }, ...axisStyle },
+        { type: 'value', name: 'Precip (mm)', gridIndex: 2, nameTextStyle: { fontSize: 12, color: '#B8BDCC' }, ...axisStyle },
       ],
       series: [...makeSeries('temp', 0, 0), ...makeSeries('humidity', 1, 1), ...makeSeries('precip', 2, 2)],
     }
@@ -214,15 +247,24 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) 
     const allDates = [result.target_date, ...selectedSimilar]
     const series = allDates.map((d, i) => {
       const isTarget = d === result.target_date
-      const dd = loadData.filter(r => r.date === d).sort((a, b) => (a.time_block || 0) - (b.time_block || 0))
+      let data = []
+      
+      if (isTarget && horizon === 't2' && t1Forecast?.length) {
+        data = t1Forecast
+      } else {
+        const dd = loadData.filter(r => r.date === d).sort((a, b) => (a.time_block || 0) - (b.time_block || 0))
+        data = dd.map(r => r.load !== undefined ? Number(r.load) : null)
+      }
+
       return {
-        name: isTarget ? `${d} (target)` : d, type: 'line', smooth: true, symbolSize: 0,
-        data: dd.map(r => r.load !== undefined ? Number(r.load) : null),
+        name: isTarget ? (horizon === 't2' ? `${d} (T+1 Forecast)` : `${d} (target)`) : d,
+        type: 'line', smooth: true, symbolSize: 0,
+        data,
         lineStyle: { width: isTarget ? 3 : 1.5, color: isTarget ? '#F87171' : COLORS[i % COLORS.length], type: isTarget ? 'solid' : 'dashed' },
         itemStyle: { color: isTarget ? '#F87171' : COLORS[i % COLORS.length] },
       }
     })
-    const maxLen = Math.max(...allDates.map(d => loadData.filter(r => r.date === d).length), 1)
+    const maxLen = Math.max(96, ...allDates.map(d => loadData.filter(r => r.date === d).length))
     return {
       backgroundColor: 'transparent',
       color: COLORS,
@@ -230,14 +272,17 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) 
       legend: DARK_LEGEND,
       grid: { top: 46, right: 24, bottom: 64, left: 56, containLabel: true },
       xAxis: { type: 'category', data: Array.from({ length: maxLen }, (_, i) => i + 1), boundaryGap: false, name: 'Block', ...DARK_AXIS },
-      yAxis: { type: 'value', name: 'MW', nameTextStyle: { color: '#A0A5B8' }, ...DARK_AXIS },
+      yAxis: { type: 'value', name: 'MW', nameTextStyle: { color: '#B8BDCC', fontSize: 12 }, ...DARK_AXIS },
       series,
     }
-  }, [result, selectedSimilar, loadData])
+  }, [result, selectedSimilar, loadData, horizon, t1Forecast])
 
   const loadChangeTable = useMemo(() => {
-    if (!result || !loadData.length) return []
+    if (!result) return []
     const getAvg = d => {
+      if (d === result.target_date && horizon === 't2' && t1Forecast?.length) {
+        return t1Forecast.reduce((a, b) => a + (Number(b) || 0), 0) / t1Forecast.length
+      }
       const vals = loadData.filter(r => r.date === d).map(r => Number(r.load)).filter(x => !isNaN(x))
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
     }
@@ -247,7 +292,7 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date }) 
       const pct = targetAvg && simAvg ? ((simAvg - targetAvg) / targetAvg * 100).toFixed(1) : null
       return { ...r, avg: simAvg ? simAvg.toFixed(1) : '—', pct }
     })
-  }, [result, loadData])
+  }, [result, loadData, horizon, t1Forecast])
 
   const uniqueWeatherDates = useMemo(() => [...new Set(weatherData.map(r => r.date).filter(Boolean))], [weatherData])
   const bestMatch = result?.similar?.[0]

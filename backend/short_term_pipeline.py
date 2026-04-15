@@ -1226,9 +1226,42 @@ def _compute_similarity_profile_from_data(df: pd.DataFrame, target_date: str, cf
         out["diagnostics"] = {"reason": "too_few_days", "days": int(len(daily))}
         return out
 
-    temp_signal = abs(_safe_corr(daily["temp_mean"].to_numpy(dtype=float), daily["load_sum"].to_numpy(dtype=float)))
-    hum_signal = abs(_safe_corr(daily["hum_mean"].to_numpy(dtype=float), daily["load_sum"].to_numpy(dtype=float)))
-    rain_signal = abs(_safe_corr(daily["rain_any"].to_numpy(dtype=float), daily["load_sum"].to_numpy(dtype=float)))
+    # ── Full-day correlations ─────────────────────────────────────────────────
+    temp_signal_all = abs(_safe_corr(daily["temp_mean"].to_numpy(dtype=float), daily["load_sum"].to_numpy(dtype=float)))
+    hum_signal_all  = abs(_safe_corr(daily["hum_mean"].to_numpy(dtype=float),  daily["load_sum"].to_numpy(dtype=float)))
+    rain_signal_all = abs(_safe_corr(daily["rain_any"].to_numpy(dtype=float),  daily["load_sum"].to_numpy(dtype=float)))
+
+    # ── Peak-block correlations (blocks 33–72 by default, updated dynamically) ─
+    # Weather drives peak-hour load more than off-peak; compute correlations
+    # on peak-block load only to get a sharper signal for similarity matching.
+    _peak_s = int(cfg.get("forecast_shrinkage", {}).get("peak_start_block", 33) if isinstance(cfg.get("forecast_shrinkage"), dict) else 33)
+    _peak_e = int(cfg.get("forecast_shrinkage", {}).get("peak_end_block", 72)   if isinstance(cfg.get("forecast_shrinkage"), dict) else 72)
+    try:
+        peak_hist = hist[hist["time_block"].between(_peak_s, _peak_e)] if "time_block" in hist.columns else hist
+        peak_daily = (
+            peak_hist.groupby("date")
+            .agg(
+                temp_mean=("temperature", "mean"),
+                hum_mean=("humidity", "mean"),
+                rain_any=("precipitation", lambda x: float((x.fillna(0) > 0).any())),
+                load_sum=("total_drawal", "sum"),
+            )
+            .reset_index()
+            .dropna(subset=["load_sum"])
+        )
+        if len(peak_daily) >= 10:
+            temp_signal_pk = abs(_safe_corr(peak_daily["temp_mean"].to_numpy(dtype=float), peak_daily["load_sum"].to_numpy(dtype=float)))
+            hum_signal_pk  = abs(_safe_corr(peak_daily["hum_mean"].to_numpy(dtype=float),  peak_daily["load_sum"].to_numpy(dtype=float)))
+            rain_signal_pk = abs(_safe_corr(peak_daily["rain_any"].to_numpy(dtype=float),  peak_daily["load_sum"].to_numpy(dtype=float)))
+            # Blend full-day and peak-block signals: 40% full-day + 60% peak
+            temp_signal = 0.40 * temp_signal_all + 0.60 * temp_signal_pk
+            hum_signal  = 0.40 * hum_signal_all  + 0.60 * hum_signal_pk
+            rain_signal = 0.40 * rain_signal_all  + 0.60 * rain_signal_pk
+        else:
+            temp_signal, hum_signal, rain_signal = temp_signal_all, hum_signal_all, rain_signal_all
+    except Exception:
+        temp_signal, hum_signal, rain_signal = temp_signal_all, hum_signal_all, rain_signal_all
+
     data_vec = np.array([temp_signal, hum_signal, rain_signal], dtype=float)
 
     prior_blend = float(np.clip(float(cfg.get("similarity_weight_prior_blend", 0.35)), 0.0, 1.0))
@@ -1610,6 +1643,22 @@ def _normalize_block_vector(values: Any, length: int = _BLOCK_COUNT, fill_value:
         vec = np.pad(vec, (0, length - vec.size), mode="constant", constant_values=pad_value)
     elif vec.size > length:
         vec = vec[:length]
+    return _fill_nonfinite_vector(vec, fill_value=fill_value)
+
+
+def _fill_nonfinite_vector(values: Any, fill_value: float = 0.0) -> np.ndarray:
+    """Return a finite vector, interpolating isolated NaN/inf gaps when possible."""
+    vec = np.asarray(values if values is not None else [], dtype=float).reshape(-1).copy()
+    if vec.size == 0:
+        return vec.astype(float, copy=False)
+    finite = np.isfinite(vec)
+    if finite.all():
+        return vec.astype(float, copy=False)
+    if finite.any():
+        idx = np.arange(vec.size, dtype=float)
+        vec[~finite] = np.interp(idx[~finite], idx[finite], vec[finite])
+    else:
+        vec[:] = float(fill_value)
     return vec.astype(float, copy=False)
 
 
@@ -1864,9 +1913,17 @@ def _best_baseline_window(df: pd.DataFrame, target_date: str, candidates: List[i
         tgt_weather = None
         target_weather_delta = 0.0
 
+    # Identify synthetic rows (forecast stand-ins, not real actuals) — exclude
+    # them as validation targets for MAPE since their "actuals" are the forecast.
+    _synthetic_dates: set = set()
+    if "_is_synthetic" in df.columns:
+        _synthetic_dates = set(df[df["_is_synthetic"] == 1]["date"].astype(str).unique())
+
     for w in candidates:
         errors = []
         for d in recent:
+            if d in _synthetic_dates:
+                continue  # skip — "actual" is a forecast value, not real
             di = history.index(d)
             start = max(0, di - w)
             window_days = history[start:di]
@@ -1912,6 +1969,14 @@ def _similar_day_baseline(df: pd.DataFrame, target_date: str, cfg: Dict) -> Tupl
     if not candidates:
         candidates = dates[:idx]
 
+    # Exclude synthetic/forecast-stand-in days from the similar-day candidate pool.
+    # Their load values are forecasts, not real observations, so they would corrupt
+    # the baseline shape.  They stay in df so the pipeline can see prior-day level
+    # for trend/boundary corrections, but must not feed the baseline averages.
+    if "_is_synthetic" in df.columns:
+        _synth_set = set(df[df["_is_synthetic"] == 1]["date"].astype(str).unique())
+        candidates = [d for d in candidates if d not in _synth_set]
+
     target_df = df[df["date"] == target_date]
     target_season = target_df["season"].iloc[0] if not target_df.empty else "unknown"
     
@@ -1956,33 +2021,57 @@ def _similar_day_baseline(df: pd.DataFrame, target_date: str, cfg: Dict) -> Tupl
         baseline = target_df.sort_values("time_block")["total_drawal"].to_numpy()
         return baseline, summary
 
+    weather_signal_available = True
+    if not np.isfinite(float(target_temp)) or not np.isfinite(float(target_hum)):
+        weather_signal_available = False
+    for _wc in ["temp_mean", "hum_mean", "cdd_mean", "hdd_mean", "rain_any"]:
+        if _wc in summary.columns:
+            summary[_wc] = pd.to_numeric(summary[_wc], errors="coerce")
+    if "temp_mean" in summary.columns and not summary["temp_mean"].notna().any():
+        weather_signal_available = False
+    if "hum_mean" in summary.columns and not summary["hum_mean"].notna().any():
+        weather_signal_available = False
+
     summary["same_season"] = summary["season"].eq(target_season)
     summary["same_day_type"] = summary["day_type"].eq(target_day_type)
-    summary["temp_diff"] = (summary["temp_mean"] - target_temp).abs()
-    summary["hum_diff"] = (summary["hum_mean"] - target_hum).abs()
-    summary["degree_day_diff"] = (summary["cdd_mean"] - target_cdd).abs() + (summary["hdd_mean"] - target_hdd).abs()
-    summary["rain_match"] = summary["rain_any"].astype(bool).eq(bool(target_rain))
+    if weather_signal_available:
+        summary["temp_diff"] = (summary["temp_mean"] - target_temp).abs()
+        summary["hum_diff"] = (summary["hum_mean"] - target_hum).abs()
+        summary["degree_day_diff"] = (summary["cdd_mean"] - target_cdd).abs() + (summary["hdd_mean"] - target_hdd).abs()
+        summary["rain_match"] = summary["rain_any"].astype(bool).eq(bool(target_rain))
+    else:
+        # If weather is missing in the local file, do not let NaN weather scores
+        # push selection to arbitrary old dates. Fall back to calendar + recency.
+        summary["temp_diff"] = 0.0
+        summary["hum_diff"] = 0.0
+        summary["degree_day_diff"] = 0.0
+        summary["rain_match"] = True
 
     filtered = summary[summary["same_season"] & summary["same_day_type"]]
-    if cfg.get("require_rain_match", True):
+    if weather_signal_available and cfg.get("require_rain_match", True):
         filtered = filtered[filtered["rain_match"]]
-    filtered = filtered[filtered["temp_diff"] <= temp_band]
+    if weather_signal_available:
+        filtered = filtered[filtered["temp_diff"] <= temp_band]
 
     # Progressive fallback: relax temp band if too few candidates (v3.0)
     if len(filtered) < 5:
         relaxed = summary[summary["same_season"] & summary["same_day_type"]]
-        if cfg.get("require_rain_match", True):
+        if weather_signal_available and cfg.get("require_rain_match", True):
             relaxed = relaxed[relaxed["rain_match"]]
-        relaxed = relaxed[relaxed["temp_diff"] <= temp_band + 1.0]
+        if weather_signal_available:
+            relaxed = relaxed[relaxed["temp_diff"] <= temp_band + 1.0]
         if len(relaxed) >= len(filtered):
             filtered = relaxed
     if len(filtered) < 3:
         relaxed2 = summary[summary["same_season"] & summary["same_day_type"]]
-        relaxed2 = relaxed2[relaxed2["temp_diff"] <= temp_band + 2.0]
+        if weather_signal_available:
+            relaxed2 = relaxed2[relaxed2["temp_diff"] <= temp_band + 2.0]
         if len(relaxed2) >= len(filtered):
             filtered = relaxed2
     if filtered.empty:
         filtered = summary.copy()
+    else:
+        filtered = filtered.copy()
 
     temp_norm = filtered["temp_diff"] / max(temp_band, 1e-3)
     hum_norm = filtered["hum_diff"] / max(hum_band, 1e-3)
@@ -1995,8 +2084,13 @@ def _similar_day_baseline(df: pd.DataFrame, target_date: str, cfg: Dict) -> Tupl
     w_rain = cfg["similarity_weights"]["rain"]
 
     filtered["similarity_score"] = w_temp * temp_norm + w_dd * dd_norm + w_hum * hum_norm + w_rain * rain_penalty
+    filtered["similarity_score"] = (
+        pd.to_numeric(filtered["similarity_score"], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0 if not weather_signal_available else 1e6)
+    )
 
-    filtered = filtered.sort_values("similarity_score").head(cfg["similar_days_top_n"])
+    filtered = filtered.sort_values(["similarity_score", "date"], ascending=[True, False]).head(cfg["similar_days_top_n"])
     selected_dates = filtered["date"].tolist()
     if not selected_dates:
         selected_dates = candidates[-1:]
@@ -2295,8 +2389,12 @@ def _weather_baseline(
 def _compute_weather_deviation(target_df: pd.DataFrame, baseline_df: pd.DataFrame) -> float:
     if target_df.empty or baseline_df.empty:
         return 0.0
-    tgt = target_df["temperature"].mean()
-    base = baseline_df["temperature"].mean()
+    if "temperature" not in target_df.columns or "temperature" not in baseline_df.columns:
+        return 0.0
+    tgt = float(pd.to_numeric(target_df["temperature"], errors="coerce").mean())
+    base = float(pd.to_numeric(baseline_df["temperature"], errors="coerce").mean())
+    if not np.isfinite(tgt) or not np.isfinite(base):
+        return 0.0
     return float(abs(tgt - base))
 
 
@@ -2512,19 +2610,21 @@ def _fit_trend(blocks: np.ndarray, residuals: np.ndarray, degree: int, eval_bloc
 
 def _as_96_vector(values: Any, fallback: Optional[np.ndarray] = None) -> np.ndarray:
     default = np.zeros(_BLOCK_COUNT, dtype=float) if fallback is None else np.asarray(fallback, dtype=float)
+    default = _fill_nonfinite_vector(default, fill_value=0.0)
     arr = np.asarray(values if values is not None else default, dtype=float).reshape(-1)
     if arr.size == _BLOCK_COUNT:
-        return arr
+        return _fill_nonfinite_vector(arr, fill_value=float(default[-1]) if default.size else 0.0)
     if arr.size == 0:
         return default.copy()
     if arr.size == 1:
-        return np.full(_BLOCK_COUNT, float(arr[0]), dtype=float)
+        scalar = float(arr[0]) if np.isfinite(float(arr[0])) else float(default[-1] if default.size else 0.0)
+        return np.full(_BLOCK_COUNT, scalar, dtype=float)
     out = np.zeros(_BLOCK_COUNT, dtype=float)
     n = min(_BLOCK_COUNT, arr.size)
     out[:n] = arr[:n]
     if n < _BLOCK_COUNT:
         out[n:] = out[n - 1]
-    return out
+    return _fill_nonfinite_vector(out, fill_value=float(default[-1]) if default.size else 0.0)
 
 
 def _selection_mask(selection: Optional[Dict[str, Any]]) -> np.ndarray:
@@ -3750,6 +3850,90 @@ def _recommended_action(primary_feature: str, risk_flag: str, net_impact_pct: fl
     return "No action required."
 
 
+def _detect_peak_blocks(
+    df: pd.DataFrame,
+    target_date: str,
+    lookback_days: int = 30,
+    percentile_threshold: float = 75.0,
+    min_peak_width: int = 8,
+) -> Tuple[int, int]:
+    """
+    Dynamically detect the peak-load window from historical data.
+
+    Steps:
+    1. Take up to `lookback_days` of same-season history before target_date.
+    2. Compute median load per time_block across those days.
+    3. Mark blocks above the `percentile_threshold`-th percentile of the
+       median profile as "peak".
+    4. Find the longest contiguous run of peak blocks; return its
+       1-based (start, end) inclusive of at least `min_peak_width` blocks.
+    5. Falls back to (33, 72) if data is insufficient.
+
+    Returns (peak_start_block, peak_end_block) — 1-based, inclusive end.
+    """
+    _fallback = (33, 72)
+    try:
+        work = df.copy()
+        work["date"] = work["date"].astype(str)
+        if target_date:
+            work = work[work["date"] < str(target_date)]
+        if "total_drawal" not in work.columns or "time_block" not in work.columns:
+            return _fallback
+
+        # Same-season filter using _season helper
+        try:
+            tgt_season = _season(target_date)
+            work["_season"] = work["date"].apply(_season)
+            work = work[work["_season"] == tgt_season]
+        except Exception:
+            pass
+
+        # Limit to lookback window
+        available_dates = sorted(work["date"].dropna().unique().tolist())
+        if not available_dates:
+            return _fallback
+        keep = set(available_dates[-int(lookback_days):])
+        work = work[work["date"].isin(keep)]
+
+        work["time_block"] = pd.to_numeric(work["time_block"], errors="coerce")
+        work = work.dropna(subset=["time_block", "total_drawal"])
+        work = work[work["time_block"].between(1, _BLOCK_COUNT)]
+        if len(work["date"].unique()) < 3:
+            return _fallback
+
+        # Median load profile across history days
+        median_profile = (
+            work.groupby("time_block")["total_drawal"]
+            .median()
+            .reindex(range(1, _BLOCK_COUNT + 1))
+            .ffill()
+            .bfill()
+            .to_numpy(dtype=float)
+        )
+
+        threshold = float(np.percentile(median_profile, percentile_threshold))
+        is_peak = median_profile >= threshold  # boolean mask, 0-indexed
+
+        # Find longest contiguous True run
+        best_start, best_end, cur_start = 0, 0, None
+        for i in range(len(is_peak)):
+            if is_peak[i]:
+                if cur_start is None:
+                    cur_start = i
+                if (i - cur_start + 1) > (best_end - best_start):
+                    best_start, best_end = cur_start, i + 1
+            else:
+                cur_start = None
+
+        if (best_end - best_start) < min_peak_width:
+            return _fallback
+
+        # Convert 0-indexed → 1-based block numbers
+        return int(best_start + 1), int(best_end)
+    except Exception:
+        return _fallback
+
+
 def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: int = 40, config: Optional[Dict] = None) -> Dict:
     import time as _time
     _t0 = _time.monotonic()
@@ -3808,6 +3992,28 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         cfg["similarity_weights"] = _normalize_similarity_weights(similarity_profile.get("weights", {}))
         if bool(cfg.get("auto_require_rain_match", True)):
             cfg["require_rain_match"] = bool(similarity_profile.get("require_rain_match", True))
+
+    # ── Dynamic peak window detection ─────────────────────────────────────────
+    # Override the static peak_start/peak_end from config with a data-driven
+    # estimate so the shrinkage weighting tracks the actual peak zone each day.
+    if bool(cfg.get("auto_detect_peak_blocks", True)):
+        _dyn_start, _dyn_end = _detect_peak_blocks(
+            df,
+            target_date,
+            lookback_days=int(cfg.get("peak_detection_lookback_days", 30)),
+            percentile_threshold=float(cfg.get("peak_detection_percentile", 75.0)),
+            min_peak_width=int(cfg.get("peak_detection_min_width", 8)),
+        )
+        _shrink = cfg.setdefault("forecast_shrinkage", {})
+        if not isinstance(_shrink, dict):
+            _shrink = {}
+            cfg["forecast_shrinkage"] = _shrink
+        _shrink["peak_start_block"] = _dyn_start
+        _shrink["peak_end_block"] = _dyn_end
+        logger.info(
+            "[pipeline:%s] dynamic peak window: blocks %d–%d",
+            target_date, _dyn_start, _dyn_end,
+        )
 
     _step("2/7 selecting best baseline window...")
     best_window, best_mape = _best_baseline_window(
@@ -3935,8 +4141,11 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         )
         def _safe_delta(col):
             if col in target_block_weather.columns and col in base_block_weather.columns:
-                return (target_block_weather[col] - base_block_weather[col]).to_numpy()
-            return np.zeros(96)
+                return _fill_nonfinite_vector(
+                    (target_block_weather[col] - base_block_weather[col]).to_numpy(dtype=float),
+                    fill_value=0.0,
+                )
+            return np.zeros(96, dtype=float)
         temp_delta = _safe_delta("temperature")
         hum_delta = _safe_delta("humidity")
         rain_delta = _safe_delta("precipitation")
@@ -4066,8 +4275,13 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     all_dates = sorted(df["date"].dropna().unique().tolist())
     target_idx = all_dates.index(target_date) if target_date in all_dates else len(all_dates) - 1
     lookback_60 = all_dates[max(0, target_idx - 60):target_idx]
+    _synth_dates_trend: set = set()
+    if "_is_synthetic" in df.columns:
+        _synth_dates_trend = set(df[df["_is_synthetic"] == 1]["date"].astype(str).unique())
     day_residuals_60 = []
     for d in lookback_60:
+        if d in _synth_dates_trend:
+            continue  # synthetic load is a forecast — skip for residual trend fit
         day_vals = df[df["date"] == d].sort_values("time_block")["total_drawal"].to_numpy()
         if len(day_vals) == 96 and np.mean(day_vals) > 100:
             day_residuals_60.append(float(np.mean(day_vals - safe_baseline)))
@@ -4170,12 +4384,14 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 if "temperature" in target_df.columns:
                     _t = target_df.sort_values("time_block")["temperature"].to_numpy()
                     if len(_t) > 0:
-                        _avg_temp = float(np.nanmean(_t))
+                        _t = _fill_nonfinite_vector(_t, fill_value=_avg_temp)
+                        _avg_temp = float(np.mean(_t)) if np.isfinite(_t).any() else 25.0
                         _block_temps = _t if len(_t) == 96 else None
                 if "humidity" in target_df.columns:
                     _h = target_df["humidity"].to_numpy()
                     if len(_h) > 0:
-                        _avg_hum = float(np.nanmean(_h))
+                        _h = _fill_nonfinite_vector(_h, fill_value=_avg_hum)
+                        _avg_hum = float(np.mean(_h)) if np.isfinite(_h).any() else 50.0
             india_result = compute_india_adjustments(
                 state=india_region,
                 target_date=str(target_date),
@@ -4959,29 +5175,82 @@ def run_t2_pipeline(
 
     # ── Step 2: Build T+1 synthetic row using forecasted load as history ─────
     #   Weather columns are kept from the real T+1 day (they already exist in df).
+    #   Mark as synthetic so baseline window MAPE backtest and similar-day candidate
+    #   selection skip this row — its "actuals" are the forecast, not real data.
     t1_synthetic = _build_synthetic_forecast_day(
         template_df=t1_rows,
         target_date=t1_date,
         forecast=t1_forecast,
         zero_actuals=False,
     )
+    t1_synthetic["_is_synthetic"] = 1
 
     # ── Step 3: Build T+2 rows — use DB weather if available ─────────────────
     dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
 
+    # Infer region from df if not explicitly passed
+    _region = region
+    if not _region and "state" in df.columns:
+        _region = str(df["state"].dropna().iloc[0]) if not df["state"].dropna().empty else None
+    if not _region and "region" in df.columns:
+        _region = str(df["region"].dropna().iloc[0]) if not df["region"].dropna().empty else None
+
     # Fetch real T+2 weather from MySQL via Django API
     t2_weather_df = None
-    if region:
-        t2_weather_df = _fetch_t2_weather_from_db(t2_date, region)
+    _t2_wx_log = logging.getLogger(__name__)
+    if _region:
+        t2_weather_df = _fetch_t2_weather_from_db(t2_date, _region)
         if t2_weather_df is not None:
-            logging.getLogger(__name__).info(
+            _t2_wx_log.info(
                 "[T+2] Fetched %d weather blocks for %s %s from DB",
-                len(t2_weather_df), region, t2_date,
+                len(t2_weather_df), _region, t2_date,
             )
         else:
-            logging.getLogger(__name__).warning(
-                "[T+2] No DB weather for %s %s — using T+1 weather as proxy", region, t2_date,
+            # DB fetch failed — build a smarter proxy from historical same-weekday
+            # same-season averages rather than copying T+1 verbatim.
+            _t2_wx_log.warning(
+                "[T+2] No DB weather for %s %s — building climatological proxy",
+                _region, t2_date,
             )
+            try:
+                _t2_dt_obj = pd.Timestamp(t2_date)
+                _wx_cols = [c for c in [
+                    "temperature", "humidity", "precipitation",
+                    "apparent_temperature", "cloud_cover", "wind_speed_10m",
+                ] if c in df.columns]
+                if _wx_cols and "time_block" in df.columns:
+                    _hist_wx = df.copy()
+                    _hist_wx["date"] = _hist_wx["date"].astype(str)
+                    _hist_wx = _hist_wx[_hist_wx["date"] < t2_date]
+                    # Same season + same weekday (±1 day) for last 60 days
+                    try:
+                        _hist_wx["_season"] = _hist_wx["date"].apply(_season)
+                        _hist_wx = _hist_wx[_hist_wx["_season"] == _season(t2_date)]
+                    except Exception:
+                        pass
+                    _hist_wx_dates = sorted(_hist_wx["date"].dropna().unique().tolist())
+                    _hist_wx = _hist_wx[_hist_wx["date"].isin(set(_hist_wx_dates[-60:]))]
+                    _hist_wx["_dow"] = pd.to_datetime(_hist_wx["date"], errors="coerce").dt.dayofweek
+                    _target_dow = int(_t2_dt_obj.dayofweek)
+                    _same_dow = _hist_wx[_hist_wx["_dow"].isin([(_target_dow - 1) % 7, _target_dow, (_target_dow + 1) % 7])]
+                    if len(_same_dow["date"].unique()) >= 3:
+                        _hist_wx = _same_dow
+                    proxy_wx = (
+                        _hist_wx.groupby("time_block")[_wx_cols]
+                        .mean()
+                        .reindex(range(1, 97))
+                        .ffill()
+                        .bfill()
+                        .reset_index()
+                        .rename(columns={"index": "time_block"})
+                    )
+                    proxy_wx["date"] = t2_date
+                    t2_weather_df = proxy_wx
+                    _t2_wx_log.info("[T+2] Climatological proxy built from %d history days", len(_hist_wx["date"].unique()))
+            except Exception as _px_err:
+                _t2_wx_log.warning("[T+2] Proxy weather build failed: %s — T+1 weather will be copied", _px_err)
+    else:
+        _t2_wx_log.warning("[T+2] region unknown — skipping DB weather fetch for %s", t2_date)
 
     if t2_date in dates_in_df:
         # T+2 already in df — use it but override weather with fresh DB data
@@ -4989,7 +5258,7 @@ def run_t2_pipeline(
         if t2_weather_df is not None:
             t2_rows = _inject_weather_into_rows(t2_rows, t2_weather_df)
     else:
-        # T+2 not in df — synthesise from T+1 template, then inject DB weather
+        # T+2 not in df — synthesise from T+1 template, then inject DB/proxy weather
         t2_rows = _build_synthetic_forecast_day(
             template_df=t1_rows,
             target_date=t2_date,
@@ -5014,9 +5283,16 @@ def run_t2_pipeline(
 
     result_series = result.get("series", {}) if isinstance(result, dict) else {}
     t2_forecast = _normalize_block_vector(result_series.get("forecast"), length=_BLOCK_COUNT, fill_value=0.0)
+    # Use a weighted average of the last few T+1 blocks as the seam anchor
+    # to avoid propagating single-block noise into T+2.
+    _seam_tail = int(np.clip(int(seam_cfg.get("anchor_tail_blocks", 4)), 1, min(12, _BLOCK_COUNT)))
+    _tail_slice = t1_forecast[-_seam_tail:]
+    _tail_weights = np.exp(np.linspace(0.0, 1.0, len(_tail_slice)))  # exponential recency weighting
+    _tail_weights /= _tail_weights.sum()
+    _seam_anchor = float(np.dot(_tail_weights, _tail_slice))
     t2_adjusted, seam_gap_before, seam_gap_after = _apply_seam_continuity(
         forecast=t2_forecast,
-        previous_terminal_mw=float(t1_forecast[-1]),
+        previous_terminal_mw=_seam_anchor,
         window=seam_window,
     )
 
@@ -5026,11 +5302,18 @@ def run_t2_pipeline(
             result_series["final_load"] = t2_adjusted.tolist()
         if "hybrid_ai_forecast" in result_series:
             result_series["hybrid_ai_forecast"] = t2_adjusted.tolist()
+        
+        # Inject T+1 forecast as "yesterday" for UI comparison
+        result_series["yesterday"] = t1_forecast.tolist()
 
     if isinstance(result.get("forecast_df"), list):
         for idx, row in enumerate(result["forecast_df"][:_BLOCK_COUNT]):
             if isinstance(row, dict):
                 row["forecast"] = float(t2_adjusted[idx])
+                row["forecast_mw"] = float(t2_adjusted[idx])
+                row["final_load"] = float(t2_adjusted[idx])
+                # Also inject into the tabular view
+                row["yesterday"] = float(t1_forecast[idx])
 
     metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
     if isinstance(metadata, dict):

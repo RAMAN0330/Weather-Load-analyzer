@@ -1,410 +1,458 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Eye, EyeOff, Lock, Mail, User, Zap, BarChart3, CloudRain, TrendingUp, Shield, Cpu } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Activity, Eye, EyeOff, Lock, Mail, User, Zap, BarChart3, CloudRain, TrendingUp, Cpu, Shield, ArrowRight } from 'lucide-react';
 import { useAuthStore } from './authStore';
 
-/* ─── tokens ───────────────────────────────────────────────── */
-const T = {
-  bg:       '#08070C',
-  card:     '#111018',
-  surface:  '#18161F',
-  border:   '#222029',
-  borderHi: '#2E2B38',
-  accent:   '#F07825',
-  accent2:  '#5B9FE4',
-  green:    '#34D399',
-  purple:   '#C084FC',
-  text:     '#ECEEF3',
-  sub:      '#9096AE',
-  muted:    '#525666',
-  danger:   '#F87171',
-  font:     "'IBM Plex Mono','Cascadia Code',monospace",
+/* ─── tokens ─────────────────────────────────────────────────── */
+const C = {
+  bg:      '#09090E',
+  panel:   '#0E0E15',
+  card:    '#12121A',
+  surf:    '#17171F',
+  b0:      '#1E1E28',
+  b1:      '#28283A',
+  accent:  '#F07825',
+  blue:    '#5B9FE4',
+  green:   '#3DD68C',
+  purple:  '#9B7FE8',
+  yellow:  '#F5C147',
+  text:    '#EDEEF2',
+  sub:     '#7E849A',
+  dim:     '#44465A',
+  danger:  '#E05555',
+  sans:    "'Plus Jakarta Sans', sans-serif",
+  mono:    "'SF Mono','Fira Code',monospace",
 };
 
-/* ─── animated sparkline SVG ──────────────────────────────── */
-function SparkLine({ color = T.accent, h = 40, animated = false }) {
-  const pts = [8,28,18,35,12,38,22,20,30,32,18,42,28,15,38,30,22,10,35,28,18];
-  const max = Math.max(...pts), min = Math.min(...pts);
-  const norm = pts.map(v => h - ((v - min) / (max - min)) * (h - 8) - 4);
-  const w = 140;
+/* ─── sparkline ──────────────────────────────────────────────── */
+function Spark({ color, w = 96, h = 34 }) {
+  const pts = [10, 22, 15, 28, 11, 32, 20, 16, 25, 22, 17, 30, 21, 12, 27, 22, 18, 26];
+  const mx = Math.max(...pts), mn = Math.min(...pts);
+  const ys = pts.map(v => h - 4 - ((v - mn) / (mx - mn)) * (h - 10));
   const xs = pts.map((_, i) => (i / (pts.length - 1)) * w);
-  const d = norm.map((y, i) => `${i === 0 ? 'M' : 'L'}${xs[i].toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const fill = `${d} L${w},${h} L0,${h} Z`;
+  const line = ys.map((y, i) => `${i ? 'L' : 'M'}${xs[i].toFixed(1)} ${y.toFixed(1)}`).join(' ');
+  const area = `${line} L${w} ${h} L0 ${h} Z`;
+  const id = `sp${color.replace('#', '')}`;
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible', flexShrink: 0 }}>
       <defs>
-        <linearGradient id={`sg${color.replace('#','')}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity=".22" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={fill} fill={`url(#sg${color.replace('#','')})`} />
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-        style={animated ? { strokeDasharray: 400, strokeDashoffset: 0, animation: 'drawLine 2.5s ease forwards' } : {}} />
-      <circle cx={xs[xs.length - 1]} cy={norm[norm.length - 1]} r="3" fill={color}
-        style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+      <path d={area} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xs.at(-1)} cy={ys.at(-1)} r="3" fill={color} />
     </svg>
   );
 }
 
-/* ─── glowing metric card ─────────────────────────────────── */
-function MetricCard({ label, value, sub, color, icon: Icon, spark }) {
+/* ─── metric tile ────────────────────────────────────────────── */
+function Tile({ icon: Icon, label, value, note, color, spark }) {
   return (
     <div style={{
-      background: `linear-gradient(135deg, rgba(255,255,255,0.025), rgba(255,255,255,0.01))`,
-      border: `1px solid ${T.border}`,
-      borderRadius: 14, padding: '16px 18px',
-      display: 'flex', flexDirection: 'column', gap: 10,
-      position: 'relative', overflow: 'hidden',
-      transition: 'border-color .2s',
+      background: 'rgba(23, 23, 31, 0.4)',
+      backdropFilter: 'blur(8px)',
+      border: `1px solid rgba(255, 255, 255, 0.04)`,
+      borderRadius: 16,
+      padding: '18px 20px',
+      display: 'flex', flexDirection: 'column', gap: 12,
+      transition: 'transform .2s ease',
     }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: `linear-gradient(90deg, transparent, ${color}50, transparent)` }} />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 7, background: `${color}18`, border: `1px solid ${color}28`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Icon size={13} color={color} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 10,
+            background: `${color}18`, border: `1px solid ${color}22`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Icon size={14} color={color} />
           </div>
-          <span style={{ fontSize: 9, color: T.muted, letterSpacing: 1.3, textTransform: 'uppercase' }}>{label}</span>
+          <span style={{ fontSize: 10, color: C.sub, fontWeight: 600, fontFamily: C.mono, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+            {label}
+          </span>
         </div>
-        {spark && <SparkLine color={color} h={32} animated />}
+        {spark && <Spark color={color} />}
       </div>
       <div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: T.text, letterSpacing: -0.5, lineHeight: 1 }}>{value}</div>
-        {sub && <div style={{ fontSize: 9, color: T.muted, marginTop: 4, letterSpacing: 0.4 }}>{sub}</div>}
+        <div style={{ fontSize: 22, fontWeight: 700, color: C.text, letterSpacing: -0.6, lineHeight: 1 }}>{value}</div>
+        {note && <div style={{ fontSize: 11, color: C.dim, marginTop: 6, fontWeight: 500 }}>{note}</div>}
       </div>
     </div>
   );
 }
 
-/* ─── floating data badge ─────────────────────────────────── */
-function Badge({ children, color }) {
+/* ─── tag ────────────────────────────────────────────────────── */
+function Tag({ children, color }) {
   return (
     <span style={{
-      fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
-      background: `${color}18`, color, border: `1px solid ${color}30`, letterSpacing: 0.8,
-      textTransform: 'uppercase',
+      display: 'inline-flex', alignItems: 'center',
+      fontSize: 10.5, fontWeight: 700, padding: '5px 12px',
+      borderRadius: 8, background: `${color}15`,
+      color, border: `1px solid ${color}25`,
+      letterSpacing: 0.2, fontFamily: C.mono,
     }}>{children}</span>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════
-   MAIN
-═══════════════════════════════════════════════════════════ */
+/* ═════════════════════════════════════════════════════════════
+   PAGE
+   ═════════════════════════════════════════════════════════════ */
 export default function LoginPage({ onAuth }) {
-  const [mode, setMode]       = useState('login');
-  const [form, setForm]       = useState({ username: '', email: '', password: '' });
-  const [showPw, setShowPw]   = useState(false);
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
-  const [focus, setFocus]     = useState('');
-  const [tick, setTick]       = useState(0);
+  const [mode, setMode]     = useState('login');
+  const [form, setForm]     = useState({ username: '', email: '', password: '' });
+  const [showPw, setShowPw] = useState(false);
+  const [error, setError]   = useState('');
+  const [busy, setBusy]     = useState(false);
+  const [foc, setFoc]       = useState('');
+  const [tick, setTick]     = useState(0);
 
   const { login, register } = useAuthStore();
 
-  // live clock tick for the animated "live" bar
-  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1800); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1500);
+    return () => clearInterval(t);
+  }, []);
 
-  const handleChange = e => { setForm(f => ({ ...f, [e.target.name]: e.target.value })); setError(''); };
+  const onChange = e => { setForm(f => ({ ...f, [e.target.name]: e.target.value })); setError(''); };
 
-  const handleSubmit = async e => {
-    e.preventDefault(); setError(''); setLoading(true);
+  const onSubmit = async e => {
+    e.preventDefault(); setError(''); setBusy(true);
     try {
-      if (mode === 'login') { await login(form.username, form.password); }
-      else { await register(form.username, form.email, form.password); await login(form.username, form.password); }
+      if (mode === 'login') {
+        await login(form.username, form.password);
+      } else {
+        await register(form.username, form.email, form.password);
+        await login(form.username, form.password);
+      }
       onAuth();
     } catch (err) {
-      const raw = err?.response?.data?.detail;
-      setError(typeof raw === 'string' ? raw : Array.isArray(raw) ? raw.map(d => d.msg).join(', ') : 'Authentication failed.');
-    } finally { setLoading(false); }
+      const r = err?.response?.data?.detail;
+      setError(typeof r === 'string' ? r : Array.isArray(r) ? r.map(d => d.msg).join(', ') : 'Authentication failed.');
+    } finally { setBusy(false); }
   };
+
+  const bars = Array.from({ length: 22 }, (_, i) => ({
+    h: 14 + Math.sin((i + tick) * 0.68) * 13 + Math.random() * 6,
+    on: i === 21 - (tick % 5),
+  }));
 
   const inp = name => ({
     width: '100%', boxSizing: 'border-box',
-    background: T.surface,
-    border: `1px solid ${focus === name ? T.accent : T.border}`,
-    borderRadius: 10, padding: '12px 13px 12px 40px',
-    fontSize: 12, fontFamily: T.font, color: T.text, outline: 'none',
-    transition: 'border-color .15s, box-shadow .15s', letterSpacing: 0.2,
-    boxShadow: focus === name ? `0 0 0 3px rgba(240,120,37,.15)` : 'none',
+    background: 'rgba(255, 255, 255, 0.02)',
+    border: `1.5px solid ${foc === name ? C.accent : 'rgba(255, 255, 255, 0.05)'}`,
+    borderRadius: 12,
+    padding: '12px 14px 12px 42px',
+    fontSize: 14,
+    fontFamily: C.sans,
+    color: C.text,
+    outline: 'none',
+    transition: 'all .25s cubic-bezier(0.2, 0.8, 0.2, 1)',
+    boxShadow: foc === name ? `0 0 0 4px ${C.accent}15` : 'none',
+    letterSpacing: 0.1,
   });
-
-  const liveBlocks = Array.from({ length: 18 }, (_, i) => ({
-    h: 20 + Math.sin((i + tick) * 0.7) * 14 + Math.random() * 8,
-    active: i === 17 - (tick % 4),
-  }));
 
   return (
     <>
       <style>{`
-        @keyframes fadeUp   { from{opacity:0;transform:translateY(22px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes fadeLeft { from{opacity:0;transform:translateX(-18px)} to{opacity:1;transform:translateX(0)} }
-        @keyframes fadeRight{ from{opacity:0;transform:translateX(18px)} to{opacity:1;transform:translateX(0)} }
-        @keyframes pulse    { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.75)} }
-        @keyframes spin     { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        @keyframes drawLine { from{stroke-dashoffset:400} to{stroke-dashoffset:0} }
-        @keyframes scanLine { 0%{top:0%} 100%{top:100%} }
-        @keyframes shimmer  { 0%{background-position:-200% center} 100%{background-position:200% center} }
-        .vp-inp::placeholder { color:${T.muted}; }
-        .vp-inp::-webkit-input-placeholder { color:${T.muted}; }
-        .vp-btn:hover:not(:disabled){ filter:brightness(1.12); box-shadow:0 6px 28px rgba(240,120,37,.55)!important; transform:translateY(-1px); }
-        .vp-tab:hover{ color:${T.sub}!important; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        * { box-sizing: border-box; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slideL { from{opacity:0;transform:translateX(-30px)} to{opacity:1;transform:translateX(0)} }
+        @keyframes slideR { from{opacity:0;transform:translateX(30px)}  to{opacity:1;transform:translateX(0)} }
+        @keyframes blink  { 0%,100%{opacity:1} 50%{opacity:.3} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
+        .field::placeholder { color:${C.dim}; font-size:13px; opacity: 0.6; }
+        .btn-main { transition: all .3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+        .btn-main:hover:not(:disabled) { filter:brightness(1.1); transform:translateY(-2px); box-shadow:0 12px 30px ${C.accent}55 !important; }
+        .btn-main:active:not(:disabled) { transform:translateY(0); }
+        .tab-btn { position: relative; z-index: 2; transition: color .3s ease; }
+        .anim-item { animation: fadeIn .6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+        .grid-mask { mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black 30%, transparent 100%); }
       `}</style>
 
-      <div style={{ position:'fixed', inset:0, background:T.bg, display:'flex', fontFamily:T.font, color:T.text, overflow:'hidden' }}>
+      <div style={{
+        position: 'fixed', inset: 0,
+        background: C.bg,
+        display: 'flex',
+        fontFamily: "'Plus Jakarta Sans', sans-serif",
+        color: C.text,
+        overflow: 'hidden',
+      }}>
 
-        {/* grid */}
-        <div style={{ position:'absolute', inset:0, pointerEvents:'none',
-          backgroundImage:`linear-gradient(to right,rgba(240,120,37,.06) 1px,transparent 1px),linear-gradient(to bottom,rgba(240,120,37,.06) 1px,transparent 1px)`,
-          backgroundSize:'52px 52px' }} />
+        {/* ── backgrounds ── */}
+        <div className="grid-mask" style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: `linear-gradient(${C.b0}77 1.5px,transparent 1.5px),linear-gradient(90deg,${C.b0}77 1.5px,transparent 1.5px)`,
+          backgroundSize: '56px 56px',
+        }} />
 
-        {/* radial glow top-center */}
-        <div style={{ position:'absolute', top:'-15%', left:'30%', width:700, height:700, borderRadius:'50%',
-          background:'radial-gradient(circle,rgba(240,120,37,.07) 0%,transparent 60%)', pointerEvents:'none' }} />
-        <div style={{ position:'absolute', bottom:'-12%', right:'5%', width:500, height:500, borderRadius:'50%',
-          background:'radial-gradient(circle,rgba(91,159,228,.055) 0%,transparent 60%)', pointerEvents:'none' }} />
+        <div style={{ position:'absolute', top:'-15%', left:'-10%', width:'50%', height:'50%', borderRadius:'50%', background:`radial-gradient(circle,${C.accent}0D 0%,transparent 70%)`, pointerEvents:'none', filter:'blur(60px)' }} />
+        <div style={{ position:'absolute', bottom:'-15%', right:'-5%', width:'45%', height:'45%', borderRadius:'50%', background:`radial-gradient(circle,${C.blue}0A 0%,transparent 70%)`, pointerEvents:'none', filter:'blur(60px)' }} />
 
-        {/* scan line */}
-        <div style={{ position:'absolute', left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,rgba(240,120,37,.18),transparent)',
-          animation:'scanLine 8s linear infinite', pointerEvents:'none', zIndex:0 }} />
-
-        {/* ══════════════════════════════════════
-            LEFT — brand + data showcase
-        ══════════════════════════════════════ */}
+        {/* ════════════════════════
+            LEFT SECTION
+        ════════════════════════ */}
         <div style={{
-          flex:'0 0 54%', display:'flex', flexDirection:'column', justifyContent:'center',
-          padding:'56px 68px', position:'relative', zIndex:1,
-          borderRight:`1px solid ${T.border}`,
-          animation:'fadeLeft .6s cubic-bezier(.22,1,.36,1) both',
+          flex: '0 0 52%',
+          display: 'flex', flexDirection: 'column',
+          justifyContent: 'space-between',
+          padding: '60px 80px',
+          borderRight: `1px solid rgba(255, 255, 255, 0.04)`,
+          position: 'relative', zIndex: 1,
+          animation: 'slideL .7s cubic-bezier(0.2, 0.8, 0.2, 1) both',
         }}>
 
           {/* logo */}
-          <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:52 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{
-              width:54, height:54, borderRadius:15,
-              background:`linear-gradient(145deg,rgba(240,120,37,.22),rgba(240,120,37,.06))`,
-              border:`1px solid rgba(240,120,37,.35)`,
-              display:'flex', alignItems:'center', justifyContent:'center',
-              boxShadow:`0 0 32px rgba(240,120,37,.18), inset 0 1px 0 rgba(255,255,255,.06)`,
+              width: 48, height: 48, borderRadius: 14,
+              background: `linear-gradient(135deg, ${C.accent}22, ${C.accent}11)`, border: `1px solid ${C.accent}33`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: `0 8px 16px ${C.accent}0D`,
             }}>
-              <Zap size={24} color={T.accent} />
+              <Zap size={22} color={C.accent} strokeWidth={2.5} />
             </div>
             <div>
-              <div style={{ fontSize:24, fontWeight:700, letterSpacing:-1, color:T.text, lineHeight:1 }}>VidyutPragya</div>
+              <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.5, color: '#fff' }}>VidyutPragya</div>
+              <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 600, marginTop: 1, letterSpacing: 0.2 }}>Grid Intelligence Hub</div>
             </div>
           </div>
 
           {/* headline */}
-          <div style={{ marginBottom:44 }}>
-            <div style={{ fontSize:38, fontWeight:700, lineHeight:1.15, letterSpacing:-1.5, color:T.text, marginBottom:16 }}>
-              Smarter grids.<br />
-              Sharper forecasts.<br />
+          <div style={{ maxWidth: 520 }}>
+            <h1 style={{ fontSize: 52, fontWeight: 800, lineHeight: 1.05, letterSpacing: -2.4, color: '#fff', margin: '0 0 24px' }}>
+              Precision power for<br />
               <span style={{
-                background:`linear-gradient(90deg,${T.accent},#FFB347)`,
-                WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent',
-                backgroundClip:'text',
-              }}>Zero surprises.</span>
-            </div>
-            <div style={{ fontSize:12, color:T.sub, lineHeight:1.9, maxWidth:390 }}>
-              Real-time short-term load forecasting with T+1 / T+2 horizon,
-              weather-driven analytics, and multi-state grid intelligence.
+                background: `linear-gradient(120deg, ${C.accent} 10%, #FF9F45 90%)`,
+                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+              }}>hyper-scale grids.</span>
+            </h1>
+            <p style={{ fontSize: 15, color: C.sub, lineHeight: 1.7, margin: '0 0 32px', fontWeight: 500 }}>
+              Enterprise-grade short-term load forecasting. Harness active T+1 / T+2 
+              intelligence with hybrid ML weather-recursive processing.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Tag color={C.accent}>Short-Term Ops</Tag>
+              <Tag color={C.blue}>T+2 Analytics</Tag>
+              <Tag color={C.green}>Active Monitoring</Tag>
+              <Tag color={C.purple}>Hybrid ML</Tag>
             </div>
           </div>
 
-          {/* badges row */}
-          <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:28 }}>
-            <Badge color={T.accent}>96-Block</Badge>
-            <Badge color={T.accent2}>T+1 · T+2</Badge>
-            <Badge color={T.green}>Live Ops</Badge>
-            <Badge color={T.purple}>Weather AI</Badge>
-            <Badge color="#FBBF24">Multi-State</Badge>
+          {/* metrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <Tile icon={BarChart3}  label="Mean Accuracy"  value="97.8%"    note="Last 24 hours"        color={C.accent}  spark />
+            <Tile icon={TrendingUp} label="Horizon Scale"  value="Dual View" note="T+1 / T+2 Seamless"   color={C.blue}    spark />
+            <Tile icon={CloudRain}  label="Station Feed"   value="Live"      note="12 High-res nodes"    color={C.green}   />
+            <Tile icon={Cpu}        label="Process Time"   value="< 2.4s"    note="Complete 96-block sync" color={C.purple}  />
           </div>
 
-          {/* metric cards */}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, maxWidth:430 }}>
-            <MetricCard icon={BarChart3}  label="Avg MAPE"       value="≤ 2.4%"        sub="30-day rolling"        color={T.accent}  spark />
-            <MetricCard icon={TrendingUp} label="Horizon"        value="T+1 / T+2"     sub="Day-ahead & +2"        color={T.accent2} spark />
-            <MetricCard icon={CloudRain}  label="Weather blocks" value="96 / day"       sub="15-min intraday"       color={T.green}   />
-            <MetricCard icon={Cpu}        label="ML Engine"      value="Ensemble"       sub="Hybrid AI + baseline"  color={T.purple}  />
-          </div>
-
-          {/* live mini bar chart */}
-          <div style={{ marginTop:32, display:'flex', flexDirection:'column', gap:8 }}>
-            <div style={{ fontSize:9, color:T.muted, letterSpacing:1.4, textTransform:'uppercase', display:'flex', alignItems:'center', gap:8 }}>
-              <div style={{ width:6, height:6, borderRadius:'50%', background:T.green, boxShadow:`0 0 7px ${T.green}`, animation:'pulse 2s ease-in-out infinite' }} />
-              Live load simulation
+          {/* live simulation footer */}
+          <div style={{ opacity: 0.8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: C.green, display: 'inline-block',
+                boxShadow: `0 0 10px ${C.green}`,
+                animation: 'blink 2s ease-in-out infinite',
+              }} />
+              <span style={{ fontSize: 11, color: C.dim, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: 700, fontFamily: C.mono }}>
+                Live Stream simulation
+              </span>
             </div>
-            <div style={{ display:'flex', alignItems:'flex-end', gap:2, height:46 }}>
-              {liveBlocks.map((b, i) => (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 48 }}>
+              {bars.map((b, i) => (
                 <div key={i} style={{
-                  flex:1, borderRadius:'3px 3px 0 0',
+                  flex: 1, borderRadius: '4px 4px 0 0',
                   height: b.h,
-                  background: b.active
-                    ? `linear-gradient(180deg,${T.accent},${T.accent}88)`
-                    : `rgba(255,255,255,0.07)`,
-                  boxShadow: b.active ? `0 0 8px ${T.accent}66` : 'none',
-                  transition:'height .4s ease,background .3s ease',
+                  background: b.on
+                    ? `linear-gradient(180deg, ${C.accent}, ${C.accent}33)`
+                    : 'rgba(255, 255, 255, 0.05)',
+                  transition: 'height .4s cubic-bezier(0.2, 0.8, 0.2, 1), background .3s ease',
                 }} />
               ))}
             </div>
           </div>
         </div>
 
-        {/* ══════════════════════════════════════
-            RIGHT — form panel
-        ══════════════════════════════════════ */}
+        {/* ════════════════════════
+            RIGHT SECTION
+        ════════════════════════ */}
         <div style={{
-          flex:1, display:'flex', flexDirection:'column',
-          alignItems:'center', justifyContent:'center',
-          padding:'48px 56px', position:'relative', zIndex:1,
-          animation:'fadeRight .65s cubic-bezier(.22,1,.36,1) both',
+          flex: 1,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '60px',
+          position: 'relative', zIndex: 1,
+          animation: 'slideR .75s cubic-bezier(0.2, 0.8, 0.2, 1) both',
         }}>
-          <div style={{ width:'100%', maxWidth:368 }}>
+          <div style={{ width: '100%', maxWidth: 410 }}>
 
             {/* card */}
             <div style={{
-              background:`linear-gradient(160deg, rgba(20,19,26,0.97), rgba(14,13,18,0.99))`,
-              border:`1px solid ${T.borderHi}`,
-              borderRadius:20, padding:'36px 32px',
-              boxShadow:`0 40px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,0.025) inset`,
-              position:'relative', overflow:'hidden',
+              background: 'rgba(18, 18, 26, 0.7)',
+              backdropFilter: 'blur(16px)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+              borderRadius: 28,
+              padding: '44px 40px 40px',
+              boxShadow: '0 40px 100px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.02)',
+              position: 'relative',
+              overflow: 'hidden',
             }}>
 
-              {/* top accent line */}
-              <div style={{ position:'absolute', top:0, left:0, right:0, height:2,
-                background:`linear-gradient(90deg,transparent 0%,${T.accent} 35%,${T.accent2} 65%,transparent 100%)`,
-                borderRadius:'20px 20px 0 0' }} />
-
-              {/* corner glows */}
-              <div style={{ position:'absolute', top:-40, right:-40, width:130, height:130, borderRadius:'50%',
-                background:`radial-gradient(circle,rgba(240,120,37,.1) 0%,transparent 70%)`, pointerEvents:'none' }} />
-              <div style={{ position:'absolute', bottom:-40, left:-40, width:110, height:110, borderRadius:'50%',
-                background:`radial-gradient(circle,rgba(91,159,228,.08) 0%,transparent 70%)`, pointerEvents:'none' }} />
+              {/* glow effect */}
+              <div style={{ position:'absolute', top:'-10%', right:'-10%', width:'40%', height:'40%', background:`radial-gradient(circle, ${C.accent}11 0%, transparent 70%)`, pointerEvents:'none' }} />
 
               {/* header */}
-              <div style={{ marginBottom:28, position:'relative' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                  <Shield size={14} color={T.accent} />
-                  <span style={{ fontSize:9, color:T.accent, letterSpacing:1.6, textTransform:'uppercase', fontWeight:700 }}>Secure Access</span>
+              <div style={{ marginBottom: 32, position: 'relative' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <div style={{ width: 14, height: 14, borderRadius: 4, background: `${C.accent}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Shield size={10} color={C.accent} strokeWidth={2.5} />
+                  </div>
+                  <span style={{ fontSize: 11, color: C.accent, fontWeight: 800, letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: C.mono }}>
+                    Identity Verification
+                  </span>
                 </div>
-                <div style={{ fontSize:20, fontWeight:700, letterSpacing:-0.6, color:T.text, marginBottom:5 }}>
-                  {mode === 'login' ? 'Welcome back' : 'Create account'}
-                </div>
-                <div style={{ fontSize:11, color:T.muted }}>
-                  {mode === 'login' ? 'Enter your credentials to continue' : 'Fill in the details below to register'}
-                </div>
+                <h2 style={{ fontSize: 28, fontWeight: 800, letterSpacing: -0.8, color: '#fff', lineHeight: 1.1, marginBottom: 10 }}>
+                  {mode === 'login' ? 'Access Terminal' : 'Portal Access'}
+                </h2>
+                <p style={{ fontSize: 14, color: C.sub, lineHeight: 1.5, fontWeight: 500 }}>
+                  {mode === 'login'
+                    ? 'Authenticate to enter your dashboard.'
+                    : 'Create your operator account to begin.'}
+                </p>
               </div>
 
-              {/* tab switcher */}
+              {/* tabs (sliding highlight) */}
               <div style={{
-                display:'flex', gap:3, padding:4, marginBottom:26,
-                background:'rgba(0,0,0,.4)', border:`1px solid ${T.border}`, borderRadius:12,
+                position: 'relative',
+                display: 'flex', padding: 4, marginBottom: 32,
+                background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14,
+                height: 44,
               }}>
-                {[{key:'login',label:'Sign In'},{key:'register',label:'Register'}].map(({key,label}) => (
-                  <button key={key} className="vp-tab" onClick={() => { setMode(key); setError(''); }} style={{
-                    flex:1, padding:'9px 0', borderRadius:9, fontSize:11, fontWeight:700,
-                    letterSpacing:0.4, cursor:'pointer', border:'none', fontFamily:T.font,
-                    background: mode===key ? T.accent : 'transparent',
-                    color: mode===key ? '#fff' : T.muted,
-                    boxShadow: mode===key ? `0 2px 16px rgba(240,120,37,.45)` : 'none',
-                    transition:'all .15s',
-                  }}>{label}</button>
+                <div style={{
+                  position: 'absolute', top: 4, bottom: 4, left: 4,
+                  width: 'calc(50% - 6px)',
+                  background: `linear-gradient(135deg, ${C.accent}, #D96012)`,
+                  borderRadius: 10,
+                  transform: `translateX(${mode === 'login' ? '0%' : '100%'})`,
+                  transition: 'transform .4s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                  boxShadow: `0 4px 15px ${C.accent}40`,
+                  zIndex: 1,
+                }} />
+                
+                {[['login', 'Sign In'], ['register', 'Join Portal']].map(([k, l]) => (
+                  <button key={k} className="tab-btn"
+                    onClick={() => { setMode(k); setError(''); }}
+                    style={{
+                      position: 'relative', zIndex: 2,
+                      flex: 1, height: '100%', border: 'none', background: 'none',
+                      fontSize: 13, fontWeight: 700, letterSpacing: 0.1,
+                      cursor: 'pointer', fontFamily: C.sans,
+                      color: mode === k ? '#fff' : C.sub,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>{l}</button>
                 ))}
               </div>
 
-              {/* fields */}
-              <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:15 }}>
+              {/* form */}
+              <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-                {/* username */}
-                <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                  <label style={{ fontSize:9, fontWeight:700, letterSpacing:1.4, textTransform:'uppercase', color:T.muted }}>Username</label>
-                  <div style={{ position:'relative' }}>
-                    <User size={13} style={{ position:'absolute', left:13, top:'50%', transform:'translateY(-50%)', color: focus==='username' ? T.accent : T.muted, transition:'color .15s', pointerEvents:'none' }} />
-                    <input name="username" value={form.username} onChange={handleChange}
-                      onFocus={()=>setFocus('username')} onBlur={()=>setFocus('')}
-                      required autoComplete="username" placeholder="Enter username"
-                      className="vp-inp" style={inp('username')} />
+                <div className="anim-item" style={{ animationDelay: '0.1s', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 0.3, textTransform: 'uppercase', opacity: 0.8 }}>Username</label>
+                  <div style={{ position: 'relative' }}>
+                    <User size={16} style={{ position:'absolute', left:14, top:'50%', transform:'translateY(-50%)', color: foc==='username' ? C.accent : C.dim, transition:'color .25s', pointerEvents:'none' }} />
+                    <input name="username" value={form.username} onChange={onChange}
+                      onFocus={() => setFoc('username')} onBlur={() => setFoc('')}
+                      required autoComplete="username" placeholder="Username"
+                      className="field" style={inp('username')} />
                   </div>
                 </div>
 
-                {/* email */}
                 {mode === 'register' && (
-                  <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                    <label style={{ fontSize:9, fontWeight:700, letterSpacing:1.4, textTransform:'uppercase', color:T.muted }}>Email</label>
-                    <div style={{ position:'relative' }}>
-                      <Mail size={13} style={{ position:'absolute', left:13, top:'50%', transform:'translateY(-50%)', color: focus==='email' ? T.accent : T.muted, transition:'color .15s', pointerEvents:'none' }} />
-                      <input name="email" type="email" value={form.email} onChange={handleChange}
-                        onFocus={()=>setFocus('email')} onBlur={()=>setFocus('')}
+                  <div className="anim-item" style={{ animationDelay: '0.15s', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 0.3, textTransform: 'uppercase', opacity: 0.8 }}>Email Address</label>
+                    <div style={{ position: 'relative' }}>
+                      <Mail size={16} style={{ position:'absolute', left:14, top:'50%', transform:'translateY(-50%)', color: foc==='email' ? C.accent : C.dim, transition:'color .25s', pointerEvents:'none' }} />
+                      <input name="email" type="email" value={form.email} onChange={onChange}
+                        onFocus={() => setFoc('email')} onBlur={() => setFoc('')}
                         required autoComplete="email" placeholder="you@gnacorp.in"
-                        className="vp-inp" style={inp('email')} />
+                        className="field" style={inp('email')} />
                     </div>
                   </div>
                 )}
 
-                {/* password */}
-                <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                  <label style={{ fontSize:9, fontWeight:700, letterSpacing:1.4, textTransform:'uppercase', color:T.muted }}>Password</label>
-                  <div style={{ position:'relative' }}>
-                    <Lock size={13} style={{ position:'absolute', left:13, top:'50%', transform:'translateY(-50%)', color: focus==='password' ? T.accent : T.muted, transition:'color .15s', pointerEvents:'none' }} />
-                    <input name="password" type={showPw ? 'text' : 'password'} value={form.password} onChange={handleChange}
-                      onFocus={()=>setFocus('password')} onBlur={()=>setFocus('')}
-                      required minLength={6} autoComplete={mode==='login' ? 'current-password' : 'new-password'}
-                      placeholder="Min. 6 characters"
-                      className="vp-inp" style={{...inp('password'), paddingRight:40}} />
-                    <button type="button" onClick={()=>setShowPw(v=>!v)} style={{
-                      position:'absolute', right:11, top:'50%', transform:'translateY(-50%)',
-                      background:'none', border:'none', cursor:'pointer',
-                      color: showPw ? T.accent : T.muted, padding:2, display:'flex', alignItems:'center', transition:'color .15s',
+                <div className="anim-item" style={{ animationDelay: '0.2s', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: C.sub, letterSpacing: 0.3, textTransform: 'uppercase', opacity: 0.8 }}>Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <Lock size={16} style={{ position:'absolute', left:14, top:'50%', transform:'translateY(-50%)', color: foc==='password' ? C.accent : C.dim, transition:'color .25s', pointerEvents:'none' }} />
+                    <input name="password" type={showPw ? 'text' : 'password'}
+                      value={form.password} onChange={onChange}
+                      onFocus={() => setFoc('password')} onBlur={() => setFoc('')}
+                      required minLength={6}
+                      autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                      placeholder="••••••••"
+                      className="field" style={{ ...inp('password'), paddingRight: 44 }} />
+                    <button type="button" onClick={() => setShowPw(v => !v)} style={{
+                      position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: showPw ? C.accent : C.dim, padding: 4,
+                      display: 'flex', alignItems: 'center', transition: 'all .25s',
                     }}>
-                      {showPw ? <EyeOff size={13}/> : <Eye size={13}/>}
+                      {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
-                {/* error */}
                 {error && (
-                  <div style={{
-                    background:'rgba(248,113,113,.08)', border:'1px solid rgba(248,113,113,.22)',
-                    borderRadius:9, padding:'9px 13px', fontSize:11, color:T.danger, lineHeight:1.5,
+                  <div className="anim-item" style={{
+                    background: `${C.danger}15`, border: `1px solid ${C.danger}33`,
+                    borderRadius: 12, padding: '12px 16px',
+                    fontSize: 13, color: '#FF7676', lineHeight: 1.5, fontWeight: 500,
                   }}>{error}</div>
                 )}
 
-                {/* divider */}
-                <div style={{ height:1, background:`linear-gradient(90deg,transparent,${T.border},transparent)` }} />
-
-                {/* submit */}
-                <button type="submit" disabled={loading} className="vp-btn" style={{
-                  width:'100%', padding:'13px 0', borderRadius:11,
-                  background: loading ? `rgba(240,120,37,.4)` : `linear-gradient(135deg,${T.accent},#E8651A)`,
-                  border:'none', cursor: loading ? 'not-allowed' : 'pointer',
-                  color:'#fff', fontSize:12, fontWeight:700, fontFamily:T.font, letterSpacing:0.6,
-                  display:'flex', alignItems:'center', justifyContent:'center', gap:9,
-                  boxShadow: loading ? 'none' : `0 4px 22px rgba(240,120,37,.38)`,
-                  transition:'all .15s',
+                <button type="submit" disabled={busy} className="btn-main anim-item" style={{
+                  animationDelay: '0.25s',
+                  width: '100%', padding: '15px 0', borderRadius: 14,
+                  background: busy ? 'rgba(255,255,255,0.05)' : `linear-gradient(135deg, ${C.accent} 0%, #D96012 100%)`,
+                  border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  color: '#fff', fontSize: 14.5, fontWeight: 800,
+                  fontFamily: C.sans, letterSpacing: 0.5,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                  boxShadow: busy ? 'none' : `0 8px 24px ${C.accent}44`,
+                  marginTop: 8,
                 }}>
-                  {loading ? (
-                    <><Activity size={13} style={{animation:'spin 1s linear infinite'}} />{mode==='login' ? 'Authenticating…' : 'Creating account…'}</>
-                  ) : (
-                    <>{mode==='login' ? 'Sign In' : 'Create Account'} <span style={{opacity:.75}}>→</span></>
-                  )}
+                  {busy
+                    ? <><Activity size={16} style={{ animation: 'spin 1.2s linear infinite' }} /> {mode === 'login' ? 'AUTHENTICATING' : 'CREATING IDENTITY'}</>
+                    : <>{mode === 'login' ? 'INITIALIZE SIGN IN' : 'REGISTER OPERATOR'} <ArrowRight size={18} strokeWidth={2.5} /></>
+                  }
                 </button>
               </form>
 
-              {/* footer inside card */}
-              <div style={{ marginTop:24, display:'flex', alignItems:'center', justifyContent:'center', gap:10 }}>
-                <div style={{ flex:1, height:1, background:T.border }} />
-                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                  <div style={{ width:5, height:5, borderRadius:'50%', background:T.green, boxShadow:`0 0 6px ${T.green}`, animation:'pulse 2.2s ease-in-out infinite' }} />
-                  <span style={{ fontSize:9, color:T.muted, letterSpacing:1 }}>SYSTEM ONLINE</span>
+              {/* divider/status */}
+              <div className="anim-item" style={{ animationDelay: '0.35s', marginTop: 32, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.04)' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    width: 7, height: 7, borderRadius: '50%', background: C.green,
+                    boxShadow: `0 0 8px ${C.green}`,
+                    animation: 'blink 3s ease-in-out infinite',
+                  }} />
+                  <span style={{ fontSize: 10, color: C.dim, letterSpacing: 1.2, fontWeight: 800, fontFamily: C.mono, textTransform: 'uppercase' }}>
+                    Secured Node
+                  </span>
                 </div>
-                <div style={{ flex:1, height:1, background:T.border }} />
+                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.04)' }} />
               </div>
             </div>
 
-            {/* below card */}
-            <div style={{ marginTop:18, textAlign:'center', fontSize:9, color:T.muted, letterSpacing:0.8 }}>
-              VidyutPragya · GNA Energy · {new Date().getFullYear()}
+            <div className="anim-item" style={{ animationDelay: '0.45s', marginTop: 24, textAlign: 'center', fontSize: 12, color: C.dim, fontWeight: 500, opacity: 0.7 }}>
+              VidyutPragya v2.4 &middot; GNA Energy Operations &middot; {new Date().getFullYear()}
             </div>
           </div>
         </div>
+
       </div>
     </>
   );

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
-import HorizonToggle from '../../components/HorizonToggle';
+
 
 /* ─── Spearman ─── */
 function computeSpearmanRho(xArr, yArr) {
@@ -70,10 +70,10 @@ const S = {
     boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
     ...(accent ? { boxShadow: `inset 0 0 0 1px ${accent}22, 0 18px 40px rgba(0, 0, 0, 0.18)` } : {}),
   }),
-  kpiLabel: { fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: '#6B7186', marginBottom: 4 },
-  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#ECEEF3', lineHeight: 1.08 }),
-  kpiUnit: { fontSize: 11, fontWeight: 400, opacity: 0.5 },
-  kpiSub: { fontSize: 10, color: '#6B7186', marginTop: 3, lineHeight: 1.45 },
+  kpiLabel: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, color: '#8A90A6', marginBottom: 4 },
+  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#F0F2F8', lineHeight: 1.08 }),
+  kpiUnit: { fontSize: 12, fontWeight: 500, color: '#8A90A6' },
+  kpiSub: { fontSize: 11, color: '#8A90A6', marginTop: 3, lineHeight: 1.45 },
   kpiSpark: { position: 'absolute', bottom: 8, right: 12, opacity: 0.25 },
   workspace: {
     margin: '10px 16px 16px',
@@ -100,10 +100,10 @@ const S = {
     borderRadius: 999,
     flexWrap: 'wrap',
   },
-  tab: (active) => ({ flex: '0 0 auto', padding: '8px 16px', fontSize: 10, fontWeight: 600, letterSpacing: 0.3, cursor: 'pointer', border: '1px solid transparent', fontFamily: 'inherit', borderRadius: 999, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#A0A5B8', transition: 'all 0.15s' }),
-  pill: (active) => ({ fontSize: 9, padding: '6px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : '#1A191E', color: active ? '#F07825' : '#6B7186', textTransform: 'capitalize' }),
-  badge: (color) => ({ fontSize: 9, fontWeight: 700, padding: '5px 10px', borderRadius: 999, background: `${color}18`, color, border: `1px solid ${color}33` }),
-  actionBtn: { fontSize: 10, fontWeight: 700, padding: '8px 14px', borderRadius: 999, border: '1px solid #2A292F', background: '#1A191E', color: '#ECEEF3', cursor: 'pointer', fontFamily: 'inherit' },
+  tab: (active) => ({ flex: '0 0 auto', padding: '8px 16px', fontSize: 12, fontWeight: 600, letterSpacing: 0.2, cursor: 'pointer', border: '1px solid transparent', fontFamily: 'inherit', borderRadius: 999, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#B8BDCC', transition: 'all 0.15s' }),
+  pill: (active) => ({ fontSize: 12, padding: '6px 11px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : '#1A191E', color: active ? '#F07825' : '#8A90A6', textTransform: 'capitalize' }),
+  badge: (color) => ({ fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 999, background: `${color}18`, color, border: `1px solid ${color}33` }),
+  actionBtn: { fontSize: 12, fontWeight: 700, padding: '8px 14px', borderRadius: 999, border: '1px solid #2A292F', background: '#1A191E', color: '#F0F2F8', cursor: 'pointer', fontFamily: 'inherit' },
   workspaceGrid: {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1.5fr) minmax(320px, 0.82fr)',
@@ -131,23 +131,23 @@ const S = {
     gap: 12,
     flexWrap: 'wrap',
   },
-  cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: '#A0A5B8' },
+  cardTitle: { fontSize: 12, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: '#B8BDCC' },
   weatherGrid: { display: 'grid', gridTemplateColumns: 'minmax(220px, 0.72fr) minmax(0, 1.28fr)', gap: 14, padding: '0 16px 16px' },
-  th: { fontSize: 8, color: '#6B7186', textTransform: 'uppercase', letterSpacing: 1, padding: '8px 10px', borderBottom: '1px solid #2A292F', textAlign: 'left', fontWeight: 600 },
-  td: { fontSize: 10, padding: '6px 10px', borderBottom: '1px solid #2A292F22' },
-  miniLabel: { fontSize: 9, color: '#6B7186', letterSpacing: 1.2, textTransform: 'uppercase' },
+  th: { fontSize: 11, color: '#8A90A6', textTransform: 'uppercase', letterSpacing: 0.5, padding: '8px 10px', borderBottom: '1px solid #2A292F', textAlign: 'left', fontWeight: 600 },
+  td: { fontSize: 12, padding: '6px 10px', borderBottom: '1px solid #2A292F22', color: '#F0F2F8' },
+  miniLabel: { fontSize: 11, color: '#8A90A6', letterSpacing: 0.6, textTransform: 'uppercase' },
 };
 
 /* ─── ECharts base ─── */
 const ecBase = () => ({
   animation: false,
   backgroundColor: 'transparent',
-  textStyle: { color: '#A0A5B8', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 },
+  textStyle: { color: '#B8BDCC', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 },
   grid: { top: 36, right: 20, bottom: 32, left: 50, containLabel: false },
-  tooltip: { trigger: 'axis', backgroundColor: '#1A191E', borderColor: '#2A292F', borderWidth: 1, textStyle: { color: '#ECEEF3', fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }, confine: true },
-  legend: { textStyle: { color: '#A0A5B8', fontSize: 9 }, top: 4, right: 8, itemWidth: 12, itemHeight: 3 },
-  xAxis: { type: 'category', axisLine: { lineStyle: { color: '#2A292F' } }, axisLabel: { color: '#6B7186', fontSize: 9 }, splitLine: { show: false } },
-  yAxis: { type: 'value', axisLine: { show: false }, axisLabel: { color: '#6B7186', fontSize: 9 }, splitLine: { lineStyle: { color: '#2A292F', type: 'dashed', opacity: 0.3 } } },
+  tooltip: { trigger: 'axis', backgroundColor: '#1A191E', borderColor: '#2A292F', borderWidth: 1, textStyle: { color: '#F0F2F8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }, confine: true },
+  legend: { textStyle: { color: '#B8BDCC', fontSize: 12 }, top: 4, right: 8, itemWidth: 12, itemHeight: 3 },
+  xAxis: { type: 'category', axisLine: { lineStyle: { color: '#2A292F' } }, axisLabel: { color: '#8A90A6', fontSize: 11 }, splitLine: { show: false } },
+  yAxis: { type: 'value', axisLine: { show: false }, axisLabel: { color: '#8A90A6', fontSize: 11 }, splitLine: { lineStyle: { color: '#2A292F', type: 'dashed', opacity: 0.3 } } },
 });
 
 /* ─── Sparkline SVG ─── */
@@ -174,7 +174,7 @@ function LoadFactorRing({ value, size = 72 }) {
         <text x={size / 2} y={size / 2 + 5} textAnchor="middle" fill="#fff" fontSize="14" fontWeight="700" fontFamily="'IBM Plex Mono',monospace">{pct.toFixed(1)}%</text>
       </svg>
       <div>
-        <div style={{ fontSize: 8, color: '#6B7186', textTransform: 'uppercase', letterSpacing: 1 }}>Load Factor</div>
+        <div style={{ fontSize: 11, color: '#8A90A6', textTransform: 'uppercase', letterSpacing: 0.5 }}>Load Factor</div>
       </div>
     </div>
   );
@@ -221,7 +221,7 @@ function ArcGauge({ value, sublabel, size = 90 }) {
         <circle cx={nx} cy={ny} r="4" fill={color} /><circle cx={nx} cy={ny} r="1.5" fill="#fff" />
         <text x={cx} y={cy + 2} textAnchor="middle" fill="#fff" fontSize="12" fontWeight="700" fontFamily="'IBM Plex Mono',monospace">{value.toFixed(2)}</text>
       </svg>
-      <div style={{ fontSize: 8, color, fontWeight: 600 }}>{strength} {dir}</div>
+      <div style={{ fontSize: 12, color, fontWeight: 600 }}>{strength} {dir}</div>
     </div>
   );
 }
@@ -255,8 +255,8 @@ const KpiCard = ({ eyebrow, title, value, unit, tone = '#ECEEF3', detail, footer
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {detail ? <div style={{ fontSize: 10, color: '#ECEEF3' }}>{detail}</div> : null}
-          {footer ? <div style={{ fontSize: 9, color: '#6B7186' }}>{footer}</div> : null}
+          {detail ? <div style={{ fontSize: 12, color: '#F0F2F8' }}>{detail}</div> : null}
+          {footer ? <div style={{ fontSize: 11, color: '#8A90A6' }}>{footer}</div> : null}
         </div>
       </>
     )}
@@ -284,8 +284,10 @@ function DetailOverlay({ open, title, subtitle, onClose, children, contentStyle,
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
-export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, liveForecastData, horizon = 't1', setHorizon, t2Date, dayAheadT2 }) {
+export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, liveForecastData, liveT2, horizon = 't1', setHorizon, t2Date, dayAheadT2 }) {
+  // For T+2: use liveT2 for forecast/load series, dayAheadT2 for weather analysis metadata
   const activeData = horizon === 't2' ? (dayAheadT2 || dayAheadData) : dayAheadData;
+  const activeSeries = horizon === 't2' ? (liveT2 || dayAheadT2) : (liveForecastData || dayAheadData);
   const dateStr = (horizon === 't2' ? t2Date : propDate) || new Date().toISOString().slice(0, 10);
   const [clock, setClock] = useState(new Date());
   const [chartTab, setChartTab] = useState('load_curve');
@@ -297,10 +299,13 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
 
   /* ─── Extract data ─── */
   const { loads, yLoads, temps, hums, precips, clouds, timeLabels } = useMemo(() => {
-    const s = activeData?.series || liveForecastData?.series;
+    // Load/forecast series: prefer liveT2 for T+2, live for T+1
+    const s = activeSeries?.series || activeData?.series;
+    // Weather intraday: from dayAheadT2/dayAheadData weather_analysis
     const intra = activeData?.weather_analysis?.intraday || {};
     const blocks = s?.blocks || Array.from({ length: 96 }, (_, i) => i + 1);
-    const actual = s?.actual || s?.forecast || [];
+    // T+2 has no actuals, use forecast; T+1 prefers actual
+    const actual = s?.actual?.length ? s.actual : (s?.forecast || []);
     const baseline = s?.baseline || s?.hybrid_baseline || [];
     return {
       loads: blocks.map((_, i) => Number.isFinite(actual[i]) ? Math.round(actual[i]) : 0),
@@ -311,7 +316,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
       clouds: (intra.cloud_cover?.actual || []).map(v => Number(v) || 0),
       timeLabels: blocks.map(blockToTime),
     };
-  }, [activeData, liveForecastData]);
+  }, [activeData, activeSeries]);
 
   /* ─── Current block ─── */
   const nowHour = clock.getHours(), nowMin = clock.getMinutes();
@@ -524,15 +529,15 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
           areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: '#F0782520' }, { offset: 1, color: 'transparent' }] } },
           markPoint: {
             data: [
-              { type: 'max', symbolSize: 36, label: { formatter: p => `${fmt(p.value)} MW`, fontSize: 9, fontWeight: 700, color: '#F07825' } },
-              { type: 'min', symbolSize: 28, label: { formatter: p => `${fmt(p.value)} MW`, fontSize: 9, color: '#34D399' }, itemStyle: { color: '#34D399' } },
+              { type: 'max', symbolSize: 36, label: { formatter: p => `${fmt(p.value)} MW`, fontSize: 12, fontWeight: 700, color: '#F07825' } },
+              { type: 'min', symbolSize: 28, label: { formatter: p => `${fmt(p.value)} MW`, fontSize: 12, color: '#34D399' }, itemStyle: { color: '#34D399' } },
             ],
             itemStyle: { color: '#F07825' },
           },
           markArea: { silent: true, data: todAreas },
           markLine: {
             silent: true, symbol: 'none',
-            data: [{ xAxis: blockToTime(currentBlock), lineStyle: { color: '#F87171', type: 'dashed', width: 1.5 }, label: { formatter: 'NOW', fontSize: 8, color: '#F87171' } }],
+            data: [{ xAxis: blockToTime(currentBlock), lineStyle: { color: '#F87171', type: 'dashed', width: 1.5 }, label: { formatter: 'NOW', fontSize: 12, color: '#F87171' } }],
           },
         },
         {
@@ -590,15 +595,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
   /* ═══ RENDER ═══ */
   return (
     <div style={S.page}>
-      {/* ─── HORIZON TOGGLE ─── */}
-      {setHorizon && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 0', flexShrink: 0 }}>
-          <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: 'uppercase' }}>
-            Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${propDate || dateStr}`}</strong>
-          </span>
-          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
-        </div>
-      )}
+
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>
           <div style={{ fontSize: 16, marginBottom: 6 }}>No data available</div>
@@ -718,9 +715,9 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                     cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', transition: 'all 0.15s ease',
                   }}
                 >
-                  <span style={{ fontSize: 9, letterSpacing: 1.1, textTransform: 'uppercase', color: activePanel === panel ? color : '#6B7186' }}>Quick panel</span>
+                  <span style={{ fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: activePanel === panel ? color : '#8A90A6' }}>Quick panel</span>
                   <span style={{ fontSize: 13, fontWeight: 700 }}>{label}</span>
-                  <span style={{ fontSize: 10, color: activePanel === panel ? `${color}cc` : '#6B7186' }}>{sub}</span>
+                  <span style={{ fontSize: 12, color: activePanel === panel ? `${color}cc` : '#8A90A6' }}>{sub}</span>
                 </button>
               ))}
             </div>
@@ -805,7 +802,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                             <tr key={i}>
                               <td style={{ ...S.td, fontWeight: 600, padding: '6px 10px' }}>{a.block}</td>
                               <td style={{ ...S.td, padding: '6px 10px' }}>{fmt(a.load)}</td>
-                              <td style={{ ...S.td, color: '#A0A5B8', fontSize: 9, padding: '6px 10px' }}>{a.reason}</td>
+                              <td style={{ ...S.td, color: '#B8BDCC', padding: '6px 10px' }}>{a.reason}</td>
                               <td style={{ ...S.td, padding: '6px 10px' }}><span style={S.badge('#F87171')}>{a.severity}</span></td>
                             </tr>
                           ))}
@@ -964,7 +961,7 @@ export default function AnalysisPage({ effectiveDate: propDate, dayAheadData, li
                 <thead>
                   <tr>
                     {['', 'LOAD', 'TEMP', 'HUMIDITY', 'PRECIP', 'RAIN', 'CLOUD'].map(h => (
-                      <th key={h} style={{ padding: '8px 10px', color: '#7F859A', fontWeight: 700, textAlign: 'center', letterSpacing: 1, fontSize: 9 }}>{h}</th>
+                      <th key={h} style={{ padding: '8px 10px', color: '#8A90A6', fontWeight: 700, textAlign: 'center', letterSpacing: 0.5, fontSize: 12 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>

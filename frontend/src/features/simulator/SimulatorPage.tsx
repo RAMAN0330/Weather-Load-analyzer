@@ -5,10 +5,15 @@ import { ScenarioCompareModal } from "./components/ScenarioCompareModal";
 import { BlockGridEditorModal } from "./components/BlockGridEditorModal";
 import { useSimulatorStore } from "./store";
 import { loadSimulatorDateOptionsApi } from "./simulatorDataService";
+import HorizonToggle from "../../components/HorizonToggle";
+
 
 type Props = {
   requestedDate?: string;
   baselineDays?: number;
+  horizon?: 't1' | 't2';
+  setHorizon?: (h: 't1' | 't2') => void;
+  t2Date?: string;
 };
 
 const SIMULATOR_TABS = [
@@ -164,7 +169,13 @@ const KpiCard = ({
   </div>
 );
 
-export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7 }) => {
+export const SimulatorPage: React.FC<Props> = ({
+  requestedDate,
+  baselineDays = 7,
+  horizon = 't1',
+  setHorizon,
+  t2Date,
+}) => {
   const comparePayload = useSimulatorStore((s) => s.comparePayload);
   const closeCompare = useSimulatorStore((s) => s.closeCompare);
   const loadFromFileData = useSimulatorStore((s) => s.loadFromFileData);
@@ -429,6 +440,15 @@ export const SimulatorPage: React.FC<Props> = ({ requestedDate, baselineDays = 7
   return (
     <>
       <main style={S.page}>
+        {/* ─── HORIZON TOGGLE ─── */}
+        {setHorizon && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', flexShrink: 0 }}>
+            <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: "uppercase" }}>
+              Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${requestedDate || dataDate}`}</strong>
+            </span>
+            <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+          </div>
+        )}
         <div style={S.kpiGrid}>
           <KpiCard
             label="Net Shift"

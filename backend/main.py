@@ -4091,7 +4091,13 @@ def v2_forecast_t2(payload: dict):
     if not resolved:
         raise HTTPException(status_code=404, detail="No data available")
 
-    config = {"region": region, "candidate_lookback_days": 45}
+    # candidate_lookback_days drives how far back the similar-day baseline searches.
+    # Use the user's baseline_days request param; minimum 45 days so there's enough
+    # seasonal history for a proper T+2 baseline (T+2 cannot anchor to today's actuals).
+    config = {
+        "region": region,
+        "candidate_lookback_days": max(45, baseline_days * 7),
+    }
     try:
         result = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
     except Exception as exc:
@@ -4132,7 +4138,7 @@ def v2_forecast_export(payload: dict = None):
         raise HTTPException(status_code=500, detail=f"T+1 pipeline error: {exc}")
 
     # --- T+2 ---
-    config = {"region": region, "candidate_lookback_days": 45}
+    config = {"region": region, "candidate_lookback_days": max(45, baseline_days * 7)}
     try:
         t2_raw = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
     except Exception as exc:

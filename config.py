@@ -16,6 +16,10 @@ MYSQL_DB   = os.environ.get("MYSQL_DB", "rishu_db")
 MYSQL_USER = os.environ.get("MYSQL_USER", "admin")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
 
+# If we are strictly in a production environment (no DEBUG set), we should ensure keys are present
+_IS_PROD = os.environ.get("DEBUG", "False").lower() == "false" and os.environ.get("DJANGO_DEBUG", "False").lower() == "false"
+
+
 # API
 API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "")
 FASTAPI_HOST   = os.environ.get("FASTAPI_HOST", "0.0.0.0")

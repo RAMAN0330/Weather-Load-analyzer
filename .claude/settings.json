@@ -53,7 +53,9 @@
       "Bash(cat frontend/vite.config.ts)",
       "Bash(pip show:*)",
       "Bash(node --input-type=module --eval \"import\\('./src/components/HorizonToggle.jsx'\\)\")",
-      "Bash(node -e \"const z = require\\('./node_modules/zustand/middleware'\\); console.log\\(Object.keys\\(z\\)\\)\")"
+      "Bash(node -e \"const z = require\\('./node_modules/zustand/middleware'\\); console.log\\(Object.keys\\(z\\)\\)\")",
+      "Bash(grep -rn \"^export\" \"c:\\\\Users\\\\RamanSharma\\\\OneDrive - GNA-Energy\\\\Desktop\\\\RD\\\\frontend\\\\src\\\\features\\\\simulator\\\\SimulatorPage\"*)",
+      "Bash(grep -iv \"comment\\\\|//\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\RamanSharma\\.claude\\plugins\\marketplaces\\claude-plugins-official\\plugins\\time-series-forecaster\\skills\\time-series-forecaster",

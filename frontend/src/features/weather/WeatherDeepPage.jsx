@@ -2,6 +2,8 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import axios from 'axios';
 import HorizonToggle from '../../components/HorizonToggle';
+import ContextPanel from '../../components/ContextPanel';
+import { API_BASE, getApiUrl, getTrainingApiUrl } from '../../apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════
    VidyutPragya — Weather Intelligence Page
@@ -27,15 +29,10 @@ const blockToTime = (b) => {
 const fmt = (v, d = 1) => v == null || !Number.isFinite(v) ? '--' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: d });
 const sgn = (v) => (v >= 0 ? '+' : '') + fmt(v, 1);
 
-const normalizeBase = (base) => {
-  if (!base) return '/api';
-  const trimmed = base.replace(/\/$/, '');
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
-};
-
-const WEATHER_API_BASE = import.meta.env.VITE_API_BASE_URL
-  ? normalizeBase(import.meta.env.VITE_API_BASE_URL)
-  : (import.meta.env.DEV ? '/api' : 'http://localhost:8000/api');
+// API URL builders moved to apiConfig.ts
+const API_URL = getApiUrl;
+const TRAINING_API_URL = getTrainingApiUrl;
+const WEATHER_API_BASE = API_BASE;
 
 /* ─── Spearman ─── */
 function spearman(x, y) {
@@ -225,7 +222,7 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
     setFallbackLoading(true);
     setFallbackError('');
     try {
-      const res = await axios.post(`/api/v2/dayahead`, {
+      const res = await axios.post(TRAINING_API_URL('/v2/dayahead'), {
         date: effectiveDate,
         baseline_days: 7,
         region: selectedRegion || 'odisha',
@@ -262,7 +259,7 @@ export default function WeatherDeepPage({ effectiveDate, dayAheadData, dayAheadS
     if (dodDateData[date]) return; // already fetched
     setDodLoading(true);
     try {
-      const res = await axios.post(`/api/v2/dayahead`, {
+      const res = await axios.post(TRAINING_API_URL('/v2/dayahead'), {
         date, baseline_days: 7, region: selectedRegion || 'odisha',
       }, { timeout: 60000 });
       const intra = res.data?.weather_analysis?.intraday;

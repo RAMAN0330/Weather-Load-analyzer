@@ -4,7 +4,6 @@ import {
     AlertCircle,
     BarChart3,
     CalendarDays,
-    Clock3,
     Download,
     Table2,
     TrendingUp,
@@ -12,6 +11,8 @@ import {
     X,
     Zap
 } from 'lucide-react';
+import HorizonToggle from "../../components/HorizonToggle";
+
 
 interface ForecastPageProps {
     liveData: any;
@@ -25,14 +26,14 @@ interface ForecastPageProps {
     canDownload?: boolean;
     fmt: (v: any) => string;
     chart: React.ReactNode;
-    t2Chart?: React.ReactNode;
-    t2LiveData?: any[];
-    t2Meta?: any;
+    horizon: 't1' | 't2';
+    setHorizon: (h: 't1' | 't2') => void;
+    t2Date?: string;
     weatherStrip?: React.ReactNode;
     forecastTable?: React.ReactNode;
 }
 
-type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | 'preview' | null;
+type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | 'preview' | 'similar_days' | null;
 
 const blockTime = (block: number) => {
     const minutes = Math.max(0, block - 1) * 15;
@@ -120,24 +121,24 @@ const KpiCard = ({
         }}
     >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontSize: '8px', letterSpacing: '1.1px', textTransform: 'uppercase', color: '#6B7186' }}>{eyebrow}</div>
-            {icon && <div style={{ opacity: 0.5, color: '#A0A5B8' }}>{icon}</div>}
+            <div style={{ fontSize: '11px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{eyebrow}</div>
+            {icon && <div style={{ opacity: 0.7, color: 'var(--text-secondary)' }}>{icon}</div>}
         </div>
         <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: '#A0A5B8', marginBottom: '8px' }}>{title}</div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>{title}</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '30px', lineHeight: 1, fontWeight: 700, color: tone }}>{value}</span>
-                {unit ? <span style={{ fontSize: '11px', color: '#6B7186' }}>{unit}</span> : null}
+                {unit ? <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{unit}</span> : null}
             </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {detail ? <div style={{ fontSize: '10px', color: '#ECEEF3' }}>{detail}</div> : null}
-            {footer ? <div style={{ fontSize: '9px', color: '#6B7186' }}>{footer}</div> : null}
+            {detail ? <div style={{ fontSize: '12px', color: 'var(--text)' }}>{detail}</div> : null}
+            {footer ? <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{footer}</div> : null}
         </div>
     </div>
 );
 
-export const ForecastPage: React.FC<ForecastPageProps> = ({
+export default function ForecastPage({
     liveData,
     liveMeta,
     driverContributions,
@@ -149,16 +150,15 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
     canDownload = true,
     fmt,
     chart,
-    t2Chart,
-    t2LiveData,
-    t2Meta,
+    horizon,
+    setHorizon,
+    t2Date,
     weatherStrip,
     forecastTable
-}) => {
+}: ForecastPageProps) {
     const [activeOverlay, setActiveOverlay] = useState<OverlayKey>(null);
-    const [forecastHorizon, setForecastHorizon] = useState<'t1' | 't2'>('t1');
+    const forecastHorizon = horizon;
     const rows = useMemo(() => (Array.isArray(liveData) ? liveData : []), [liveData]);
-    const t2Rows = useMemo(() => (Array.isArray(t2LiveData) ? t2LiveData : []), [t2LiveData]);
 
     const summary = useMemo(() => {
         if (!rows.length) return null;
@@ -180,23 +180,7 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
         };
     }, [rows]);
 
-    const t2Summary = useMemo(() => {
-        if (!t2Rows.length) return null;
-        const peakRow = t2Rows.reduce(
-            (best: any, row: any) => ((row?.forecast_mw || 0) > (best?.forecast_mw || 0) ? row : best),
-            t2Rows[0]
-        );
-        const energy = t2Rows.reduce((acc: number, d: any) => acc + Number(d?.forecast_mw || 0), 0) * 0.25;
-        return {
-            peak: Number(peakRow?.forecast_mw || 0),
-            peakBlock: Number(peakRow?.block_number || 1),
-            peakTime: peakRow?.time || blockTime(Number(peakRow?.block_number || 1)),
-            energy,
-        };
-    }, [t2Rows]);
-
-    const activeSummary = forecastHorizon === 't2' ? t2Summary : summary;
-    const activeMeta = forecastHorizon === 't2' ? t2Meta : liveMeta;
+    const activeSummary = summary;
 
     // Ramp Risk: flag if max forecast ramp in next 6 blocks exceeds 150 MW (state ramp limit proxy)
     const rampRisk = useMemo(() => {
@@ -278,9 +262,6 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
     const previewDrivers = drivers.slice(0, 2);
     const previewLogs = Array.isArray(liveMeta?.logs) ? liveMeta.logs.slice(-2).reverse() : [];
     const maxDriverPct = Math.max(...drivers.map((driver: any) => Math.abs(Number(driver?.pct || 0))), 1);
-    const avgUncertainty = signalCount
-        ? signals.filter((signal: any) => signal.risk_flag !== 'low').reduce((acc: number, signal: any) => acc + Number(signal?.uncertainty_pct || 0), 0) / signalCount
-        : 0;
     const driverPressure = drivers.reduce((acc: number, driver: any) => acc + Math.abs(Number(driver?.mw || 0)), 0);
 
     return (
@@ -372,50 +353,13 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                                 </span>
                             </div>
                             <div className="chip-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div className="fp-horizon-tabs" style={{ display: 'inline-flex', gap: '4px', padding: '5px', background: '#141419', border: '1px solid #2A292F', borderRadius: '999px', marginRight: '16px' }}>
-                                    <button
-                                        style={{ 
-                                            flex: '0 0 auto',
-                                            padding: '6px 14px',
-                                            fontSize: '10px',
-                                            fontWeight: 600,
-                                            letterSpacing: '0.3px',
-                                            cursor: 'pointer',
-                                            border: '1px solid transparent',
-                                            fontFamily: 'inherit',
-                                            borderRadius: '999px',
-                                            background: forecastHorizon === 't1' ? '#F0782518' : 'transparent',
-                                            color: forecastHorizon === 't1' ? '#F07825' : '#A0A5B8',
-                                            transition: 'all 0.15s ease'
-                                        }}
-                                        onClick={() => setForecastHorizon('t1')}
-                                        title="T+1: Tomorrow (with actuals as they settle)"
-                                    >
-                                        T+1
-                                    </button>
-                                    <button
-                                        style={{ 
-                                            flex: '0 0 auto',
-                                            padding: '6px 14px',
-                                            fontSize: '10px',
-                                            fontWeight: 600,
-                                            letterSpacing: '0.3px',
-                                            cursor: t2Chart ? 'pointer' : 'not-allowed',
-                                            border: '1px solid transparent',
-                                            fontFamily: 'inherit',
-                                            borderRadius: '999px',
-                                            background: forecastHorizon === 't2' ? '#F0782518' : 'transparent',
-                                            color: forecastHorizon === 't2' ? '#F07825' : '#A0A5B8',
-                                            opacity: t2Chart ? 1 : 0.5,
-                                            transition: 'all 0.15s ease'
-                                        }}
-                                        onClick={() => setForecastHorizon('t2')}
-                                        disabled={!t2Chart}
-                                        title="T+2: Day after tomorrow"
-                                    >
-                                        T+2
-                                    </button>
-                                </div>
+                                <HorizonToggle 
+                                    horizon={forecastHorizon} 
+                                    setHorizon={setHorizon}
+                                    t2Date={t2Date}
+                                    style={{ marginRight: '16px' }}
+                                />
+
                                 {forecastHorizon === 't1' && (
                                     <>
                                         <span className="chip actual">Actual</span>
@@ -432,10 +376,7 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                             </div>
                         </div>
                         <div className="fp-chart-body fp-chart-body--single">
-                            {forecastHorizon === 't1'
-                                ? (rows.length ? chart : <div className="chart-empty">No live data available for {effectiveDate}</div>)
-                                : (t2Chart || <div className="chart-empty">T+2 forecast not loaded. Click Refresh to generate.</div>)
-                            }
+                            {rows.length ? chart : <div className="chart-empty">No data available for {effectiveDate}</div>}
                         </div>
                         <div className="fp-chart-footer">
                             <span>Peak {activeSummary ? `${activeSummary.peakTime} • ${fmt(activeSummary.peak)} MW` : '--'}</span>
@@ -475,6 +416,7 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('signals')}><span>Signals</span><strong>{signals.length}</strong></button>
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('logs')}><span>Logs</span><strong>{Array.isArray(liveMeta?.logs) ? liveMeta.logs.length : 0}</strong></button>
                                 <button className="fp-detail-btn" onClick={() => setActiveOverlay('preview')}><span>Preview</span><strong>{previewSignals.length + previewDrivers.length}</strong></button>
+                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('similar_days')}><span>Sim Days</span><strong>{Array.isArray(liveMeta?.similar_days) ? liveMeta.similar_days.length : 0}</strong></button>
                             </div>
                         </article>
 
@@ -594,6 +536,31 @@ export const ForecastPage: React.FC<ForecastPageProps> = ({
 
             <DetailOverlay open={activeOverlay === 'table'} title="Block-Level Forecast Table" subtitle="Detailed values, uncertainty bands, and settled actuals" onClose={() => setActiveOverlay(null)}>
                 {forecastTable ? forecastTable : <div className="fp-empty-state">No forecast table is available.</div>}
+            </DetailOverlay>
+
+            <DetailOverlay open={activeOverlay === 'similar_days'} title="Similar Days" subtitle={`Top historical matches used for baseline — ${forecastHorizon === 't2' ? 'T+2 run' : 'T+1 run'}`} onClose={() => setActiveOverlay(null)}>
+                <div className="table-wrap">
+                    {Array.isArray(liveMeta?.similar_days) && liveMeta.similar_days.length ? (
+                        <table className="data-table">
+                            <thead>
+                                <tr><th>Date</th><th>Similarity</th><th>Temp Δ °C</th><th>Humidity Δ %</th><th>Rain Match</th></tr>
+                            </thead>
+                            <tbody>
+                                {liveMeta.similar_days.map((d: any, i: number) => (
+                                    <tr key={`${d.date}-${i}`}>
+                                        <td>{d.date}</td>
+                                        <td>{typeof d.similarity_score === 'number' ? d.similarity_score.toFixed(3) : '—'}</td>
+                                        <td>{typeof d.temp_diff === 'number' ? d.temp_diff.toFixed(1) : '—'}</td>
+                                        <td>{typeof d.hum_diff === 'number' ? d.hum_diff.toFixed(1) : '—'}</td>
+                                        <td style={{ color: d.rain_match ? 'var(--success)' : 'var(--danger)' }}>{d.rain_match ? '✓' : '✗'}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <div className="fp-empty-state">No similar days data available for this run.</div>
+                    )}
+                </div>
             </DetailOverlay>
         </main>
     );

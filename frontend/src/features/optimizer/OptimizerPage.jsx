@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
+import HorizonToggle from '../../components/HorizonToggle';
+
 
 /* ─── Helpers ─── */
 const fmt = (v, d = 1) => v == null || !Number.isFinite(v) ? '--' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: d });
@@ -75,6 +77,9 @@ export default function OptimizerPage({
   setBaselineDays,
   availableActualBlocks = 0,
   effectiveDate,
+  horizon = 't1',
+  setHorizon,
+  t2Date,
 }) {
   const [activeTab, setActiveTab] = useState('window');
   const [windowOverlayPanel, setWindowOverlayPanel] = useState(null);
@@ -407,6 +412,15 @@ export default function OptimizerPage({
   /* ═══ RENDER ═══ */
   return (
     <div style={S.page}>
+      {/* ─── HORIZON TOGGLE ─── */}
+      {setHorizon && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 0', flexShrink: 0, zIndex: 10 }}>
+          <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: 'uppercase' }}>
+            Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${effectiveDate}`}</strong>
+          </span>
+          <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+        </div>
+      )}
 
       {!hasData ? (
         <div style={{ padding: 60, textAlign: 'center', color: '#6B7186' }}>

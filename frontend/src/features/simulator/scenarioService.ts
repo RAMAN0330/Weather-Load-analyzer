@@ -1,4 +1,6 @@
 import axios from "axios";
+import { getApiUrl } from "../../apiConfig";
+
 
 type SaveScenarioPayload = {
   scenario_name: string;
@@ -16,30 +18,11 @@ type SaveScenarioPayload = {
   forecast_output: Record<string, unknown>;
 };
 
-const post = async <T = any>(path: string, body?: unknown): Promise<T> => {
-  try {
-    const res = await axios.post(path, body);
-    return res.data as T;
-  } catch {
-    const res = await axios.post(`http://localhost:8000${path}`, body);
-    return res.data as T;
-  }
-};
-
-const get = async <T = any>(path: string): Promise<T> => {
-  try {
-    const res = await axios.get(path);
-    return res.data as T;
-  } catch {
-    const res = await axios.get(`http://localhost:8000${path}`);
-    return res.data as T;
-  }
-};
-
-export const saveScenarioApi = (payload: SaveScenarioPayload) => post("/api/scenario/save", payload);
-export const listScenariosApi = () => get<{ items: any[] }>("/api/scenarios");
-export const restoreScenarioApi = (id: string) => post(`/api/scenario/restore/${id}`);
-export const deleteScenarioApi = (id: string) => post(`/api/scenario/delete/${id}`);
+export const saveScenarioApi = (payload: SaveScenarioPayload) => axios.post(getApiUrl("/scenario/save"), payload).then(r => r.data);
+export const listScenariosApi = () => axios.get(getApiUrl("/scenarios")).then(r => r.data);
+export const restoreScenarioApi = (id: string) => axios.post(getApiUrl(`/scenario/restore/${id}`)).then(r => r.data);
+export const deleteScenarioApi = (id: string) => axios.post(getApiUrl(`/scenario/delete/${id}`)).then(r => r.data);
 export const compareScenarioApi = (baseId: string, targetId: string) =>
-  post("/api/scenario/compare", { base_scenario_id: baseId, target_scenario_id: targetId });
+  axios.post(getApiUrl("/scenario/compare"), { base_scenario_id: baseId, target_scenario_id: targetId }).then(r => r.data);
+
 

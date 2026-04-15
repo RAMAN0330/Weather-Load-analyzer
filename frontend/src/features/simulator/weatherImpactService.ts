@@ -1,4 +1,6 @@
 import axios from "axios";
+import { getApiUrl } from "../../apiConfig";
+
 
 export type WeatherImpactSeason = "summer" | "winter" | "monsoon";
 
@@ -30,14 +32,8 @@ export const calculateWeatherImpact = async (
   blocks: WeatherDeltaBlock[]
 ): Promise<WeatherImpactResponse> => {
   const payload = { season, blocks };
-  const primary = "/api/weather-impact/calculate";
-  const fallback = "http://localhost:8000/api/weather-impact/calculate";
-  try {
-    const res = await axios.post(primary, payload);
-    return res.data;
-  } catch {
-    const res = await axios.post(fallback, payload);
-    return res.data;
-  }
+  const url = getApiUrl("/weather-impact/calculate");
+  const res = await axios.post(url, payload);
+  return res.data;
 };
 

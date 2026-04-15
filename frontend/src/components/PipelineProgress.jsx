@@ -1,6 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 
+const joinApi = (base, path) => `${String(base || '').replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+
+const toWebSocketUrl = (base, path) => {
+  const target = joinApi(base || '/ml-api', path);
+  if (/^https?:\/\//i.test(target)) {
+    return target.replace(/^http/i, 'ws');
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}${target}`;
+};
+
 const STEPS = [
   { key: 1, label: 'Similarity profile' },
   { key: 2, label: 'Baseline window' },
@@ -11,7 +22,7 @@ const STEPS = [
   { key: 7, label: 'Final forecast' },
 ];
 
-export default function PipelineProgress({ jobId, onResult }) {
+export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [lastMessage, setLastMessage] = useState('Connecting...');
   const [status, setStatus] = useState('connecting'); // connecting|running|done|error
@@ -30,8 +41,7 @@ export default function PipelineProgress({ jobId, onResult }) {
     setElapsed('0.0');
     setMinimized(false);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}/api/v2/ws/forecast/${jobId}`;
+    const wsUrl = toWebSocketUrl(apiBase, `/v2/ws/forecast/${jobId}`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -60,7 +70,7 @@ export default function PipelineProgress({ jobId, onResult }) {
         setCurrentStep(8); // 8 > 7 so all steps show green
         setLastMessage(msg.message || '✓ Done');
         // Fetch result then notify parent
-        axios.get(`/api/v2/forecast/job/${jobId}/result`, { timeout: 15000 })
+        axios.get(joinApi(apiBase, `/v2/forecast/job/${jobId}/result`), { timeout: 15000 })
           .then(r => onResult?.(r.data))
           .catch(() => onResult?.(null));
         setTimeout(() => setMinimized(true), 2500);
@@ -81,7 +91,7 @@ export default function PipelineProgress({ jobId, onResult }) {
       ws.close();
       clearInterval(timerRef.current);
     };
-  }, [jobId]);
+  }, [jobId, apiBase]);
 
   if (!jobId) return null;
 
@@ -89,10 +99,10 @@ export default function PipelineProgress({ jobId, onResult }) {
     <button
       onClick={() => setMinimized(false)}
       style={{
-        position: 'fixed', bottom: 20, left: 20, zIndex: 9999,
+        position: 'fixed', bottom: 20, left: 64, zIndex: 9999,
         background: '#0d1117', border: '1px solid #238636',
         borderRadius: 20, padding: '6px 14px',
-        color: '#7ee787', fontSize: 12, cursor: 'pointer',
+        color: '#7ee787', fontSize: 13, cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 6,
         fontFamily: "'IBM Plex Mono', monospace",
         boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
@@ -107,13 +117,13 @@ export default function PipelineProgress({ jobId, onResult }) {
 
   return (
     <div style={{
-      position: 'fixed', bottom: 20, left: 20, zIndex: 9999,
+      position: 'fixed', bottom: 20, left: 64, zIndex: 9999,
       width: 300, background: '#0d1117',
       border: `1px solid ${status === 'error' ? '#6e1a1a' : '#21262d'}`,
       borderRadius: 12,
       boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
       fontFamily: "'IBM Plex Mono', monospace",
-      fontSize: 12,
+      fontSize: 13,
     }}>
       {/* Header */}
       <div style={{
@@ -123,17 +133,17 @@ export default function PipelineProgress({ jobId, onResult }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{
-            width: 7, height: 7, borderRadius: '50%',
+            width: 8, height: 8, borderRadius: '50%',
             background: statusColor, display: 'inline-block',
             animation: status === 'running' ? 'mlpulse 1.2s ease-in-out infinite' : 'none',
           }} />
-          <span style={{ color: '#e6edf3', fontWeight: 600, fontSize: 11 }}>ML Pipeline</span>
+          <span style={{ color: '#e6edf3', fontWeight: 600, fontSize: 13 }}>ML Pipeline</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: statusColor, fontSize: 10 }}>{statusLabel}</span>
+          <span style={{ color: statusColor, fontSize: 12 }}>{statusLabel}</span>
           <button onClick={() => setMinimized(true)} style={{
-            background: 'none', border: 'none', color: '#484f58',
-            cursor: 'pointer', padding: 0, fontSize: 13, lineHeight: 1,
+            background: 'none', border: 'none', color: '#8a90a6',
+            cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1,
           }}>─</button>
         </div>
       </div>
@@ -142,7 +152,7 @@ export default function PipelineProgress({ jobId, onResult }) {
       <div style={{ padding: '8px 12px 4px', display: 'flex', gap: 3 }}>
         {STEPS.map(s => (
           <div key={s.key} style={{
-            flex: 1, height: 2, borderRadius: 1,
+            flex: 1, height: 3, borderRadius: 2,
             background: currentStep > s.key ? '#238636'
               : currentStep === s.key ? '#f59e0b'
               : '#21262d',
@@ -152,35 +162,35 @@ export default function PipelineProgress({ jobId, onResult }) {
       </div>
 
       {/* Current message */}
-      <div style={{ padding: '3px 12px 8px', color: '#7d8590', fontSize: 10, minHeight: 18, letterSpacing: '0.02em' }}>
+      <div style={{ padding: '3px 12px 8px', color: '#8a90a6', fontSize: 12, minHeight: 18, letterSpacing: '0.01em' }}>
         {lastMessage.replace(/^\d+\/7\s*/, '').replace(/^[▶✓]\s*/, '')}
       </div>
 
       {/* Steps */}
-      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
         {STEPS.map(s => {
           const done = currentStep > s.key;
           const active = currentStep === s.key && status === 'running';
           return (
             <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{
-                width: 15, height: 15, borderRadius: '50%', flexShrink: 0,
+                width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 8, fontWeight: 700,
+                fontSize: 10, fontWeight: 700,
                 background: done ? '#238636' : active ? 'rgba(245,158,11,0.15)' : 'transparent',
                 border: `1px solid ${done ? '#238636' : active ? '#f59e0b' : '#30363d'}`,
-                color: done ? '#fff' : active ? '#f59e0b' : '#484f58',
+                color: done ? '#fff' : active ? '#f59e0b' : '#6b7280',
                 transition: 'all 0.3s',
               }}>
                 {done ? '✓' : s.key}
               </div>
               <span style={{
-                color: done ? '#7ee787' : active ? '#e6edf3' : '#484f58',
-                fontSize: 10, transition: 'color 0.3s', flex: 1,
+                color: done ? '#7ee787' : active ? '#e6edf3' : '#6b7280',
+                fontSize: 12, transition: 'color 0.3s', flex: 1,
               }}>
                 {s.label}
               </span>
-              {active && <span style={{ color: '#f59e0b', fontSize: 9 }}>●</span>}
+              {active && <span style={{ color: '#f59e0b', fontSize: 10 }}>●</span>}
             </div>
           );
         })}

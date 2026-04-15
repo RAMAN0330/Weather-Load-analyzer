@@ -11,6 +11,9 @@ let _interval = null;
 let _notFoundCount = 0;
 const _NOT_FOUND_LIMIT = 8; // stop after 8 consecutive 404s (~24s); server restart detection
 
+const joinApi = (base, path) =>
+  String(base || '').replace(/\/$/, '') + (path.startsWith('/') ? path : '/' + path);
+
 self.onmessage = function (e) {
   const { type, jobId, apiBase } = e.data;
 
@@ -20,7 +23,7 @@ self.onmessage = function (e) {
 
     _interval = setInterval(async function () {
       try {
-        const statusRes = await fetch(apiBase + '/api/v2/forecast/job/' + jobId);
+        const statusRes = await fetch(joinApi(apiBase, '/v2/forecast/job/' + jobId));
         if (!statusRes.ok) {
           if (statusRes.status === 404) {
             _notFoundCount++;
@@ -49,7 +52,7 @@ self.onmessage = function (e) {
           clearInterval(_interval);
           _interval = null;
           const resultRes = await fetch(
-            apiBase + '/api/v2/forecast/job/' + jobId + '/result'
+            joinApi(apiBase, '/v2/forecast/job/' + jobId + '/result')
           );
           if (!resultRes.ok) {
             self.postMessage({ type: 'error', message: 'Failed to fetch result' });

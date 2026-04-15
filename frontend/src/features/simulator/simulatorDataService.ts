@@ -1,4 +1,6 @@
 import axios from "axios";
+import { getApiUrl } from "../../apiConfig";
+
 
 export type SimulatorBlockApi = {
   block_number: number;
@@ -208,21 +210,13 @@ export type SimulatorDateOptionsResponse = {
 
 export const loadSimulatorBlocksApi = async (date?: string, baselineDays = 7, payloadOverride?: Partial<SimulatorBlocksRequestPayload>) => {
   const payload: SimulatorBlocksRequestPayload = { date, baseline_days: baselineDays, ...(payloadOverride || {}) };
-  try {
-    const res = await axios.post("/api/simulator/blocks", payload);
-    return res.data as SimulatorBlocksResponse;
-  } catch {
-    const res = await axios.post("http://localhost:8000/api/simulator/blocks", payload);
-    return res.data as SimulatorBlocksResponse;
-  }
+  const url = getApiUrl("/simulator/blocks");
+  const res = await axios.post(url, payload);
+  return res.data as SimulatorBlocksResponse;
 };
 
 export const loadSimulatorDateOptionsApi = async (): Promise<SimulatorDateOptionsResponse> => {
-  try {
-    const res = await axios.get("/api/v2/config");
-    return res.data as SimulatorDateOptionsResponse;
-  } catch {
-    const res = await axios.get("http://localhost:8000/api/v2/config");
-    return res.data as SimulatorDateOptionsResponse;
-  }
+  const url = getApiUrl("/v2/config");
+  const res = await axios.get(url);
+  return res.data as SimulatorDateOptionsResponse;
 };

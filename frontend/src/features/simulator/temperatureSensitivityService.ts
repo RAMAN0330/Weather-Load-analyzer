@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getApiUrl } from "../../apiConfig";
 
 export type TemperatureSensitivityInput = {
   baseline_temp: number;
@@ -32,14 +33,7 @@ export type TemperatureSensitivityResult = {
 export const calculateTemperatureSensitivity = async (
   payload: TemperatureSensitivityInput
 ): Promise<TemperatureSensitivityResult> => {
-  const primary = "/api/temperature-sensitivity/calculate";
-  const fallback = "http://localhost:8000/api/temperature-sensitivity/calculate";
-  try {
-    const res = await axios.post(primary, payload);
-    return res.data;
-  } catch {
-    const res = await axios.post(fallback, payload);
-    return res.data;
-  }
+  const url = getApiUrl("/temperature-sensitivity/calculate");
+  const res = await axios.post(url, payload);
+  return res.data;
 };
-
