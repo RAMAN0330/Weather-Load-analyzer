@@ -1,312 +1,81 @@
-import os
+import hashlib
+import importlib.util
 import logging
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
 
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
 
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import ElasticNetCV, LinearRegression
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import ElasticNetCV
-
-try:
-    from .india_intelligence import compute_india_adjustments
-except ImportError:
-    try:
-        from india_intelligence import compute_india_adjustments
-    except ImportError:
-        compute_india_adjustments = None
-
-try:
-    from .hybrid import HybridForecastConfig, HybridForecastingEngine
-except Exception:
-    try:
-        from hybrid import HybridForecastConfig, HybridForecastingEngine
-    except Exception:
-        HybridForecastConfig = None
-        HybridForecastingEngine = None
+from sklearn.preprocessing import StandardScaler
 
 try:
     from xgboost import XGBRegressor
-except Exception:
+except ImportError:
     XGBRegressor = None
 
 try:
     from lightgbm import LGBMRegressor
-except Exception:
+except ImportError:
     LGBMRegressor = None
 
 try:
-    from .ml_baseline import compute_ml_baseline, blend_baselines
+    from .hybrid_ai_engine import run_attention_hybrid_ai
 except ImportError:
     try:
-        from ml_baseline import compute_ml_baseline, blend_baselines
+        from hybrid_ai_engine import run_attention_hybrid_ai
     except ImportError:
-        compute_ml_baseline = None
-        blend_baselines = None
+        run_attention_hybrid_ai = None
 
 try:
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
-    _TORCH_AVAILABLE = True
-except Exception:
-    torch = None
-    nn = None
-    DataLoader = None
-    TensorDataset = None
-    _TORCH_AVAILABLE = False
+    from .helper_model import run_helper_forecast
+except ImportError:
+    try:
+        from helper_model import run_helper_forecast
+    except ImportError:
+        run_helper_forecast = None
 
+try:
+    from .weather_anomaly import detect_weather_anomalies, WeatherAnomalyResult
+except ImportError:
+    try:
+        from weather_anomaly import detect_weather_anomalies, WeatherAnomalyResult
+    except ImportError:
+        detect_weather_anomalies = None
+        WeatherAnomalyResult = None
 
-class NHiTSRegressor:
-    """
-    Lightweight N-HiTS-inspired residual MLP regressor (PyTorch).
-
-    Designed to be a drop-in replacement for tree models in this pipeline:
-    - fit(X, y, X_val=None, y_val=None)
-    - predict(X) -> np.ndarray
-    - exposes coef_ via a companion LinearRegression for explainability hooks.
-    """
-
-    def __init__(
-        self,
-        hidden_dim: int = 128,
-        n_layers: int = 2,
-        n_blocks: int = 4,
-        dropout: float = 0.10,
-        epochs: int = 120,
-        batch_size: int = 512,
-        lr: float = 3e-3,
-        weight_decay: float = 1e-4,
-        patience: int = 18,
-        min_epochs: int = 25,
-        random_state: int = 42,
-        device: Optional[str] = None,
-        verbose: bool = False,
-    ) -> None:
-        self.hidden_dim = int(hidden_dim)
-        self.n_layers = int(n_layers)
-        self.n_blocks = int(n_blocks)
-        self.dropout = float(dropout)
-        self.epochs = int(epochs)
-        self.batch_size = int(batch_size)
-        self.lr = float(lr)
-        self.weight_decay = float(weight_decay)
-        self.patience = int(patience)
-        self.min_epochs = int(min_epochs)
-        self.random_state = int(random_state)
-        self.device = device
-        self.verbose = bool(verbose)
-
-        self.n_features_in_: Optional[int] = None
-        self.coef_: Optional[np.ndarray] = None
-        self.intercept_: Optional[float] = None
-        self._x_scaler: Optional[StandardScaler] = None
-        self._y_mean: float = 0.0
-        self._y_std: float = 1.0
-        self._model: Any = None
-        self._fallback: Optional[LinearRegression] = None
-
-    def _resolve_device(self) -> str:
-        if self.device:
-            return str(self.device)
-        return "cpu"
-
-    def _ensure_model(self, input_dim: int) -> None:
-        if not _TORCH_AVAILABLE:
-            return
-        if self._model is not None and self.n_features_in_ == int(input_dim):
-            return
-
-        class _Block(nn.Module):
-            def __init__(self, in_dim: int, h_dim: int, layers: int, drop: float) -> None:
-                super().__init__()
-                seq = []
-                d = int(in_dim)
-                for _ in range(int(max(1, layers))):
-                    seq.append(nn.Linear(d, int(h_dim)))
-                    seq.append(nn.ReLU())
-                    if float(drop) > 1e-9:
-                        seq.append(nn.Dropout(float(drop)))
-                    d = int(h_dim)
-                self.mlp = nn.Sequential(*seq)
-                self.backcast = nn.Linear(int(h_dim), int(in_dim))
-                self.forecast = nn.Linear(int(h_dim), 1)
-
-            def forward(self, x):
-                h = self.mlp(x)
-                return self.backcast(h), self.forecast(h)
-
-        class _Net(nn.Module):
-            def __init__(self, in_dim: int, h_dim: int, layers: int, blocks: int, drop: float) -> None:
-                super().__init__()
-                self.blocks = nn.ModuleList([
-                    _Block(in_dim=int(in_dim), h_dim=int(h_dim), layers=int(layers), drop=float(drop))
-                    for _ in range(int(max(1, blocks)))
-                ])
-
-            def forward(self, x):
-                residual = x
-                out = 0.0
-                for blk in self.blocks:
-                    back, f = blk(residual)
-                    residual = residual - back
-                    out = out + f
-                return out.squeeze(-1)
-
-        self.n_features_in_ = int(input_dim)
-        self._model = _Net(
-            in_dim=int(input_dim),
-            h_dim=int(self.hidden_dim),
-            layers=int(max(1, self.n_layers)),
-            blocks=int(max(1, self.n_blocks)),
-            drop=float(max(0.0, self.dropout)),
+try:
+    from .accuracy import (
+        apply_bias_correction,
+        apply_block_type_calibration,
+        apply_t2_night_correction,
+        build_afternoon_ramp_adjustment,
+        build_t2_bias_correction,
+        compute_bias_table,
+    )
+except ImportError:
+    try:
+        from accuracy import (
+            apply_bias_correction,
+            apply_block_type_calibration,
+            apply_t2_night_correction,
+            build_afternoon_ramp_adjustment,
+            build_t2_bias_correction,
+            compute_bias_table,
         )
-        self._model.to(self._resolve_device())
+    except ImportError:
+        apply_bias_correction = None
+        apply_block_type_calibration = None
+        apply_t2_night_correction = None
+        build_afternoon_ramp_adjustment = None
+        build_t2_bias_correction = None
+        compute_bias_table = None
 
-    def fit(self, X, y, X_val=None, y_val=None) -> "NHiTSRegressor":
-        X_np = np.asarray(X, dtype=float)
-        y_np = np.asarray(y, dtype=float).reshape(-1)
-        if X_np.ndim != 2:
-            raise ValueError("NHiTSRegressor.fit expects 2D X")
-        if y_np.size != X_np.shape[0]:
-            raise ValueError("X and y size mismatch")
 
-        # Always compute a linear proxy for effects (used by downstream attribution).
-        lin = LinearRegression()
-        try:
-            lin.fit(X_np, y_np)
-            self.coef_ = np.asarray(lin.coef_, dtype=float).reshape(-1)
-            self.intercept_ = float(lin.intercept_)
-        except Exception:
-            self.coef_ = np.zeros(X_np.shape[1], dtype=float)
-            self.intercept_ = float(np.mean(y_np)) if y_np.size else 0.0
-
-        if (not _TORCH_AVAILABLE) or X_np.shape[0] < 64:
-            # Small-data (or no-torch) fallback for stability and speed.
-            self._fallback = lin
-            self._model = None
-            self._x_scaler = None
-            self._y_mean = float(np.mean(y_np)) if y_np.size else 0.0
-            self._y_std = float(np.std(y_np)) if y_np.size else 1.0
-            if not np.isfinite(self._y_std) or abs(self._y_std) <= 1e-9:
-                self._y_std = 1.0
-            return self
-
-        # Scale inputs; scale target for stable NN training.
-        self._x_scaler = StandardScaler()
-        X_scaled = self._x_scaler.fit_transform(X_np).astype(np.float32, copy=False)
-        self._y_mean = float(np.mean(y_np)) if y_np.size else 0.0
-        self._y_std = float(np.std(y_np)) if y_np.size else 1.0
-        if (not np.isfinite(self._y_std)) or abs(self._y_std) <= 1e-9:
-            self._y_std = 1.0
-        y_scaled = ((y_np - self._y_mean) / self._y_std).astype(np.float32, copy=False)
-
-        Xv_scaled = None
-        yv_scaled = None
-        if X_val is not None and y_val is not None:
-            Xv_np = np.asarray(X_val, dtype=float)
-            yv_np = np.asarray(y_val, dtype=float).reshape(-1)
-            if Xv_np.ndim == 2 and yv_np.size == Xv_np.shape[0] and Xv_np.size:
-                Xv_scaled = self._x_scaler.transform(Xv_np).astype(np.float32, copy=False)
-                yv_scaled = ((yv_np - self._y_mean) / self._y_std).astype(np.float32, copy=False)
-
-        self._ensure_model(X_scaled.shape[1])
-        if self._model is None:
-            self._fallback = lin
-            return self
-
-        # Deterministic-ish training.
-        torch.manual_seed(int(self.random_state))
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(int(self.random_state))
-
-        device = self._resolve_device()
-        X_t = torch.from_numpy(X_scaled).to(device)
-        y_t = torch.from_numpy(y_scaled).to(device)
-        ds = TensorDataset(X_t, y_t)
-        bsz = int(np.clip(int(self.batch_size), 32, max(32, X_scaled.shape[0])))
-        loader = DataLoader(ds, batch_size=bsz, shuffle=True)
-
-        loss_fn = nn.MSELoss()
-        opt = torch.optim.AdamW(self._model.parameters(), lr=float(self.lr), weight_decay=float(self.weight_decay))
-
-        best_state = None
-        best_val = None
-        bad_epochs = 0
-        max_epochs = int(np.clip(int(self.epochs), 10, 400))
-        min_epochs = int(np.clip(int(self.min_epochs), 0, max_epochs))
-        patience = int(np.clip(int(self.patience), 3, 80))
-
-        for epoch in range(max_epochs):
-            self._model.train()
-            total = 0.0
-            n_seen = 0
-            for xb, yb in loader:
-                opt.zero_grad(set_to_none=True)
-                pred = self._model(xb)
-                loss = loss_fn(pred, yb)
-                loss.backward()
-                opt.step()
-                total += float(loss.detach().cpu().item()) * int(xb.shape[0])
-                n_seen += int(xb.shape[0])
-
-            train_loss = total / max(n_seen, 1)
-            val_loss = None
-
-            if Xv_scaled is not None and yv_scaled is not None and Xv_scaled.size:
-                self._model.eval()
-                with torch.no_grad():
-                    xv_t = torch.from_numpy(Xv_scaled).to(device)
-                    yv_t = torch.from_numpy(yv_scaled).to(device)
-                    pv = self._model(xv_t)
-                    val_loss = float(loss_fn(pv, yv_t).detach().cpu().item())
-
-                score = val_loss
-                improved = (best_val is None) or (score < (best_val - 1e-6))
-                if improved:
-                    best_val = score
-                    best_state = {k: v.detach().cpu().clone() for k, v in self._model.state_dict().items()}
-                    bad_epochs = 0
-                else:
-                    bad_epochs += 1
-
-                if self.verbose and (epoch % 10 == 0 or epoch == max_epochs - 1):
-                    logger.debug("[N-HiTS] epoch=%03d train=%.6f val=%.6f", epoch, train_loss, val_loss)
-
-                if epoch + 1 >= min_epochs and bad_epochs >= patience:
-                    break
-            else:
-                if self.verbose and (epoch % 10 == 0 or epoch == max_epochs - 1):
-                    logger.debug("[N-HiTS] epoch=%03d train=%.6f", epoch, train_loss)
-
-        if best_state is not None:
-            self._model.load_state_dict(best_state)
-
-        self._fallback = None
-        return self
-
-    def predict(self, X):
-        X_np = np.asarray(X, dtype=float)
-        if X_np.ndim != 2:
-            raise ValueError("NHiTSRegressor.predict expects 2D X")
-        if self._fallback is not None:
-            return self._fallback.predict(X_np)
-        if (not _TORCH_AVAILABLE) or self._model is None or self._x_scaler is None:
-            # Last-resort safety.
-            lr = LinearRegression()
-            lr.fit(X_np, np.zeros(X_np.shape[0], dtype=float))
-            return lr.predict(X_np)
-
-        X_scaled = self._x_scaler.transform(X_np).astype(np.float32, copy=False)
-        device = self._resolve_device()
-        self._model.eval()
-        with torch.no_grad():
-            x_t = torch.from_numpy(X_scaled).to(device)
-            y_hat = self._model(x_t).detach().cpu().numpy().astype(float, copy=False).reshape(-1)
-        return (y_hat * float(self._y_std)) + float(self._y_mean)
 
 SEASON_ORDER = ["winter", "spring", "summer", "fall"]
 
@@ -345,11 +114,32 @@ SEASONAL_WEATHER_INTERVALS = {
 }
 
 DEFAULT_CONFIG = {
-    "candidate_lookback_days": 45,
-    "similar_days_top_n": 5,
+    "candidate_lookback_days": 60,
+    "similar_days_top_n": 10,
+    # Same-month-last-year seasonal pool: +/- N days around the target's month-day,
+    # taken from every prior year present in df.  0 disables the seasonal pool.
+    "seasonal_window_days": 21,
+    # Seasonal-anchor blend: a tighter (+/- 7 day, prior years) curve mixed
+    # into the similar-day baseline at this weight.  0 disables.
+    "seasonal_anchor_blend": 0.30,
+    "seasonal_anchor_window_days": 7,
+    # Recent-residual bias correction: subtract per-block (actual - baseline)
+    # mean over the last N days from the baseline.  Catches systematic
+    # under/over-prediction in the current load regime.  0 disables.
+    "recent_bias_correction_days": 7,
+    "recent_bias_correction_weight": 0.75,
+    "bias_cap_pct": 0.10,           # max additive bias correction as fraction of mean load
+    # Base-day -> T+1 seam smoother: linear taper of the first N blocks toward
+    # a continuation of the previous day's last block, so the forecast doesn't
+    # jump at the day boundary.  0 disables.
+    "base_seam_bridge": {"window_blocks": 6},
+    # Z-score scaling stats are computed on the candidate pool; min-max fallback
+    # is used when std == 0.  Affects similarity scoring only.
+    "similarity_normaliser": "zscore",
     "temp_band_c": 3.0,
     "humidity_band": 12.0,
     "require_rain_match": True,
+    "wind_gust_threshold_kmh": 25.0,   # ↓ from 30 — earlier gust-dip activation
     "similarity_weights": {"temp": 0.55, "humidity": 0.25, "rain": 0.2},
     "auto_similarity_from_data": True,
     "auto_require_rain_match": True,
@@ -381,6 +171,10 @@ DEFAULT_CONFIG = {
     },
     "hybrid_ai": {
         "enabled": True,
+        # variant:
+        # - "distilled_residual": teacher-learned ResNet-LSTM residual corrector (no manual edits)
+        # - "legacy": existing ResNet-LSTM curve+scale + MoE + GPR hybrid engine
+        "variant": "distilled_residual",
         "lookback_days": 7,
         "min_history_days": 21,
         "training_days": 60,
@@ -389,8 +183,14 @@ DEFAULT_CONFIG = {
         "max_blend_weight": 0.45,
         "sequence_epochs": 30,
         "random_state": 42,
+        # Distilled residual engine (teacher learning; training-only teacher)
+        "distilled_lookback_days": 14,
+        "distilled_teacher_epochs": 8,
+        "distilled_student_epochs": 35,
+        "distilled_lr": 0.002,
     },
     "rain_coeffs": {"winter": 20.0, "spring": 18.0, "summer": 15.0, "fall": 18.0},
+    "wind_coeffs": {"winter": 8.0,  "spring": 10.0, "summer": 12.0, "fall": 10.0},
     "min_actual_blocks": 24,
     "max_actual_blocks": 96,
     "weather_tune": True,
@@ -413,7 +213,7 @@ DEFAULT_CONFIG = {
     "selection": {"scope": "all"},
     "selection_smoothing": False,
     "manual_base": [0.0] * 96,
-    "region": "punjab",
+    "region": "haryana",
     "human_behaviour_weight": 0.35,
     "weather_divergence_threshold": 1.5,
     "calibrate_behaviour_from_data": True,
@@ -428,13 +228,389 @@ DEFAULT_CONFIG = {
         "east":    {"cdd": 26.0, "hdd": 16.0},
         "central": {"cdd": 25.0, "hdd": 14.0},
     },
+    # ════════════════════════════════════════════════════════════════════════
+    # OPTIMIZATION ENGINE CONFIG (97%+ Accuracy Mode)
+    # ════════════════════════════════════════════════════════════════════════
+    "optimization_enabled": True,
+    "use_advanced_baseline": True,
+    "use_horizon_specific_models": True,
+    "use_bias_correction": False,
+    "adaptive_blend_per_horizon": True,
+    "advanced_baseline_lookback_days": 90,
+    "advanced_baseline_validation_days": 7,
+    "advanced_baseline_blend_method": "rmse_weighted",
+    # Horizon-specific model hyperparameters
+    "t1_model_n_estimators": 200,
+    "t1_model_max_depth": 6,
+    "t1_model_learning_rate": 0.05,
+    "t2_model_n_estimators": 250,
+    "t2_model_max_depth": 6,
+    "t2_model_learning_rate": 0.05,
+    # Adaptive blend weights (overrides static hybrid_weights when enabled)
+    "blend_weights_t1": {"ml_model": 0.70, "baseline": 0.20, "block_regression": 0.10},
+    "blend_weights_t2": {"ml_model": 0.60, "baseline": 0.25, "block_regression": 0.15},
+    # Generic external feature hook. Enable via config or env vars:
+    # - SHORT_TERM_EXTERNAL_FEATURES_ENABLED=1
+    # - SHORT_TERM_EXTERNAL_FEATURES_PATH=...\\features.py
+    "external_features_enabled": False,
+    "external_features_path": None,
+    # When enabled: include any *extra numeric* columns produced by the external module
+    # (excluding known identifiers/targets) as model features.
+    "external_features_include_extra_numeric": True,
+    # External final forecast override (bypasses the internal 7-step pipeline).
+    # Enable via config or env vars:
+    # - SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED=1
+    # - SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH=...\\forecaster.py
+    "external_final_forecast_enabled": False,
+    "external_final_forecast_path": None,
+    "accuracy_corrections": {
+        "block_bias_enabled": True,
+        "block_bias_window_days": 30,
+        "block_bias_smooth_window": 4,
+        "afternoon_ramp_enabled": True,
+        "direct_wind_adjustment_enabled": False,
+        "direct_rain_adjustment_enabled": False,
+        "spline_residual_enabled": False,
+        "dynamic_shrinkage_enabled": True,
+        "calibration_enabled": True,
+        "calibration_window_days": 21,
+        "calibration_min_confidence": 0.80,
+        "ramp_limit_enabled": True,
+        "max_ramp_mw": 300.0,
+        "momentum_enabled": True,
+        "momentum_decay_blocks": 8.0,
+        "t2_night_bias_enabled": True,
+        "t2_fallback_night_mw": 350.0,
+        # Ramp block sample weighting in ML training (blocks 48-68)
+        "ramp_block_start": 48,
+        "ramp_block_end": 68,
+        "ramp_sample_weight": 1.5,
+    },
+    # Anomaly day exclusion: filter similar-day candidates where daily load
+    # deviated >±N% from trailing-7-day mean (baseline contamination guard).
+    "anomaly_exclusion_pct": 0.06,
 }
 
 _IMPACT_MIN = -0.40
 _IMPACT_MAX = 0.50
 _BLOCK_COUNT = 96
 logger = logging.getLogger(__name__)
+_EXTERNAL_FEATURE_MODULE_CACHE: Dict[str, Any] = {}
+_EXTERNAL_FEATURE_FAILURES: set = set()
 
+
+def _parse_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    return s in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _external_features_settings(cfg: Optional[dict] = None) -> tuple[bool, Optional[str], bool]:
+    cfg = cfg or DEFAULT_CONFIG
+    env_enabled = os.getenv("SHORT_TERM_EXTERNAL_FEATURES_ENABLED")
+    enabled = _parse_bool(env_enabled) if env_enabled is not None else bool(cfg.get("external_features_enabled", False))
+
+    path = os.getenv("SHORT_TERM_EXTERNAL_FEATURES_PATH") or cfg.get("external_features_path")
+    path = str(path).strip() if path else None
+    if path and ((not path.lower().endswith(".py")) or (not os.path.isfile(path))):
+        path = None
+
+    include_extra_numeric = cfg.get("external_features_include_extra_numeric", True)
+    return bool(enabled), path, bool(include_extra_numeric)
+
+
+def _load_external_module(path: str) -> Any:
+    cached = _EXTERNAL_FEATURE_MODULE_CACHE.get(path)
+    if cached is not None:
+        return cached
+
+    if not str(path).lower().endswith(".py"):
+        raise ImportError(f"External features module must be a .py file: {path}")
+    if not os.path.isfile(path):
+        # Don't cache "missing file" as a permanent failure; it might appear later.
+        raise ImportError(f"External features module not found: {path}")
+
+    # Cache failures to avoid repeated imports in hot paths.
+    if path in _EXTERNAL_FEATURE_FAILURES:
+        raise ImportError(f"External features module previously failed: {path}")
+
+    abspath = os.path.abspath(path)
+    # Use a stable unique module name per path to avoid cross-module global collisions.
+    digest = hashlib.sha1(abspath.lower().encode("utf-8")).hexdigest()[:12]
+    mod_name = f"short_term_external_features_{digest}"
+
+    spec = importlib.util.spec_from_file_location(mod_name, abspath)
+    if spec is None or spec.loader is None:
+        _EXTERNAL_FEATURE_FAILURES.add(path)
+        raise ImportError(f"Cannot load external features module: {path}")
+
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    except Exception:
+        _EXTERNAL_FEATURE_FAILURES.add(path)
+        raise
+
+    _EXTERNAL_FEATURE_MODULE_CACHE[path] = mod
+    return mod
+
+
+def _apply_external_features(df: pd.DataFrame, cfg: Optional[dict] = None) -> pd.DataFrame:
+    enabled, path, _include_extra_numeric = _external_features_settings(cfg)
+    if not enabled or not path:
+        return df
+
+    try:
+        mod = _load_external_module(path)
+    except Exception as e:
+        logger.warning("External features disabled (load failed): %s", e)
+        return df
+
+    fn = None
+    for name in ("add_features", "apply_features", "build_features", "prepare_features"):
+        cand = getattr(mod, name, None)
+        if callable(cand):
+            fn = cand
+            break
+
+    if fn is None:
+        logger.warning("External features module has no callable feature function: %s", path)
+        return df
+
+    try:
+        out = fn(df.copy())
+    except TypeError:
+        # Some modules may accept (df, cfg) or (df, **kwargs); best-effort.
+        try:
+            out = fn(df.copy(), cfg=cfg or DEFAULT_CONFIG)
+        except Exception as e:
+            logger.warning("External feature function failed: %s", e)
+            return df
+    except Exception as e:
+        logger.warning("External feature function failed: %s", e)
+        return df
+
+    if isinstance(out, pd.DataFrame) and not out.empty:
+        return out
+    return df
+
+
+def _infer_extra_numeric_feature_columns(data: pd.DataFrame) -> List[str]:
+    # Exclude identifiers, targets, and columns that are not safe model features by default.
+    exclude = {
+        "date",
+        "time_block",
+        "total_drawal",
+        "load_feature_source",
+        "_is_target_row",
+    }
+    base = set(SHORT_TERM_MODEL_FEATURES)
+    extras: List[str] = []
+    for col in data.columns:
+        if col in exclude or col in base:
+            continue
+        s = data[col]
+        if pd.api.types.is_bool_dtype(s) or pd.api.types.is_numeric_dtype(s):
+            extras.append(col)
+    return sorted(set(extras))
+
+
+def _external_final_forecast_settings(cfg: Optional[dict] = None) -> tuple[bool, Optional[str]]:
+    cfg = cfg or DEFAULT_CONFIG
+    env_enabled = os.getenv("SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED")
+    enabled = _parse_bool(env_enabled) if env_enabled is not None else bool(cfg.get("external_final_forecast_enabled", False))
+
+    path = os.getenv("SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH") or cfg.get("external_final_forecast_path")
+    path = str(path).strip() if path else None
+    if path and ((not path.lower().endswith(".py")) or (not os.path.isfile(path))):
+        path = None
+    return bool(enabled), path
+
+
+def _extract_forecast_vector(external_result: Any) -> Optional[np.ndarray]:
+    if external_result is None:
+        return None
+
+    if isinstance(external_result, (list, tuple, np.ndarray)):
+        return np.asarray(external_result, dtype=float).reshape(-1)
+
+    if isinstance(external_result, pd.DataFrame):
+        df = external_result.copy()
+        if "time_block" in df.columns:
+            df["time_block"] = pd.to_numeric(df["time_block"], errors="coerce")
+            df = df.dropna(subset=["time_block"]).sort_values("time_block")
+        for col in ("final_load", "forecast_mw", "forecast", "yhat"):
+            if col in df.columns:
+                vec = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+                return vec.reshape(-1)
+        return None
+
+    if isinstance(external_result, dict):
+        series = external_result.get("series") if isinstance(external_result.get("series"), dict) else None
+        if series and "forecast" in series:
+            return np.asarray(series.get("forecast"), dtype=float).reshape(-1)
+        if "forecast" in external_result:
+            return np.asarray(external_result.get("forecast"), dtype=float).reshape(-1)
+        if "final_load" in external_result:
+            return np.asarray(external_result.get("final_load"), dtype=float).reshape(-1)
+        return None
+
+    return None
+
+
+def _build_external_forecast_response(
+    *,
+    df: pd.DataFrame,
+    target_date: str,
+    actual_blocks: int,
+    forecast_vec: np.ndarray,
+    cfg: dict,
+    path: str,
+    fn_name: str,
+) -> Dict[str, Any]:
+    forecast_vec = _normalize_block_vector(forecast_vec, length=_BLOCK_COUNT, fill_value=0.0)
+    rows = [
+        {
+            "time_block": int(i + 1),
+            "forecast": float(forecast_vec[i]),
+            "forecast_mw": float(forecast_vec[i]),
+            "final_load": float(forecast_vec[i]),
+        }
+        for i in range(_BLOCK_COUNT)
+    ]
+
+    actual_full = np.full(_BLOCK_COUNT, np.nan, dtype=float)
+    try:
+        work = df.copy()
+        work["date"] = work.get("date").astype(str)
+        day = work[work["date"] == str(target_date)].copy()
+        if not day.empty and "time_block" in day.columns:
+            day["time_block"] = pd.to_numeric(day["time_block"], errors="coerce")
+            day = day.dropna(subset=["time_block"]).sort_values("time_block")
+            y = pd.to_numeric(day.get("total_drawal"), errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+            if y.size:
+                actual_full[: min(_BLOCK_COUNT, y.size)] = y[:_BLOCK_COUNT]
+    except Exception:
+        pass
+
+    season = None
+    day_type = None
+    try:
+        season = _season(target_date)
+    except Exception:
+        season = None
+    try:
+        day_type = _day_type(target_date)
+    except Exception:
+        day_type = None
+
+    response: Dict[str, Any] = {
+        "date": str(target_date),
+        "metadata": {
+            "season": season,
+            "day_type": day_type,
+            "actual_blocks": int(np.clip(actual_blocks, 0, _BLOCK_COUNT)),
+            "region": str(cfg.get("region", "")),
+            "model_scope": "external",
+            "external_final_forecast": {
+                "enabled": True,
+                "path": str(path),
+                "function": str(fn_name),
+            },
+            "feature_count": None,
+            "hybrid_ai_engine": {"enabled": False},
+            "forecast_shrinkage": None,
+        },
+        "weights": cfg.get("hybrid_weights"),
+        "calendar_factor": None,
+        "series": {
+            "blocks": list(range(1, _BLOCK_COUNT + 1)),
+            "forecast_raw_before_shrinkage": forecast_vec.tolist(),
+            "forecast_after_shrinkage_before_hybrid_ai": forecast_vec.tolist(),
+            "hybrid_ai_forecast": forecast_vec.tolist(),
+            "forecast": forecast_vec.tolist(),
+            "final_load": forecast_vec.tolist(),
+            "actual": [float(actual_full[i]) if i < int(actual_blocks) and np.isfinite(actual_full[i]) else None for i in range(_BLOCK_COUNT)],
+        },
+        "explanation": f"External final forecast module ({fn_name}) used instead of internal pipeline.",
+        "bias_factor": None,
+        "trend_curve": None,
+        "rain_adjustment": None,
+        "driver_contributions": [],
+        "similar_days": [],
+        "peak_impact": None,
+        "forecast_df": rows,
+        "dip_explanations": [],
+        "block_driver_matrix": [],
+        "block_contributors": [],
+        "slot_sensitivity_profile": [],
+        "forecast_uncertainty": [],
+        "decision_signals": [],
+        "top_contributor_slots": [],
+    }
+    return response
+
+
+def _maybe_run_external_final_forecast(
+    *,
+    df: pd.DataFrame,
+    target_date: str,
+    actual_blocks: int,
+    cfg: dict,
+) -> Optional[Dict[str, Any]]:
+    enabled, path = _external_final_forecast_settings(cfg)
+    if not enabled or not path:
+        return None
+
+    try:
+        mod = _load_external_module(path)
+    except Exception as e:
+        logger.warning("External final forecast disabled (load failed): %s", e)
+        return None
+
+    fn = None
+    fn_name = None
+    for name in ("final_forecast", "run_final_forecast", "forecast", "run_forecast", "predict_forecast"):
+        cand = getattr(mod, name, None)
+        if callable(cand):
+            fn = cand
+            fn_name = name
+            break
+    if fn is None:
+        logger.warning("External final forecast module has no callable forecast function: %s", path)
+        return None
+
+    result = None
+    try:
+        # Preferred signature: (df, target_date, actual_blocks, config)
+        result = fn(df.copy(), target_date=str(target_date), actual_blocks=int(actual_blocks), config=cfg)
+    except TypeError:
+        try:
+            result = fn(df.copy(), str(target_date), int(actual_blocks), cfg)
+        except Exception as e:
+            logger.warning("External final forecast function failed: %s", e)
+            return None
+    except Exception as e:
+        logger.warning("External final forecast function failed: %s", e)
+        return None
+
+    vec = _extract_forecast_vector(result)
+    if vec is None:
+        logger.warning("External final forecast returned no usable forecast vector.")
+        return None
+
+    return _build_external_forecast_response(
+        df=df,
+        target_date=str(target_date),
+        actual_blocks=int(actual_blocks),
+        forecast_vec=vec,
+        cfg=cfg,
+        path=str(path),
+        fn_name=str(fn_name or "unknown"),
+    )
 SHORT_TERM_MODEL_FEATURES = [
     "temperature", "humidity", "precipitation",
     "CDD", "HDD", "temp_roll_3h", "temp_roll_6h", "wbgt",
@@ -445,13 +621,15 @@ SHORT_TERM_MODEL_FEATURES = [
     "tb_sin", "tb_cos", "is_weekend", "season_idx",
     "hour_cos", "dow_sin", "dow_cos", "block_sin", "block_cos",
     "is_peak_hour", "is_night", "is_business_hour",
-    "temp_squared", "temp_cubed", "temperature_sin",
+    "temp_squared", "temp_cubed", "temp_quartic", "temperature_sin",
+    "ramp_heat_interaction",
     "lag_1", "lag_7", "lag_block_1", "lag_block_4",
     "rolling_4", "rolling_12",
     "load_lag_1d", "load_lag_2d", "load_lag_3d",
     "load_lag_7d", "load_rolling_7d", "load_trend_3d",
     "load_x_cdd", "load_x_humidity", "cdd_squared",
     "wbgt_x_load", "temp_momentum_3d",
+    "prev_night_dip_flag",
 ]
 
 # ── Indian State → Climate Region Mapping ──────────────────────────
@@ -1366,7 +1544,7 @@ def _day_type_extended(date_str: str, holiday_flags: dict = None) -> str:
     return "Weekday"
 
 
-def _compute_holiday_flags(df: pd.DataFrame, region: str = "punjab") -> pd.DataFrame:
+def _compute_holiday_flags(df: pd.DataFrame, region: str = "haryana") -> pd.DataFrame:
     """Add is_holiday and all transition flags using national + state-specific holidays."""
     out = df.copy()
     out["is_holiday"] = 0
@@ -1384,7 +1562,6 @@ def _compute_holiday_flags(df: pd.DataFrame, region: str = "punjab") -> pd.DataF
         combined_dates = set()
 
     holiday_set = set(dates[out["is_holiday"] == 1].unique()) if out["is_holiday"].any() else set()
-    dow = dates.dt.weekday
 
     if holiday_set:
         out["holiday_on_weekday"] = dates.map(lambda d: int(d in holiday_set and d.weekday() < 5))
@@ -1566,8 +1743,13 @@ def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _get_short_term_feature_columns(data: pd.DataFrame) -> List[str]:
-    return [feature for feature in SHORT_TERM_MODEL_FEATURES if feature in data.columns]
+def _get_short_term_feature_columns(data: pd.DataFrame, cfg: Optional[dict] = None) -> List[str]:
+    base = [feature for feature in SHORT_TERM_MODEL_FEATURES if feature in data.columns]
+    enabled, _path, include_extra_numeric = _external_features_settings(cfg)
+    if enabled and include_extra_numeric:
+        extras = _infer_extra_numeric_feature_columns(data)
+        return base + [c for c in extras if c not in base]
+    return base
 
 
 def _build_load_anchor(
@@ -1745,6 +1927,36 @@ def _coerce_day_to_96_blocks(day_df: pd.DataFrame, fill_load: bool = False) -> p
     return grouped[ordered_cols + remaining_cols]
 
 
+def _ensure_time_block_1_based(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure `time_block` uses 1–96 indexing.
+
+    Our historical CSVs often store blocks as 0–95, but most of the pipeline
+    assumes 1–96 (and drops blocks outside that range). Shifting early prevents
+    silent 1-block loss and misaligned features/curves.
+    """
+    if df is None or df.empty or "time_block" not in df.columns:
+        return df
+
+    work = df.copy()
+    tb = pd.to_numeric(work["time_block"], errors="coerce")
+    if not tb.notna().any():
+        return work
+
+    has_zero = bool((tb == 0).any())
+    has_96 = bool((tb == 96).any())
+    try:
+        max_tb = int(tb.max())
+    except Exception:
+        max_tb = None
+
+    if has_zero and max_tb == 95 and not has_96:
+        work["time_block"] = (tb + 1).astype(int)
+    else:
+        work["time_block"] = tb.astype(int)
+    return work
+
+
 def _prepare_training(df: pd.DataFrame, load_source_col: str = "total_drawal") -> pd.DataFrame:
     df = df.copy()
     if "date" in df.columns:
@@ -1882,12 +2094,66 @@ def _prepare_training(df: pd.DataFrame, load_source_col: str = "total_drawal") -
         if "temperature" in df.columns:
             df["temp_momentum_3d"] = df["temperature"] - df["temperature"].shift(288).fillna(df["temperature"])
 
+        # Previous-night anomaly flag: set to 1 when yesterday's night blocks (1-32)
+        # averaged >15% below their own 7-day per-block rolling mean. This lets the
+        # ML model discount lag_1 and load_rolling_7d features on days after a night dip,
+        # preventing propagation of the dip into today's forecast.
+        _night_mask = df["time_block"].between(1, 32)
+        _night_mean_yesterday = (
+            df[_night_mask]
+            .groupby("date")["load_feature_source"]
+            .transform("mean")
+            .where(_night_mask, np.nan)
+            .shift(_BLOCK_COUNT)
+        )
+        _night_rolling = (
+            df.groupby("time_block")["load_feature_source"]
+            .transform(lambda x: x.shift(1).rolling(7, min_periods=2).mean())
+        )
+        _night_rolling_mean_prev = (
+            df[_night_mask]
+            .groupby("date")["load_feature_source"]
+            .transform("mean")
+            .where(_night_mask, np.nan)
+            .rolling(7, min_periods=2).mean()
+            .shift(_BLOCK_COUNT)
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _night_dev = (_night_mean_yesterday - _night_rolling_mean_prev).abs() / _night_rolling_mean_prev.replace(0, np.nan)
+        df["prev_night_dip_flag"] = (_night_dev > 0.15).astype(float).fillna(0.0)
+
+        # temp_quartic: captures supralinear AC load response above 31°C where
+        # overforecasting is documented (32-34°C band). Scaled by 1e-6 to keep
+        # range comparable to temp_squared (~900 range).
+        df["temp_quartic"] = (df["temperature"] ** 4) / 1e6
+
+        # ramp_heat_interaction: temperature signal active only during the afternoon
+        # ramp window (blocks 48-68, 12:00-17:00 IST). Allows the model to learn a
+        # segment-specific heat discount rather than a global temperature coefficient,
+        # directly countering the systematic ramp-period overforecast.
+        if "time_block" in df.columns:
+            _is_ramp = df["time_block"].between(48, 68).astype(float)
+        else:
+            _is_ramp = pd.Series(0.0, index=df.index)
+        df["ramp_heat_interaction"] = df["temperature"] * _is_ramp
+
     df = _add_calendar(df)
     df = df.reset_index(drop=True)
     tb_feats = _timeblock_features(df["time_block"]).reset_index(drop=True)
     df = pd.concat([df, tb_feats], axis=1)
     df["season_idx"] = df["season"].apply(lambda s: SEASON_ORDER.index(s) if s in SEASON_ORDER else 0)
     df = _add_time_features(df)
+
+    # Optional external feature module hook (generic).
+    df = _apply_external_features(df)
+    # Ensure extra numeric features are finite if we plan to use them.
+    enabled, _path, include_extra_numeric = _external_features_settings(DEFAULT_CONFIG)
+    if enabled and include_extra_numeric:
+        for col in _infer_extra_numeric_feature_columns(df):
+            s = pd.to_numeric(df[col], errors="coerce")
+            s = s.replace([np.inf, -np.inf], np.nan)
+            df[col] = s.interpolate(limit_direction="both").ffill().bfill().fillna(0.0)
+
     return df
 
 
@@ -1953,73 +2219,523 @@ def _best_baseline_window(df: pd.DataFrame, target_date: str, candidates: List[i
     return best_w, best_mape
 
 
+def _zscore_or_minmax(series: pd.Series) -> pd.Series:
+    """Standardise a feature for similarity scoring.
+
+    Uses z-score by default; if std == 0 (degenerate column), falls back to
+    min-max in [0, 1]; if max == min as well, returns zeros.  Output is
+    unit-free so different features (degC, %, mm, MW) can be linearly combined.
+    """
+    s = pd.to_numeric(series, errors="coerce")
+    finite = s.replace([np.inf, -np.inf], np.nan).dropna()
+    if finite.empty:
+        return pd.Series(np.zeros(len(s)), index=s.index)
+    mu = float(finite.mean())
+    sd = float(finite.std(ddof=0))
+    if sd > 1e-9:
+        out = (s - mu) / sd
+    else:
+        lo, hi = float(finite.min()), float(finite.max())
+        if hi - lo > 1e-9:
+            out = (s - lo) / (hi - lo)
+        else:
+            out = pd.Series(0.0, index=s.index)
+    return out.fillna(0.0)
+
+
+def _compute_residual_bias(
+    df: pd.DataFrame,
+    dates: List[str],
+    idx: int,
+    fast_days: int = 5,
+    slow_days: int = 60,
+) -> np.ndarray:
+    """Unified fast+slow residual bias correction (FIX 4).
+
+    Combines a fast recent component (last 5 days) and a slow seasonal
+    component (last 60 days) with MAD-based clipping to prevent noise
+    from a single bad day corrupting the correction.
+
+    Returns a 96-block additive correction array.
+    """
+    all_days_needed = max(slow_days, fast_days)
+    window_dates = dates[max(0, idx - all_days_needed):idx]
+    residuals_list: List[np.ndarray] = []
+
+    for d in window_dates:
+        day_df = df[df["date"] == d]
+        if day_df.empty:
+            continue
+        actual = (
+            day_df.groupby("time_block")["total_drawal"]
+            .mean()
+            .reindex(range(1, 97))
+        )
+        d_idx = dates.index(d)
+        prior = dates[max(0, d_idx - 7):d_idx]
+        if not prior:
+            continue
+        prior_df = df[df["date"].isin(prior)]
+        if prior_df.empty:
+            continue
+        rolling = (
+            prior_df.groupby("time_block")["total_drawal"]
+            .mean()
+            .reindex(range(1, 97))
+        )
+        resid = (actual - rolling).to_numpy(dtype=float)
+        if np.isfinite(resid).any():
+            residuals_list.append(resid)
+
+    if not residuals_list:
+        return np.zeros(96, dtype=float)
+
+    residuals = np.vstack(residuals_list)  # (n_days, 96)
+
+    fast_slice = residuals[-fast_days:] if len(residuals) >= fast_days else residuals
+    slow_slice = residuals[-slow_days:] if len(residuals) >= slow_days else residuals
+
+    with np.errstate(invalid="ignore"):
+        fast = np.where(
+            np.isfinite(fast_slice).any(axis=0),
+            np.nanmean(fast_slice, axis=0),
+            0.0,
+        )
+        slow = np.where(
+            np.isfinite(slow_slice).any(axis=0),
+            np.nanmean(slow_slice, axis=0),
+            0.0,
+        )
+
+    # MAD clipping: prevents a noisy day from dominating the fast component
+    flat = residuals.flatten()
+    flat = flat[np.isfinite(flat)]
+    if len(flat) > 0:
+        mad = float(np.median(np.abs(flat - np.median(flat))))
+        if mad > 0:
+            fast = np.clip(fast, -3.0 * mad, 3.0 * mad)
+
+    return 0.4 * fast + 0.1 * slow
+
+
+def _valid_actual_day_vector(df: pd.DataFrame, date_value: str) -> Optional[np.ndarray]:
+    """Return a complete 96-block actual-load vector for a non-synthetic day."""
+    if df is None or df.empty or "date" not in df.columns or "time_block" not in df.columns:
+        return None
+    day = df[df["date"].astype(str) == str(date_value)].copy()
+    if day.empty:
+        return None
+    if "_is_synthetic" in day.columns and pd.to_numeric(day["_is_synthetic"], errors="coerce").fillna(0).max() >= 1:
+        return None
+    if "total_drawal" not in day.columns:
+        return None
+    vec = (
+        day.groupby("time_block")["total_drawal"]
+        .mean()
+        .reindex(range(1, _BLOCK_COUNT + 1))
+        .to_numpy(dtype=float)
+    )
+    valid = np.isfinite(vec) & (vec > 50.0)
+    if int(valid.sum()) < _BLOCK_COUNT:
+        return None
+    return vec
+
+
+def _recent_horizon_calibration(
+    df: pd.DataFrame,
+    target_date: str,
+    forecast: np.ndarray,
+    actual_blocks: int,
+    actual_partial: np.ndarray,
+    cfg: Dict[str, Any],
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Calibrate final forecast level/shape from pre-target actual history.
+
+    This is intentionally a post-model layer: it does not learn from target-day
+    future actuals, but it corrects common operational errors seen in backtests:
+    wrong daily level, weak afternoon blocks, and T+2 regime drift.
+    """
+    cal_cfg = cfg.get("horizon_calibration", {})
+    if not isinstance(cal_cfg, dict):
+        cal_cfg = {}
+    if not bool(cal_cfg.get("enabled", True)):
+        return forecast, np.zeros(_BLOCK_COUNT, dtype=float), {"enabled": False}
+
+    fc = _as_96_vector(forecast).astype(float)
+    correction = np.zeros(_BLOCK_COUNT, dtype=float)
+    horizon = str(cfg.get("forecast_horizon", "t1")).lower().strip()
+    accuracy_cfg = cfg.get("accuracy_corrections", {}) if isinstance(cfg.get("accuracy_corrections", {}), dict) else {}
+
+    try:
+        work = df.copy()
+        work["date"] = work["date"].astype(str)
+        all_dates = sorted(work["date"].dropna().unique().tolist())
+        hist_dates = [d for d in all_dates if d < str(target_date)]
+        hist_vectors: List[Tuple[str, np.ndarray]] = []
+        for d in hist_dates[-45:]:
+            vec = _valid_actual_day_vector(work, d)
+            if vec is not None:
+                hist_vectors.append((d, vec))
+        if len(hist_vectors) < 3:
+            return fc, correction, {"enabled": True, "applied": False, "reason": "insufficient_history"}
+
+        last_vec = hist_vectors[-1][1]
+        last3 = np.mean(np.vstack([v for _, v in hist_vectors[-3:]]), axis=0)
+        last7 = np.mean(np.vstack([v for _, v in hist_vectors[-min(7, len(hist_vectors)):]]), axis=0)
+
+        target_ts = pd.Timestamp(str(target_date)[:10])
+        same_wd = [v for d, v in hist_vectors if pd.Timestamp(d).dayofweek == target_ts.dayofweek]
+        same_wd_recent = np.mean(np.vstack(same_wd[-4:]), axis=0) if same_wd else last7
+
+        if horizon == "t2":
+            # T+2 has no live actual anchor and historically drifts in daily level.
+            anchor = (0.30 * last_vec) + (0.30 * last3) + (0.40 * same_wd_recent)
+            ratio_cap = float(cal_cfg.get("t2_ratio_cap", 0.08))
+            blend = float(cal_cfg.get("t2_blend", 0.68))
+            segment_blend = float(cal_cfg.get("t2_segment_blend", 0.40))
+        else:
+            anchor = (0.40 * last_vec) + (0.30 * last3) + (0.30 * same_wd_recent)
+            ratio_cap = float(cal_cfg.get("t1_ratio_cap", 0.05))
+            blend = float(cal_cfg.get("t1_blend", 0.48))
+            segment_blend = float(cal_cfg.get("t1_segment_blend", 0.28))
+
+        # If live actuals exist, they are the strongest non-leaky signal.
+        live_ratio = 1.0
+        live_bias = 0.0
+        if actual_blocks >= 4 and actual_partial.size >= actual_blocks:
+            recent_n = min(int(cal_cfg.get("live_anchor_blocks", 24)), actual_blocks)
+            act_tail = np.asarray(actual_partial[-recent_n:], dtype=float)
+            fc_tail = fc[actual_blocks - recent_n:actual_blocks]
+            valid = np.isfinite(act_tail) & np.isfinite(fc_tail) & (fc_tail > 100.0) & (act_tail > 50.0)
+            if int(valid.sum()) >= 3:
+                ratios = act_tail[valid] / fc_tail[valid]
+                ema_alpha = float(cal_cfg.get("live_ratio_ema_alpha", 0.50))
+                ema_ratio = float(ratios[0])
+                for ratio in ratios[1:]:
+                    ema_ratio = (ema_alpha * float(ratio)) + ((1.0 - ema_alpha) * ema_ratio)
+                live_low, live_high = (
+                    (0.92, 1.08) if horizon == "t2" else (0.95, 1.05)
+                )
+                live_ratio = float(np.clip(ema_ratio, live_low, live_high))
+                live_bias = float(np.median(act_tail[valid] - fc_tail[valid]))
+                ratio_cap = max(ratio_cap, live_high - 1.0)
+                blend = max(blend, float(cal_cfg.get("live_ratio_weight", 0.55)))
+                segment_blend = min(max(segment_blend, 0.20), float(cal_cfg.get("live_segment_blend_cap", 0.30)))
+
+        fc_energy = float(np.sum(fc) * 0.25)
+        anchor_energy = float(np.sum(anchor) * 0.25)
+        raw_ratio = (anchor_energy / fc_energy) if fc_energy > 100.0 else 1.0
+        anchor_ratio = float(np.clip(raw_ratio, 1.0 - ratio_cap, 1.0 + ratio_cap))
+        # Surgical hierarchy: horizon calibration is only the EMA live ratio.
+        # Historical anchor ratios remain diagnostic, not an extra correction.
+        level_ratio = float(live_ratio if actual_blocks >= 4 else 1.0)
+
+        # Block-window correction, smoothed to avoid jagged copied history.
+        segment_delta = anchor - fc
+        kernel = np.ones(7, dtype=float) / 7.0
+        segment_delta = np.convolve(np.pad(segment_delta, (3, 3), mode="edge"), kernel, mode="valid")
+        cap = np.maximum(np.abs(fc) * float(cal_cfg.get("mw_cap_pct", 0.10)), float(cal_cfg.get("mw_cap_floor", 250.0)))
+        segment_delta = np.clip(segment_delta, -cap, cap)
+
+        future_start = int(np.clip(actual_blocks, 0, _BLOCK_COUNT))
+        for i in range(future_start, _BLOCK_COUNT):
+            live_decay = 1.0
+            level_corr = fc[i] * (level_ratio - 1.0)
+            shape_corr = 0.0
+            if actual_blocks >= 4 and bool(cal_cfg.get("additive_live_bias_enabled", False)):
+                bias_weight = float(cal_cfg.get("live_bias_weight", 0.30))
+                bias_corr = live_bias * bias_weight * live_decay
+            else:
+                bias_corr = 0.0
+            correction[i] = level_corr + shape_corr + bias_corr
+
+        calibrated = np.maximum(fc + correction, 0.0)
+        calibrated[:future_start] = fc[:future_start]
+        return calibrated, correction, {
+            "enabled": True,
+            "applied": bool(np.any(np.abs(correction[future_start:]) > 1e-6)),
+            "horizon": horizon,
+            "level_ratio_raw": round(float(raw_ratio), 5),
+            "anchor_ratio_diagnostic": round(float(anchor_ratio), 5),
+            "level_ratio_applied": round(float(level_ratio), 5),
+            "blend": 1.0 if actual_blocks >= 4 else 0.0,
+            "segment_blend": round(float(segment_blend), 3),
+            "shape_correction_enabled": False,
+            "live_ratio": round(float(live_ratio), 5),
+            "live_ratio_method": "ema_3_block",
+            "live_ratio_clamp": [0.92, 1.08] if horizon == "t2" else [0.95, 1.05],
+            "decay_profile": {
+                "enabled": False,
+                "reason": "live EMA ratio is applied without extra decay",
+            },
+            "accuracy_layer_enabled": bool(accuracy_cfg),
+            "live_bias_mw": round(float(live_bias), 2),
+            "additive_live_bias_enabled": bool(cal_cfg.get("additive_live_bias_enabled", False)),
+            "additive_live_bias_weight": float(cal_cfg.get("live_bias_weight", 0.30)),
+            "mean_correction_mw": round(float(np.mean(correction[future_start:])), 2) if future_start < _BLOCK_COUNT else 0.0,
+            "max_abs_correction_mw": round(float(np.max(np.abs(correction[future_start:]))), 2) if future_start < _BLOCK_COUNT else 0.0,
+        }
+    except Exception as exc:
+        logger.debug("Horizon calibration skipped: %s", exc)
+        return fc, correction, {"enabled": True, "applied": False, "reason": str(exc)}
+
+
+def _apply_ramp_limit(
+    forecast: np.ndarray,
+    *,
+    actual_blocks: int = 0,
+    max_ramp_mw: float = 300.0,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Constrain future block-to-block ramp inside the forecast, not only at export."""
+    out = _as_96_vector(forecast).astype(float)
+    applied = np.zeros(_BLOCK_COUNT, dtype=float)
+    start = int(np.clip(int(actual_blocks), 0, _BLOCK_COUNT))
+    if start >= _BLOCK_COUNT:
+        return out, applied, {"enabled": True, "applied": False, "max_ramp_mw": float(max_ramp_mw)}
+    for i in range(max(1, start), _BLOCK_COUNT):
+        prev = out[i - 1]
+        before = out[i]
+        out[i] = float(np.clip(before, prev - float(max_ramp_mw), prev + float(max_ramp_mw)))
+        applied[i] = out[i] - before
+    return out, applied, {
+        "enabled": True,
+        "applied": bool(np.any(np.abs(applied[start:]) > 1e-6)),
+        "max_ramp_mw": float(max_ramp_mw),
+        "max_abs_applied_mw": round(float(np.max(np.abs(applied[start:]))), 3) if start < _BLOCK_COUNT else 0.0,
+        "applied_mw": applied.tolist(),
+    }
+
+
 def _similar_day_baseline(df: pd.DataFrame, target_date: str, cfg: Dict) -> Tuple[np.ndarray, pd.DataFrame]:
     df = _add_calendar(df)
     dates = sorted(df["date"].dropna().unique().tolist())
     if target_date not in dates:
         # Find latest robust date
-        target_date = dates[-1]
+        latest_robust = dates[-1] if dates else target_date
         for d in reversed(dates):
             day_df = df[df["date"] == d]
             if day_df["time_block"].nunique() >= 96 and day_df["total_drawal"].mean() > cfg.get("min_valid_load_mw", 100):
-                target_date = d
+                latest_robust = d
                 break
-    idx = dates.index(target_date)
-    candidates = dates[max(0, idx - cfg["candidate_lookback_days"]):idx]
+        # Keep target_date as-is for season/day_type derivation if it's a future
+        # date; only swap when it's missing AND we have no calendar info yet.
+        target_for_idx = latest_robust
+    else:
+        target_for_idx = target_date
+    idx = dates.index(target_for_idx)
+
+    # ── Build THREE pools ─────────────────────────────────────────────────────
+    # 1) recent_7    : last 7 calendar days before target  → baseline
+    # 2) current_month: same calendar month, all prior years, ±seasonal_window
+    #                   around the same month-day             → baseline
+    # 3) last_year_obs: ±7 days around same date exactly 1 year ago
+    #                   → observation / metadata only, NOT blended into baseline
+    seasonal_window = int(cfg.get("seasonal_window_days", 21))
+
+    try:
+        target_ts = pd.Timestamp(target_date)
+    except Exception:
+        target_ts = pd.Timestamp(target_for_idx)
+
+    recent_7_pool: set = set(dates[max(0, idx - 7):idx])
+
+    current_month_pool: set = set()
+    last_year_obs_pool: set = set()
+    if pd.notna(target_ts):
+        target_year  = int(target_ts.year)
+        target_month = int(target_ts.month)
+        target_md    = (target_month, int(target_ts.day))
+        last_year    = target_year - 1
+
+        for d in dates:
+            try:
+                dt = pd.Timestamp(d)
+            except Exception:
+                continue
+            if pd.isna(dt) or int(dt.year) >= target_year:
+                continue
+            # Last-year observation window: ±7 days around same date in prior year
+            if int(dt.year) == last_year:
+                try:
+                    anchor_ly = pd.Timestamp(year=last_year, month=target_md[0],
+                                             day=min(target_md[1], 28))
+                except Exception:
+                    anchor_ly = None
+                if anchor_ly is not None and abs((dt - anchor_ly).days) <= 7:
+                    last_year_obs_pool.add(d)
+
+            # Current-month pool: same month, prior years, ±seasonal_window days
+            if int(dt.month) == target_month:
+                try:
+                    anchor = pd.Timestamp(year=int(dt.year), month=target_md[0],
+                                          day=min(target_md[1], 28))
+                except Exception:
+                    continue
+                if abs((dt - anchor).days) <= seasonal_window:
+                    current_month_pool.add(d)
+
+    # Baseline candidates = recent 7 days + current-month prior-year days
+    candidates = sorted(
+        (recent_7_pool | current_month_pool)
+        - {target_date, target_for_idx}
+    )
     if not candidates:
         candidates = dates[:idx]
 
-    # Exclude synthetic/forecast-stand-in days from the similar-day candidate pool.
-    # Their load values are forecasts, not real observations, so they would corrupt
-    # the baseline shape.  They stay in df so the pipeline can see prior-day level
-    # for trend/boundary corrections, but must not feed the baseline averages.
+    # Weekend / holiday separate baseline pools (A6):
+    # Weekend and holiday days have distinctly different load profiles.
+    # Filter candidates to same day-type if target is a weekend/holiday
+    # and sufficient same-type candidates exist.
+    _target_is_weekend = pd.notna(target_ts) and target_ts.weekday() >= 5
+    _target_day_type_str = (
+        df[df["date"] == target_date]["day_type"].iloc[0]
+        if not df[df["date"] == target_date].empty and "day_type" in df.columns
+        else "weekday"
+    )
+    _target_is_holiday = "holiday" in str(_target_day_type_str).lower()
+    _weekend_baseline_days = int(cfg.get("weekend_baseline_days", 14))
+
+    if _target_is_holiday:
+        # Holiday pool: only same-type holiday candidates
+        _holiday_candidates = [
+            d for d in candidates
+            if "holiday" in str(
+                df[df["date"] == d]["day_type"].iloc[0]
+                if not df[df["date"] == d].empty and "day_type" in df.columns else ""
+            ).lower()
+        ]
+        if len(_holiday_candidates) >= 3:
+            candidates = _holiday_candidates
+            logger.debug("Holiday baseline pool: %d days", len(candidates))
+    elif _target_is_weekend:
+        # Weekend pool: filter to same weekday (Sat or Sun) from recent N weeks
+        _target_weekday = target_ts.weekday()
+        _all_dates_df = pd.to_datetime(pd.Series(dates), errors="coerce")
+        _weekend_dates = set(
+            str(d.date()) for d in _all_dates_df
+            if pd.notna(d) and d.weekday() == _target_weekday
+            and pd.Timestamp(d) < target_ts
+        )
+        # Limit to last weekend_baseline_days same-weekday occurrences
+        _sorted_wd = sorted(_weekend_dates, reverse=True)[:_weekend_baseline_days]
+        _weekend_candidates = [d for d in candidates if d in set(_sorted_wd)]
+        if len(_weekend_candidates) >= 4:
+            candidates = _weekend_candidates
+            logger.debug(
+                "Weekend baseline pool (%s): %d days",
+                ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][_target_weekday], len(candidates)
+            )
+
+    # Exclude synthetic days
     if "_is_synthetic" in df.columns:
         _synth_set = set(df[df["_is_synthetic"] == 1]["date"].astype(str).unique())
-        candidates = [d for d in candidates if d not in _synth_set]
+        candidates      = [d for d in candidates if d not in _synth_set]
+        last_year_obs_pool -= _synth_set
+
+    # Exclude anomaly days: days where daily load deviated > ±anomaly_exclusion_pct
+    # from their own trailing-7-day mean corrupt the baseline pool (r=-0.72 with error).
+    _anomaly_exclusion_pct = float(cfg.get("anomaly_exclusion_pct", 0.06))
+    if _anomaly_exclusion_pct > 0:
+        try:
+            _pool_dates = set(candidates) | last_year_obs_pool
+            _day_means = (
+                df[df["date"].isin(_pool_dates)]
+                .groupby("date")["total_drawal"].mean()
+                .sort_index()
+            )
+            _trailing7 = _day_means.rolling(7, min_periods=2).mean().shift(1)
+            _dev_pct = ((_day_means - _trailing7) / _trailing7.replace(0, np.nan)).abs()
+            _anomaly_dates = set(_dev_pct[_dev_pct > _anomaly_exclusion_pct].index.astype(str))
+            # Guard: don't exclude everything — require at least 5 clean candidates
+            # Also exclude the day after each anomaly (night-dip propagation)
+            _also_exclude = set()
+            for _ad in _anomaly_dates:
+                try:
+                    _also_exclude.add((pd.Timestamp(_ad) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+                except Exception:
+                    pass
+            _all_exclude = _anomaly_dates | _also_exclude
+            _clean_candidates = [d for d in candidates if d not in _all_exclude]
+            if len(_clean_candidates) >= 5:
+                candidates = _clean_candidates
+                last_year_obs_pool -= _all_exclude
+                logger.debug(
+                    "Anomaly day exclusion: removed %d days (>%.0f%% dev from trailing-7) + %d post-anomaly days",
+                    len(_anomaly_dates), _anomaly_exclusion_pct * 100, len(_also_exclude),
+                )
+        except Exception as _ae:
+            logger.debug("Anomaly exclusion skipped: %s", _ae)
 
     target_df = df[df["date"] == target_date]
     target_season = target_df["season"].iloc[0] if not target_df.empty else "unknown"
-    
-    # Get seasonal intervals
+
     s_config = SEASONAL_WEATHER_INTERVALS.get(target_season, SEASONAL_WEATHER_INTERVALS["spring"])
     cdd_base = s_config["cdd_base"]
     hdd_base = s_config["hdd_base"]
-    temp_band = s_config["temp_band"]
-    hum_band = s_config["hum_band"]
 
     target_temp = target_df["temperature"].mean()
-    target_hum = target_df["humidity"].mean()
-    target_cdd = (target_df["temperature"] - cdd_base).clip(lower=0).mean()
-    target_hdd = (hdd_base - target_df["temperature"]).clip(lower=0).mean()
-    target_rain = (target_df["precipitation"] > 0).any()
+    target_hum  = target_df["humidity"].mean()
+    target_cdd  = (target_df["temperature"] - cdd_base).clip(lower=0).mean()
+    target_hdd  = (hdd_base - target_df["temperature"]).clip(lower=0).mean()
+    target_rain = (target_df["precipitation"] > 0).any() if "precipitation" in target_df.columns else False
+    _wind_col   = "wind_speed_10m" if "wind_speed_10m" in target_df.columns else None
+    WIND_GUST_THRESHOLD = float(cfg.get("wind_gust_threshold_kmh", 30.0))
+    target_windy = bool(_wind_col and (target_df[_wind_col] > WIND_GUST_THRESHOLD).any())
     target_day_type = target_df["day_type"].iloc[0] if not target_df.empty else "unknown"
 
     df_prep = df.copy()
     df_prep["CDD"] = (df_prep["temperature"] - cdd_base).clip(lower=0)
     df_prep["HDD"] = (hdd_base - df_prep["temperature"]).clip(lower=0)
 
+    all_pool_dates = set(candidates) | last_year_obs_pool
+    _agg_spec = dict(
+        temp_mean=("temperature", "mean"),
+        hum_mean=("humidity", "mean"),
+        cdd_mean=("CDD", "mean"),
+        hdd_mean=("HDD", "mean"),
+        season=("season", "first"),
+        day_type=("day_type", "first"),
+        avg_load=("total_drawal", "mean"),
+    )
+    if "precipitation" in df_prep.columns:
+        _agg_spec["rain_any"] = ("precipitation", lambda x: float((x > 0).any()))
+    else:
+        _agg_spec["rain_any"] = ("temperature", lambda x: 0.0)  # fallback zero
+    if _wind_col:
+        _agg_spec["wind_max"] = (_wind_col, "max")
+
     summary = (
-        df_prep[df_prep["date"].isin(candidates)]
+        df_prep[df_prep["date"].isin(all_pool_dates)]
         .groupby("date")
-        .agg(
-            temp_mean=("temperature", "mean"),
-            hum_mean=("humidity", "mean"),
-            cdd_mean=("CDD", "mean"),
-            hdd_mean=("HDD", "mean"),
-            rain_any=("precipitation", lambda x: float((x > 0).any())),
-            season=("season", "first"),
-            day_type=("day_type", "first"),
-            avg_load=("total_drawal", "mean")
-        )
+        .agg(**_agg_spec)
         .reset_index()
     )
+    if "wind_max" not in summary.columns:
+        summary["wind_max"] = 0.0
 
-    # Filter out days with zero load
     summary = summary[summary["avg_load"] > cfg.get("min_valid_load_mw", 100)].copy()
-
     if summary.empty:
         baseline = target_df.sort_values("time_block")["total_drawal"].to_numpy()
         return baseline, summary
+
+    # ── Mark last-year observation rows (not used in baseline) ────────────────
+    summary["is_last_year_obs"] = summary["date"].isin(last_year_obs_pool)
+
+    # ── Hard weather filter for baseline candidates ────────────────────────────
+    # If today is clear (no rain, no wind gust) → skip any candidate day that
+    # had rain or wind gusts — their load shape reflects weather suppression
+    # that isn't present today.
+    baseline_candidate_set = set(candidates)
+    if not target_rain and not target_windy:
+        _weather_ok = (
+            (~summary["rain_any"].astype(bool)) &
+            (summary["wind_max"] <= WIND_GUST_THRESHOLD)
+        )
+        _clear_dates = set(summary.loc[_weather_ok, "date"].tolist())
+        baseline_candidate_set = baseline_candidate_set & _clear_dates
+        if not baseline_candidate_set:
+            # All candidates were rainy/windy — relax and use all (prefer clear still)
+            baseline_candidate_set = set(candidates)
 
     weather_signal_available = True
     if not np.isfinite(float(target_temp)) or not np.isfinite(float(target_hum)):
@@ -2027,108 +2743,159 @@ def _similar_day_baseline(df: pd.DataFrame, target_date: str, cfg: Dict) -> Tupl
     for _wc in ["temp_mean", "hum_mean", "cdd_mean", "hdd_mean", "rain_any"]:
         if _wc in summary.columns:
             summary[_wc] = pd.to_numeric(summary[_wc], errors="coerce")
-    if "temp_mean" in summary.columns and not summary["temp_mean"].notna().any():
-        weather_signal_available = False
-    if "hum_mean" in summary.columns and not summary["hum_mean"].notna().any():
+    if not summary["temp_mean"].notna().any():
         weather_signal_available = False
 
-    summary["same_season"] = summary["season"].eq(target_season)
-    summary["same_day_type"] = summary["day_type"].eq(target_day_type)
+    # Work only on baseline candidates for scoring/selection
+    score_df = summary[summary["date"].isin(baseline_candidate_set)].copy()
+    if score_df.empty:
+        score_df = summary[~summary["is_last_year_obs"]].copy()
+
+    target_dow = int(pd.Timestamp(target_date).dayofweek) if pd.notna(target_ts) else -1
+    for _sdf in (summary, score_df):
+        _sdf["same_season"]   = _sdf["season"].eq(target_season)
+        _sdf["same_day_type"] = _sdf["day_type"].eq(target_day_type)
+        _sdf["dow"]           = pd.to_datetime(_sdf["date"], errors="coerce").dt.dayofweek
+        target_is_weekend = str(target_day_type).lower() in ("weekend", "saturday", "sunday")
+        cand_is_weekend   = _sdf["day_type"].astype(str).str.lower().isin(["weekend", "saturday", "sunday"])
+        _sdf["day_tier"] = np.where(
+            _sdf["dow"].eq(target_dow), 0,
+            np.where(_sdf["same_day_type"], 1,
+                     np.where(cand_is_weekend == target_is_weekend, 2, 3)),
+        )
+
+    # Pool source tag: recent_7 days get a recency boost in weighting
+    summary["pool"] = np.where(
+        summary["date"].isin(recent_7_pool), "recent_7",
+        np.where(summary["is_last_year_obs"], "last_year_obs", "current_month")
+    )
+    score_df["pool"] = np.where(score_df["date"].isin(recent_7_pool), "recent_7", "current_month")
+
     if weather_signal_available:
-        summary["temp_diff"] = (summary["temp_mean"] - target_temp).abs()
-        summary["hum_diff"] = (summary["hum_mean"] - target_hum).abs()
-        summary["degree_day_diff"] = (summary["cdd_mean"] - target_cdd).abs() + (summary["hdd_mean"] - target_hdd).abs()
-        summary["rain_match"] = summary["rain_any"].astype(bool).eq(bool(target_rain))
+        score_df["temp_diff"]       = (score_df["temp_mean"] - target_temp).abs()
+        score_df["hum_diff"]        = (score_df["hum_mean"]  - target_hum).abs()
+        score_df["degree_day_diff"] = (
+            (score_df["cdd_mean"] - target_cdd).abs() +
+            (score_df["hdd_mean"] - target_hdd).abs()
+        )
     else:
-        # If weather is missing in the local file, do not let NaN weather scores
-        # push selection to arbitrary old dates. Fall back to calendar + recency.
-        summary["temp_diff"] = 0.0
-        summary["hum_diff"] = 0.0
-        summary["degree_day_diff"] = 0.0
-        summary["rain_match"] = True
+        score_df["temp_diff"] = score_df["hum_diff"] = score_df["degree_day_diff"] = 0.0
 
-    filtered = summary[summary["same_season"] & summary["same_day_type"]]
-    if weather_signal_available and cfg.get("require_rain_match", True):
-        filtered = filtered[filtered["rain_match"]]
-    if weather_signal_available:
-        filtered = filtered[filtered["temp_diff"] <= temp_band]
+    score_df["temp_norm"] = _zscore_or_minmax(score_df["temp_diff"])
+    score_df["hum_norm"]  = _zscore_or_minmax(score_df["hum_diff"])
+    score_df["dd_norm"]   = _zscore_or_minmax(score_df["degree_day_diff"])
 
-    # Progressive fallback: relax temp band if too few candidates (v3.0)
-    if len(filtered) < 5:
-        relaxed = summary[summary["same_season"] & summary["same_day_type"]]
-        if weather_signal_available and cfg.get("require_rain_match", True):
-            relaxed = relaxed[relaxed["rain_match"]]
-        if weather_signal_available:
-            relaxed = relaxed[relaxed["temp_diff"] <= temp_band + 1.0]
-        if len(relaxed) >= len(filtered):
-            filtered = relaxed
-    if len(filtered) < 3:
-        relaxed2 = summary[summary["same_season"] & summary["same_day_type"]]
-        if weather_signal_available:
-            relaxed2 = relaxed2[relaxed2["temp_diff"] <= temp_band + 2.0]
-        if len(relaxed2) >= len(filtered):
-            filtered = relaxed2
-    if filtered.empty:
-        filtered = summary.copy()
-    else:
-        filtered = filtered.copy()
+    sw     = cfg.get("similarity_weights", {"temp": 0.55, "humidity": 0.25, "rain": 0.20})
+    w_temp = sw.get("temp", 0.55) * 0.7
+    w_dd   = sw.get("temp", 0.55) * 0.3
+    w_hum  = sw.get("humidity", 0.25)
 
-    temp_norm = filtered["temp_diff"] / max(temp_band, 1e-3)
-    hum_norm = filtered["hum_diff"] / max(hum_band, 1e-3)
-    dd_norm = filtered["degree_day_diff"] / 2.0 # Normalize degree day diff
-    rain_penalty = (~filtered["rain_match"]).astype(int)
-
-    w_temp = cfg["similarity_weights"]["temp"] * 0.7
-    w_dd = cfg["similarity_weights"]["temp"] * 0.3
-    w_hum = cfg["similarity_weights"]["humidity"]
-    w_rain = cfg["similarity_weights"]["rain"]
-
-    filtered["similarity_score"] = w_temp * temp_norm + w_dd * dd_norm + w_hum * hum_norm + w_rain * rain_penalty
-    filtered["similarity_score"] = (
-        pd.to_numeric(filtered["similarity_score"], errors="coerce")
+    score_df["similarity_score"] = (
+        w_temp * score_df["temp_norm"].abs()
+        + w_dd  * score_df["dd_norm"].abs()
+        + w_hum * score_df["hum_norm"].abs()
+    )
+    score_df["similarity_score"] = (
+        pd.to_numeric(score_df["similarity_score"], errors="coerce")
         .replace([np.inf, -np.inf], np.nan)
-        .fillna(0.0 if not weather_signal_available else 1e6)
+        .fillna(1e6 if weather_signal_available else 0.0)
     )
 
-    filtered = filtered.sort_values(["similarity_score", "date"], ascending=[True, False]).head(cfg["similar_days_top_n"])
-    selected_dates = filtered["date"].tolist()
-    if not selected_dates:
-        selected_dates = candidates[-1:]
+    # ── Tiered selection: tier 0 (exact DOW) first, then widen ───────────────
+    top_n = int(cfg.get("similar_days_top_n", 8))
+    picks: List[str] = []
+    for tier in (0, 1, 2):
+        if len(picks) >= top_n:
+            break
+        slice_ = score_df[score_df["day_tier"] == tier].sort_values(
+            ["similarity_score", "date"], ascending=[True, False]
+        )
+        picks.extend(slice_["date"].head(top_n - len(picks)).tolist())
 
-    # Normalize similar days for load growth (User Fix #4)
-    # Calculate recent 7-day average load level
-    recent_dates = dates[max(0, idx - 7):idx]
+    if not picks:
+        return np.zeros(96, dtype=float), summary
+
+    filtered = score_df[score_df["date"].isin(picks)].copy()
+    filtered = filtered.sort_values(["day_tier", "similarity_score", "date"],
+                                    ascending=[True, True, False])
+    selected_dates = filtered["date"].tolist()
+
+    # ── Level-correction scaling (anchor to recent 7-day mean load) ──────────
+    # Exclude anomalous recent days so a single drastic day doesn't shift the
+    # level anchor down (or up) and bias every similar-day curve.
     recent_load_level = 1.0
-    if recent_dates:
-        # Check if we have 'total_drawal' column
-        recent_avg = df[df["date"].isin(recent_dates)]["total_drawal"].mean()
+    if recent_7_pool:
+        recent_df = df[df["date"].isin(recent_7_pool)]
+        day_avgs  = recent_df.groupby("date")["total_drawal"].mean()
+        if len(day_avgs) >= 3:
+            _mu, _sd = day_avgs.mean(), day_avgs.std()
+            if _sd > 0:
+                clean_days = day_avgs[(day_avgs - _mu).abs() <= 1.8 * _sd]
+                day_avgs = clean_days if len(clean_days) >= 2 else day_avgs
+        recent_avg = float(day_avgs.mean()) if len(day_avgs) else 0.0
         if recent_avg > 100:
-            recent_load_level = float(recent_avg)
-    
-    # Calculate similar days baseline
+            recent_load_level = recent_avg
+        # Track which recent days are clean — anomalous ones lose their recency boost
+        _clean_recent = set(day_avgs.index.tolist())
+    else:
+        _clean_recent = set()
+
     similar_days_df = df[df["date"].isin(selected_dates)]
-    
-    # Scale each similar day
-    scaled_stack = []
+
+    # Tier-aware weighting + recency boost only for clean recent days
+    tier_weights   = {0: 1.00, 1: 0.60, 2: 0.30, 3: 0.10}
+    tier_lookup    = filtered.set_index("date")["day_tier"].to_dict() if "day_tier" in filtered.columns else {}
+    pool_lookup    = filtered.set_index("date")["pool"].to_dict()   if "pool"     in filtered.columns else {}
+    RECENCY_BOOST  = 1.30   # recent_7 days contribute 30% more weight (only if not anomalous)
+
+    scaled_stack: List[np.ndarray] = []
+    weight_stack: List[float]      = []
+    scale_log: List[float]         = []
     for d in selected_dates:
         day_df = similar_days_df[similar_days_df["date"] == d]
-        if day_df.empty: continue
+        if day_df.empty:
+            continue
         day_avg = day_df["total_drawal"].mean()
         scale = 1.0
         if day_avg > 100 and recent_load_level > 100:
-             scale = recent_load_level / day_avg
-             # Clamp scale to avoid extreme multipliers (e.g. 0.8 to 1.2)
-             scale = np.clip(scale, 0.85, 1.15)
-        
-        vals = day_df.groupby("time_block")["total_drawal"].mean().reindex(range(1, 97)).ffill().bfill().to_numpy()
+            scale = float(np.clip(recent_load_level / day_avg, 0.70, 1.50))
+        scale_log.append(scale)
+
+        vals = (day_df.groupby("time_block")["total_drawal"]
+                .mean().reindex(range(1, 97)).ffill().bfill().to_numpy())
         scaled_stack.append(vals * scale)
-        
+
+        tw = tier_weights.get(int(tier_lookup.get(d, 3)), 0.10)
+        if pool_lookup.get(d) == "recent_7" and d in _clean_recent:
+            tw *= RECENCY_BOOST   # boost only non-anomalous recent days
+        weight_stack.append(tw)
+
+    if scale_log:
+        try:
+            filtered = filtered.assign(scale=pd.Series(scale_log,
+                                                        index=filtered.index[:len(scale_log)]))
+        except Exception:
+            pass
+
     if not scaled_stack:
         return np.zeros(96), filtered
 
-    baseline = np.mean(np.vstack(scaled_stack), axis=0)
+    weights_arr = np.asarray(weight_stack, dtype=float)
+    if weights_arr.sum() <= 0:
+        weights_arr = np.ones_like(weights_arr)
+    weights_arr /= weights_arr.sum()
+    baseline = np.tensordot(weights_arr, np.vstack(scaled_stack), axes=(0, 0))
 
-    return baseline, filtered
+    # Append last-year observation rows to summary for UI reference
+    # (they are already in summary with is_last_year_obs=True; merge any
+    #  scoring cols back so callers get a consistent schema)
+    for _col in ("day_tier", "similarity_score", "pool", "same_season",
+                 "same_day_type", "dow"):
+        if _col not in summary.columns:
+            summary[_col] = np.nan
+
+    # Bias correction applied in run_short_term_pipeline (Stage 4)
+    return baseline, summary
 
 
 def _build_weather_model() -> Any:
@@ -2202,7 +2969,7 @@ def _tune_xgb(X_train, y_train, X_val, y_val, n_iter: int, quantile: float = 0.5
             "random_state": 42,
         }
         model = XGBRegressor(**params)
-        print(f"\n[ML Pipeline] XGBoost tuning iteration... Training epochs:")
+        print("\n[ML Pipeline] XGBoost tuning iteration... Training epochs:")
         model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=100)
         preds = model.predict(X_val)
         score = _rmse(y_val, preds)
@@ -2233,7 +3000,7 @@ def _tune_lgbm(X_train, y_train, X_val, y_val, n_iter: int, quantile: float = 0.
             "random_state": 42,
         }
         model = LGBMRegressor(**params)
-        print(f"\n[ML Pipeline] LightGBM tuning iteration... Training epochs:")
+        print("\n[ML Pipeline] LightGBM tuning iteration... Training epochs:")
         model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
         preds = model.predict(X_val)
         score = _rmse(y_val, preds)
@@ -2259,7 +3026,6 @@ class WeatherEnsemble:
 
 def _estimate_feature_effects(model: Any, data: pd.DataFrame, features: List[str]) -> Dict[str, float]:
     y = data["total_drawal"].to_numpy()
-    y_std = float(np.std(y)) if len(y) else 1.0
     
     # Handle Ensemble
     if isinstance(model, WeatherEnsemble):
@@ -2333,7 +3099,7 @@ def _train_weather_model(df: pd.DataFrame, tune: bool = True, tune_iters: int = 
 
     if model is None:
         model = _build_weather_model()
-        print(f"\n[ML Pipeline] Training base weather model... Training epochs:")
+        print("\n[ML Pipeline] Training base weather model... Training epochs:")
         model.fit(X, y) # Default fallback without eval_set avoids shape issues
     effects = _estimate_feature_effects(model, data, features)
     return model, data, effects
@@ -3452,7 +4218,28 @@ def run_weather_impact_elastic_net_engine(
 
     temp_delta = today_temp - yday_temp
     hum_delta = today_hum - yday_hum
-    rain_delta = today_rain - yday_rain
+    # rain_delta: today minus yesterday precipitation.
+    # First-rain-event detection: if today has significant rain (>5mm daily total) but
+    # yesterday was dry (<1mm), this is the season opener. The elastic net coefficient
+    # was fitted on mid-season rain events where load was already modulated — applying
+    # it full-strength on day-1 produces catastrophic over-suppression (May 30 failure).
+    # On a first-rain day, cap rain_delta at +3mm/block (modest signal only).
+    _today_total_mm = float(np.nansum(today_rain))
+    _yday_total_mm  = float(np.nansum(yday_rain))
+    _is_first_rain = _today_total_mm > 5.0 and _yday_total_mm < 1.0
+    if _is_first_rain:
+        # Suppress rain_delta on the season's first rain day: use flat small positive
+        # delta so the model registers "rain" but doesn't over-correct.
+        rain_delta = np.clip(today_rain - yday_rain, -3.0, 3.0)
+        logger.info(
+            "[rain_delta] First-rain-event: today=%.1fmm, yday=%.1fmm → "
+            "rain_delta clamped to ±3mm (was ±10mm default)",
+            _today_total_mm, _yday_total_mm,
+        )
+    else:
+        # Standard clamp: elastic net trained on ≤3mm typical deltas;
+        # 20mm monsoon day would extrapolate to −2000MW without this guard.
+        rain_delta = np.clip(today_rain - yday_rain, -10.0, 10.0)
     apparent_delta = today_apparent - yday_apparent
     cloud_delta = today_cloud - yday_cloud
     sun_delta = today_sun - yday_sun
@@ -3485,6 +4272,70 @@ def run_weather_impact_elastic_net_engine(
         (rad_delta * rad_w) +
         (wind_delta * wind_w)
     )
+    # Cap weather_impact_pct — regime-aware:
+    #   Hot-Dry: AC penetration means temperature effect can exceed +12%. Raise upper cap to +18%.
+    #   Active Monsoon: rain suppression is real but bounded. Keep lower cap at -20%.
+    #   First-rain day (monsoon_day_number == 1): tighten suppression cap to -10% to prevent
+    #     the elastic net from over-suppressing on the season opener.
+    _avg_today_temp  = float(np.nanmean(today_temp))
+    _avg_today_hum   = float(np.nanmean(today_hum))
+    _total_today_rain = float(np.nansum(today_rain))
+    _avg_today_wind  = float(np.nanmean(today_wind))
+    # Regime detection (mirrors agent_analysis K-means labels, rule-based proxy):
+    #   Hot-Dry:            temp > 38°C AND humidity < 40%
+    #   Active Monsoon:     total daily rain > 5mm OR (humidity > 65% AND cloud cover avg > 60%)
+    #   Pre-Monsoon Humid:  everything else in summer
+    _avg_today_cloud = float(np.nanmean(today_cloud)) if today_cloud is not None else 0.0
+    if _avg_today_temp > 38.0 and _avg_today_hum < 40.0:
+        _regime = "hot_dry"
+    elif _total_today_rain > 5.0 or (_avg_today_hum > 65.0 and _avg_today_cloud > 60.0):
+        _regime = "active_monsoon"
+    else:
+        _regime = "pre_monsoon_humid"
+    # monsoon_day_number: days since first rain >5mm this calendar month
+    # Approximate via counting rain days in the current month up to today in df.
+    _monsoon_day_number = 0
+    try:
+        _target_dt = pd.to_datetime(str(resolved_date)[:10])
+        _month_start = _target_dt.replace(day=1)
+        _df_month = df[
+            (pd.to_datetime(df["date"].astype(str)) >= _month_start) &
+            (pd.to_datetime(df["date"].astype(str)) < _target_dt)
+        ]
+        if not _df_month.empty:
+            _daily_rain = _df_month.groupby("date")["precipitation"].sum()
+            _rainy_in_month = (_daily_rain > 5.0).sum()
+            _monsoon_day_number = int(_rainy_in_month)
+    except Exception:
+        pass
+    # First rain event: this is the first rain day (>5mm) after ≥7 dry days
+    _yday_total_rain = float(np.nansum(yday_rain))
+    _is_first_rain_event = (
+        _total_today_rain > 5.0 and _yday_total_rain <= 1.0 and _monsoon_day_number == 0
+    )
+    # Regime-specific caps
+    if _regime == "hot_dry":
+        # AC penetration growing — upper cap raised to +18% for blocks 25-72 (peak periods)
+        _peak_mask = (np.arange(1, _BLOCK_COUNT + 1) >= 25) & (np.arange(1, _BLOCK_COUNT + 1) <= 72)
+        _wp_cap_lo_vec = np.full(_BLOCK_COUNT, -0.18)
+        _wp_cap_hi_vec = np.full(_BLOCK_COUNT, 0.12)
+        _wp_cap_hi_vec[_peak_mask] = 0.18  # raised cap for peak blocks in Hot-Dry
+    elif _regime == "active_monsoon" and _is_first_rain_event:
+        # First rain day: tighten suppression to -10% to prevent over-suppression
+        _wp_cap_lo_vec = np.full(_BLOCK_COUNT, -0.10)
+        _wp_cap_hi_vec = np.full(_BLOCK_COUNT, 0.08)
+        logger.info(
+            "[monsoon] First rain event detected (today=%.1fmm, yday=%.1fmm) — "
+            "suppression cap tightened to -10%%",
+            _total_today_rain, _yday_total_rain,
+        )
+    elif _regime == "active_monsoon":
+        _wp_cap_lo_vec = np.full(_BLOCK_COUNT, -0.15)  # tighter than bare -0.20
+        _wp_cap_hi_vec = np.full(_BLOCK_COUNT, 0.10)
+    else:  # pre_monsoon_humid — default seasonal caps
+        _wp_cap_lo_vec = np.full(_BLOCK_COUNT, {"winter": -0.18, "spring": -0.15, "summer": -0.20, "fall": -0.18}.get(season, -0.18))
+        _wp_cap_hi_vec = np.full(_BLOCK_COUNT, 0.12)
+    weather_impact_pct = np.clip(weather_impact_pct, _wp_cap_lo_vec, _wp_cap_hi_vec)
     weather_impact_mw = base_vec * weather_impact_pct
 
     # Adaptive momentum lambda: on high-volatility days (large yesterday deviation)
@@ -3934,6 +4785,116 @@ def _detect_peak_blocks(
         return _fallback
 
 
+# ── Accuracy Enhancement Functions ───────────────────────────────────────────
+
+REGION_ACCURACY_CONFIG: Dict[str, Dict] = {
+    "haryana": {
+        "ramp_weight_multiplier": 1.3,
+        "heat_onset_c": 30,
+        "anomaly_threshold_pct": 6,
+        "weekend_baseline_days": 14,
+        "t2_night_fallback_mw": 350.0,
+        "bias_window_days": {"apr-jun": 14, "default": 30},
+    },
+    "odisha": {
+        "ramp_weight_multiplier": 1.2,
+        "heat_onset_c": 28,
+        "anomaly_threshold_pct": 8,
+        "weekend_baseline_days": 10,
+        "t2_night_fallback_mw": 280.0,
+        "bias_window_days": {"jun-sep": 10, "default": 30},
+    },
+    "rajasthan": {
+        "ramp_weight_multiplier": 1.3,
+        "heat_onset_c": 32,
+        "anomaly_threshold_pct": 6,
+        "weekend_baseline_days": 14,
+        "t2_night_fallback_mw": 400.0,
+        "bias_window_days": {"apr-jun": 14, "default": 30},
+    },
+    "chhattisgarh": {
+        "ramp_weight_multiplier": 1.25,
+        "heat_onset_c": 29,
+        "anomaly_threshold_pct": 7,
+        "weekend_baseline_days": 12,
+        "t2_night_fallback_mw": 320.0,
+        "bias_window_days": {"default": 30},
+    },
+}
+
+
+def intraday_recalibrate(
+    forecast_96: np.ndarray,
+    settled_actuals: np.ndarray,
+    settled_count: int,
+) -> np.ndarray:
+    """Apply morning-actuals-based correction to unsettled forecast blocks.
+
+    Uses settled morning actuals (blocks 1..settled_count) as a correction
+    signal.  Applies a decaying additive bias to remaining blocks so the
+    forecast converges toward observed morning behaviour while still using
+    the pipeline's shape for the rest of the day.
+
+    Returns the corrected 96-block forecast (or unchanged if correction
+    conditions are not met).
+    """
+    forecast_96 = np.asarray(forecast_96, dtype=float)
+    if forecast_96.size != 96:
+        return forecast_96
+    if settled_count < 8:
+        return forecast_96
+    if settled_count >= 96:
+        return forecast_96
+
+    sa = np.asarray(settled_actuals[:settled_count], dtype=float)
+    sf = forecast_96[:settled_count]
+    valid = (sa > 10) & (sf > 10)
+    if valid.sum() < 4:
+        return forecast_96
+
+    morning_bias = float(np.mean(sa[valid] - sf[valid]))
+    morning_mape = float(
+        np.mean(np.abs(sa[valid] - sf[valid]) / np.maximum(sa[valid], 1.0)) * 100
+    )
+    if morning_mape < 2.0:
+        return forecast_96
+
+    remaining = 96 - settled_count
+    taper = np.linspace(1.0, 0.0, remaining)
+    corrected = forecast_96.copy()
+    corrected[settled_count:] += morning_bias * taper
+    return np.maximum(corrected, 0.0)
+
+
+def t2_night_anchor(
+    t2_forecast: np.ndarray,
+    t1_settled_tail: Optional[np.ndarray],
+    t1_forecast_tail: Optional[np.ndarray],
+) -> np.ndarray:
+    """Carry T+1 end-of-day bias forward into T+2 opening blocks.
+
+    If T+1's last 4 settled blocks deviate from their forecast, that bias
+    is propagated into T+2 blocks 1–32 with exponential decay so the
+    T+2 curve doesn't cold-start from an incorrect level.
+    """
+    t2_forecast = np.asarray(t2_forecast, dtype=float)
+    if t1_settled_tail is None or t1_forecast_tail is None:
+        return t2_forecast
+    tail_a = np.asarray(t1_settled_tail, dtype=float)
+    tail_f = np.asarray(t1_forecast_tail, dtype=float)
+    if tail_a.size < 4 or tail_f.size < 4:
+        return t2_forecast
+    valid = (tail_a > 10) & (tail_f > 10)
+    if valid.sum() < 2:
+        return t2_forecast
+    t1_tail_bias = float(np.mean(tail_a[valid] - tail_f[valid]))
+    if abs(t1_tail_bias) < 5.0:
+        return t2_forecast
+    decay = np.exp(-np.arange(96) / 16.0)
+    corrected = t2_forecast + t1_tail_bias * decay
+    return np.maximum(corrected, 0.0)
+
+
 def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: int = 40, config: Optional[Dict] = None) -> Dict:
     import time as _time
     _t0 = _time.monotonic()
@@ -3941,8 +4902,11 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     cfg = DEFAULT_CONFIG.copy()
     if config:
         cfg.update(config)
+    accuracy_cfg = cfg.get("accuracy_corrections", {}) if isinstance(cfg.get("accuracy_corrections", {}), dict) else {}
+    ai_cfg = cfg.get("hybrid_ai", {}) if isinstance(cfg.get("hybrid_ai", {}), dict) else {}
     # Extract callback (not a real config param, remove before use)
     _progress_cb = cfg.pop("progress_callback", None)
+    _diag = bool(cfg.get("debug_stages", False))
 
     def _step(msg: str):
         elapsed = _time.monotonic() - _t0
@@ -3953,13 +4917,35 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             except Exception:
                 pass
 
+    def _diag_vec(stage: str, vec: np.ndarray) -> None:
+        """Log a compact shape summary for a 96-block vector when debug_stages=True."""
+        if not _diag:
+            return
+        try:
+            v = np.asarray(vec, dtype=float)
+            if v.size == 0:
+                logger.info("[diag:%s][%s] empty vector", target_date, stage)
+                return
+            peak_blk = int(np.argmax(v)) + 1
+            valley_blk = int(np.argmin(v)) + 1
+            logger.info(
+                "[diag:%s][%s] mean=%.1f  peak=%.1f@blk%d  valley=%.1f@blk%d  std=%.1f",
+                target_date, stage,
+                float(np.nanmean(v)),
+                float(np.nanmax(v)), peak_blk,
+                float(np.nanmin(v)), valley_blk,
+                float(np.nanstd(v)),
+            )
+        except Exception:
+            pass
+
     _step("▶ START")
     cfg["similarity_weights"] = _normalize_similarity_weights(cfg.get("similarity_weights", {}))
     actual_blocks = int(np.clip(actual_blocks, 0, 96))  # cap at full day, no static config limit
     if actual_blocks < 2:
         actual_blocks = 0
 
-    df = df.copy()
+    df = _ensure_time_block_1_based(df)
     if "date" not in df.columns:
         raise ValueError("date column missing")
     df["date"] = df["date"].astype(str)
@@ -3979,79 +4965,21 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 target_date = d
                 break
 
-
-    similarity_profile = {
-        "weights": dict(cfg.get("similarity_weights", {})),
-        "require_rain_match": bool(cfg.get("require_rain_match", True)),
-        "source": "manual",
-        "diagnostics": {},
-    }
-    if bool(cfg.get("auto_similarity_from_data", True)):
-        _step("1/7 computing similarity profile...")
-        similarity_profile = _compute_similarity_profile_from_data(df, target_date, cfg)
-        cfg["similarity_weights"] = _normalize_similarity_weights(similarity_profile.get("weights", {}))
-        if bool(cfg.get("auto_require_rain_match", True)):
-            cfg["require_rain_match"] = bool(similarity_profile.get("require_rain_match", True))
-
-    # ── Dynamic peak window detection ─────────────────────────────────────────
-    # Override the static peak_start/peak_end from config with a data-driven
-    # estimate so the shrinkage weighting tracks the actual peak zone each day.
-    if bool(cfg.get("auto_detect_peak_blocks", True)):
-        _dyn_start, _dyn_end = _detect_peak_blocks(
-            df,
-            target_date,
-            lookback_days=int(cfg.get("peak_detection_lookback_days", 30)),
-            percentile_threshold=float(cfg.get("peak_detection_percentile", 75.0)),
-            min_peak_width=int(cfg.get("peak_detection_min_width", 8)),
-        )
-        _shrink = cfg.setdefault("forecast_shrinkage", {})
-        if not isinstance(_shrink, dict):
-            _shrink = {}
-            cfg["forecast_shrinkage"] = _shrink
-        _shrink["peak_start_block"] = _dyn_start
-        _shrink["peak_end_block"] = _dyn_end
-        logger.info(
-            "[pipeline:%s] dynamic peak window: blocks %d–%d",
-            target_date, _dyn_start, _dyn_end,
-        )
-
-    _step("2/7 selecting best baseline window...")
-    best_window, best_mape = _best_baseline_window(
-        df,
-        target_date,
-        cfg["baseline_window_candidates"],
-        cfg["baseline_backtest_days"],
-        weather_weight=float(cfg.get("baseline_weather_weight", 0.0)),
+    external_response = _maybe_run_external_final_forecast(
+        df=df,
+        target_date=str(target_date),
+        actual_blocks=int(actual_blocks),
+        cfg=cfg,
     )
+    if external_response is not None:
+        _step("✓ DONE — external final forecast complete")
+        return external_response
 
-    _step("3/7 finding similar days for baseline...")
-    baseline_hist, similar_days = _similar_day_baseline(df, target_date, cfg)
 
-    # ------------------------------------------------------------------
-    # ML Baseline (Option 1 — hybrid upgrade)
-    # Train an XGBoost/LightGBM/Ridge model on the full history and blend
-    # its prediction with the similar-day baseline.  The delta engine is
-    # unchanged — ML only improves the baseline it starts from.
-    # ------------------------------------------------------------------
-    _step("4/7 training ML baseline (XGBoost/LightGBM/Ridge)...")
-    _ml_baseline_vec = np.zeros(_BLOCK_COUNT, dtype=float)
-    _ml_baseline_meta: dict = {"model_name": "disabled"}
-    if compute_ml_baseline is not None and blend_baselines is not None:
-        try:
-            _ml_baseline_vec, _ml_baseline_meta = compute_ml_baseline(df, target_date)
-            if np.any(_ml_baseline_vec > 0):
-                baseline_hist = blend_baselines(
-                    ml_baseline=_ml_baseline_vec,
-                    stat_baseline=baseline_hist,
-                )
-                logger.info(
-                    "ML baseline blended (%s, blend_weight=%.2f, cached=%s).",
-                    _ml_baseline_meta.get("model_name"),
-                    _ml_baseline_meta.get("blend_weight", 0.45),
-                    _ml_baseline_meta.get("is_cached", False),
-                )
-        except Exception as _ml_err:
-            logger.warning("ML baseline failed, using similar-day baseline only: %s", _ml_err)
+    similar_days = pd.DataFrame()
+    best_window = None
+    best_mape = None
+    similarity_profile = {"source": "lstm_primary", "diagnostics": {}}
 
     target_df = _coerce_day_to_96_blocks(df[df["date"] == target_date], fill_load=False)
     if target_df.empty:
@@ -4064,7 +4992,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
 
     # Compute holiday flags for target date (used by both behaviour and calendar)
     _hf_df_early = _compute_holiday_flags(
-        df[df["date"] == str(target_date)], region=cfg.get("region", "punjab")
+        df[df["date"] == str(target_date)], region=cfg.get("region", "haryana")
     )
     target_holiday_flags = {}
     if not _hf_df_early.empty:
@@ -4075,7 +5003,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             target_holiday_flags[_hfc] = int(_hf_row_early.get(_hfc, 0))
 
     # Human behaviour adjustment based on region, season, day type
-    hb_region = str(cfg.get("region", "punjab"))
+    hb_region = str(cfg.get("region", "haryana"))
     hb_weight = float(cfg.get("human_behaviour_weight", 1.0))
 
     # Calibrate behaviour from historical data if enabled
@@ -4089,150 +5017,202 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         season, hb_region, hb_day_type, weight=hb_weight
     )
 
-    history_dates = [d for d in dates if d < target_date]
-    history_dates = history_dates[-cfg["weather_training_days"]:]
-    train_df = df[df["date"].isin(history_dates)]
-    if train_df.empty:
-        train_df = df[df["date"] != target_date]
-
-    _step("5/7 training weather model (ElasticNet/Ridge)...")
-    weather_model, weather_training_frame, weather_effects = _train_weather_model(
-        train_df,
-        tune=bool(cfg.get("weather_tune", True)),
-        tune_iters=int(cfg.get("weather_tune_iters", 12)),
-    )
     actual = target_df["total_drawal"].to_numpy(dtype=float)
-    load_anchor = _build_load_anchor(baseline_hist=baseline_hist, actual=actual, actual_blocks=actual_blocks)
-    weather_pred, weather_coefs = _weather_baseline(
-        model=weather_model,
-        history_df=train_df,
-        target_df=target_df,
-        effects=weather_effects,
-        load_anchor=load_anchor,
-    )
+    actual_partial_early = actual[:actual_blocks]
 
-    baseline_weather_df = df[df["date"].isin(similar_days["date"].tolist())] if not similar_days.empty else train_df
-    weather_dev = _compute_weather_deviation(target_df, baseline_weather_df)
+    _step("1/3 running LSTM primary forecaster...")
+    import os as _os
+    _artifacts_dir = _os.path.join(_os.path.dirname(__file__), "artifacts")
 
-    coef_temp = float(weather_coefs.get("temperature", 0.0))
-    coef_hum = float(weather_coefs.get("humidity", 0.0))
-    coef_rain = float(weather_coefs.get("rain", 0.0))
+    # Slice df to the UI-selected date range so LSTM trains only on chosen data
+    _train_from = cfg.get("train_from_date")
+    _train_to   = cfg.get("train_to_date")
+    _df_for_lstm = df.copy()
+    if _train_from:
+        _df_for_lstm = _df_for_lstm[_df_for_lstm["date"].astype(str) >= str(_train_from)[:10]]
+    if _train_to:
+        _df_for_lstm = _df_for_lstm[_df_for_lstm["date"].astype(str) <= str(_train_to)[:10]]
+    if _df_for_lstm.empty:
+        logger.warning("train_range filter left 0 rows — falling back to full df for LSTM")
+        _df_for_lstm = df.copy()
 
-    if not baseline_weather_df.empty:
-        w_cols = [
-            "temperature", "humidity", "precipitation",
-            "apparent_temperature", "cloud_cover", "sunshine_duration",
-            "direct_radiation", "wind_speed_10m"
-        ]
-        w_cols = [c for c in w_cols if c in baseline_weather_df.columns]
-        base_block_weather = (
-            baseline_weather_df.groupby("time_block")[w_cols]
-            .mean()
-            .reindex(range(1, 97))
-            .ffill()
-            .bfill()
-        )
-        tgt_w_cols = [c for c in w_cols if c in target_df.columns]
-        target_block_weather = (
-            target_df.set_index("time_block")[tgt_w_cols]
-            .reindex(range(1, 97))
-            .ffill()
-            .bfill()
-        )
-        def _safe_delta(col):
-            if col in target_block_weather.columns and col in base_block_weather.columns:
-                return _fill_nonfinite_vector(
-                    (target_block_weather[col] - base_block_weather[col]).to_numpy(dtype=float),
-                    fill_value=0.0,
+    # ── Weather anomaly detection (before model call) ─────────────────────────
+    _weather_result = None
+    if detect_weather_anomalies is not None:
+        try:
+            _weather_result = detect_weather_anomalies(
+                target_df=target_df,
+                config=cfg.get("weather_anomaly", {}),
+            )
+            if _weather_result.severity not in ("NONE", "LOW"):
+                logger.info(
+                    "[pipeline:%s] weather anomaly detected — severity=%s: %s",
+                    target_date, _weather_result.severity, _weather_result.description,
                 )
-            return np.zeros(96, dtype=float)
-        temp_delta = _safe_delta("temperature")
-        hum_delta = _safe_delta("humidity")
-        rain_delta = _safe_delta("precipitation")
-        apparent_delta = _safe_delta("apparent_temperature")
-        cloud_delta = _safe_delta("cloud_cover")
-        sun_delta = _safe_delta("sunshine_duration")
-        rad_delta = _safe_delta("direct_radiation")
-        wind_delta = _safe_delta("wind_speed_10m")
+        except Exception as _wa_err:
+            logger.debug("Weather anomaly detection failed: %s", _wa_err)
+            _weather_result = None
+
+    # Build exempt_blocks: union of all weather-flagged block lists
+    _exempt_blocks: set = set()
+    if _weather_result is not None:
+        for _blk_list in _weather_result.block_flags.values():
+            _exempt_blocks.update(_blk_list)
+
+    _lstm_vec = None
+    _lstm_t2_vec = None
+    if run_helper_forecast is not None:
+        _lstm_result = run_helper_forecast(
+            df=_df_for_lstm,
+            target_date=target_date,
+            region=cfg.get("region", "unknown"),
+            actual_blocks=actual_blocks,
+            actual_partial=actual_partial_early,
+            artifacts_dir=_artifacts_dir,
+            retrain_every_hours=float(cfg.get("helper_ai", {}).get("retrain_every_hours", 24)),
+            blend_weight=1.0,
+            return_t2=True,
+            clamp_sigma_override=_weather_result.clamp_sigma_override if _weather_result else None,
+            correction_decay_override=_weather_result.correction_decay_override if _weather_result else None,
+            exempt_blocks=_exempt_blocks if _exempt_blocks else None,
+        )
+        if isinstance(_lstm_result, tuple):
+            _lstm_vec, _lstm_t2_vec = _lstm_result
+        else:
+            _lstm_vec = _lstm_result   # fallback: old single-return path
+
+    _target_month = pd.Timestamp(str(target_date)[:10]).month
+    if _target_month in (4, 5, 6):
+        _adaptive_window = 3
+    elif _target_month in (7, 8, 9):
+        _adaptive_window = 5
     else:
-        temp_delta = np.zeros(96)
-        hum_delta = np.zeros(96)
-        rain_delta = np.zeros(96)
-        apparent_delta = np.zeros(96)
-        cloud_delta = np.zeros(96)
-        sun_delta = np.zeros(96)
-        rad_delta = np.zeros(96)
-        wind_delta = np.zeros(96)
+        _adaptive_window = 7
+    _hist_for_base = df[df["date"].astype(str) < str(target_date)].copy()
+    _valid_dates = []
+    for _d in sorted(_hist_for_base["date"].dropna().astype(str).unique().tolist()):
+        _dd = _hist_for_base[_hist_for_base["date"].astype(str) == _d]
+        if int(_dd["time_block"].nunique()) >= 96 and float(_dd["total_drawal"].mean()) > cfg.get("min_valid_load_mw", 100):
+            _valid_dates.append(_d)
+    _hist_for_base = _hist_for_base[_hist_for_base["date"].astype(str).isin(set(_valid_dates[-_adaptive_window:]))]
+    best_window = _adaptive_window
+    _recent_avg = _hist_for_base.groupby("time_block")["total_drawal"].mean()
+    statistical_baseline = _recent_avg.reindex(range(1, 97)).ffill().bfill().fillna(0.0).to_numpy(dtype=float)
 
-    temp_profile = _learn_asymmetric_temp_profile(
-        df=df,
-        target_date=target_date,
-        season=season,
-        day_type=day_type,
-        lookback_days=int(cfg.get("temp_asym_lookback_days", 180)),
-        rolling_days=int(cfg.get("temp_asym_rolling_days", 7)),
-        min_block_samples=int(cfg.get("temp_asym_min_samples", 8)),
-        prior_coeff=coef_temp,
-    )
-    temp_up_coeff = np.asarray(temp_profile.get("block_increase_coeffs", np.full(96, coef_temp)), dtype=float)
-    temp_down_coeff = np.asarray(temp_profile.get("block_reduction_coeffs", np.full(96, coef_temp)), dtype=float)
-    if temp_up_coeff.size < 96:
-        temp_up_coeff = np.pad(temp_up_coeff, (0, 96 - temp_up_coeff.size), mode="edge")
-    if temp_down_coeff.size < 96:
-        temp_down_coeff = np.pad(temp_down_coeff, (0, 96 - temp_down_coeff.size), mode="edge")
-    # Saturation (User Fix #3)
-    # Replace linear elasticity with capped response using tanh
-    # impact = tanh(delta / 4) * 4 * coeff
-    # This saturates beyond +/- 4 degrees delta.
-    
-    # Also apply Midday Amplification (User Fix #2) for blocks 45-60
-    
-    midday_mask = np.ones(96, dtype=float)
-    midday_mask[44:60] = 1.25 # Blocks 45-60 (0-indexed 44-59)
-    
-    # Tanh saturation — widened to ±6°C for Indian summers (was ±4°C)
-    sat_scale = 6.0
-    saturated_delta = np.tanh(temp_delta / sat_scale) * sat_scale
+    if _lstm_vec is not None and len(_lstm_vec) == 96 and np.any(statistical_baseline > 0):
+        lstm_full = _as_96_vector(_lstm_vec)
+        lstm_residual = lstm_full - statistical_baseline
+        residual_cap = np.maximum(np.abs(statistical_baseline) * 0.12, 250.0)
+        lstm_residual = np.clip(lstm_residual, -residual_cap, residual_cap)
+        residual_weight = float(np.clip(float(ai_cfg.get("residual_weight", ai_cfg.get("blend_weight", 0.35))), 0.0, 0.60))
+        baseline_hist = statistical_baseline + (residual_weight * lstm_residual)
+        hybrid_ai_forecast_vec = baseline_hist.copy()
+    else:
+        logger.warning("LSTM primary forecaster unavailable — falling back to adaptive recent-day average")
+        baseline_hist = statistical_baseline.copy()
 
-    temp_coeff_vec = np.where(temp_delta >= 0.0, temp_up_coeff, temp_down_coeff)
+    weather_coefs = {}
+    weather_pred = baseline_hist.copy()
+    weather_training_frame = pd.DataFrame()
 
-    # ── Multiplicative weather delta (v3.0) ──────────────────────────
-    # Weather impact scales with baseline load level: a 3°C rise adds more MW
-    # when base load is 5000 MW vs 2000 MW. Convert MW/°C coefficients to
-    # percentage-of-baseline before applying.
-    reference_load = float(np.median(baseline_hist[baseline_hist > 100])) if np.any(baseline_hist > 100) else float(np.mean(baseline_hist) + 1e-6)
-    pct_coeff_vec = temp_coeff_vec / max(reference_load, 1.0)
-    temperature_impact_block = baseline_hist * pct_coeff_vec * saturated_delta * midday_mask
+    # ── Detect drastic weather on target day ─────────────────────────────────
+    # Gusty winds (>25 km/h), heavy rain/showers, snowfall all qualify.
+    # Used to widen bias-cap and adjust downstream corrections.
+    _tgt_wx = target_df.sort_values("time_block")
+    _wx_rain   = float(_tgt_wx["rain"].mean())    if "rain"          in _tgt_wx.columns else 0.0
+    _wx_shower = float(_tgt_wx["showers"].mean()) if "showers"       in _tgt_wx.columns else 0.0
+    _wx_snow   = float(_tgt_wx["snowfall"].mean()) if "snowfall"      in _tgt_wx.columns else 0.0
+    _wx_wind   = float(_tgt_wx["wind_speed_10m"].max()) if "wind_speed_10m" in _tgt_wx.columns else 0.0
+    _wx_precip_severity = min(1.0, (_wx_rain + _wx_shower * 1.5 + _wx_snow * 5.0) / 5.0)
+    _wx_wind_severity   = max(0.0, (_wx_wind - float(cfg.get("wind_gust_threshold_kmh", 25.0))) / 30.0)
+    _drastic_weather    = (_wx_precip_severity > 0.2 or _wx_wind_severity > 0.3 or _wx_snow > 0.5)
+    if _drastic_weather:
+        logger.info("[pipeline:%s] drastic weather detected — precip_sev=%.2f wind_sev=%.2f snow=%.2f",
+                    target_date, _wx_precip_severity, _wx_wind_severity, _wx_snow)
 
-    weather_impact_block = (
-        temperature_impact_block + 
-        (hum_delta * float(weather_coefs.get("humidity", 0.0))) + 
-        (rain_delta * float(weather_coefs.get("rain", 0.0))) +
-        (apparent_delta * float(weather_coefs.get("apparent_temp", 0.0))) +
-        (cloud_delta * float(weather_coefs.get("cloud", 0.0))) +
-        (sun_delta * float(weather_coefs.get("sunshine", 0.0))) +
-        (rad_delta * float(weather_coefs.get("radiation", 0.0))) +
-        (wind_delta * float(weather_coefs.get("wind", 0.0)))
-    )
+    # ── Residual bias correction on LSTM output ────────────────────────────────
+    _step("2/3 applying residual bias correction...")
+    if bool(cfg.get("use_bias_correction", True)) and np.any(baseline_hist > 0):
+        try:
+            _bc_dates = sorted(df["date"].dropna().unique().tolist())
+            _bc_target = target_date if target_date in _bc_dates else (_bc_dates[-1] if _bc_dates else target_date)
+            _bc_idx = _bc_dates.index(_bc_target) if _bc_target in _bc_dates else len(_bc_dates)
+            if _bc_idx >= 12:
+                _bc_load_level = max(float(baseline_hist[baseline_hist > 0].mean()), 100.0)
 
-    # ── Per-Period Weather Divergence Gate (v3.0) ──────────────────────
-    # Compute gate per period (night/morning/afternoon/evening) instead of
-    # a single daily average. Afternoon blocks with +3°C should get the delta
-    # even if the daily mean gap is only 1.5°C.
-    divergence_thresh = float(cfg.get("weather_divergence_threshold", 1.5))
-    divergence_gate = np.ones(96, dtype=float)
-    avg_temp_divergence = float(np.mean(np.abs(temp_delta)))
-    if divergence_thresh > 0:
-        periods = [(0, 24), (24, 48), (48, 72), (72, 96)]  # night/morning/afternoon/evening
-        for p_start, p_end in periods:
-            period_div = float(np.mean(np.abs(temp_delta[p_start:p_end])))
-            gate_val = float(np.clip(
-                (period_div - divergence_thresh) / max(divergence_thresh * 1.25, 0.1), 0.0, 1.0
-            ))
-            divergence_gate[p_start:p_end] = gate_val
-        weather_impact_block = weather_impact_block * divergence_gate
+                # Weather-segmented bias pool: on rain/wind days, restrict the
+                # residual pool to same-weather-type days so dry-day bias
+                # doesn't over-correct a suppressed load day.
+                _bc_dates_pool = _bc_dates
+                _wa_rain  = _weather_result.day_flags.get("rain_alert", False) if _weather_result else False
+                _wa_wind  = _weather_result.day_flags.get("wind_alert", False) if _weather_result else False
+                if (_wa_rain or _wa_wind) and "rain" in df.columns:
+                    def _is_weather_day(d):
+                        _ddf = df[df["date"].astype(str).str[:10] == str(d)[:10]]
+                        if _ddf.empty:
+                            return False
+                        _r = float(_ddf["rain"].mean()) if "rain" in _ddf.columns else 0.0
+                        _s = float(_ddf.get("showers", pd.Series([0])).mean())
+                        _w = float(_ddf["wind_speed_10m"].max()) if "wind_speed_10m" in _ddf.columns else 0.0
+                        return (_r + _s) > 1.0 or _w > 25.0
+                    _filtered = [d for d in _bc_dates if _is_weather_day(d)]
+                    if len(_filtered) >= 3:
+                        _bc_dates_pool = _filtered
 
-    weather_baseline = baseline_hist + weather_impact_block
+                # Recompute _bc_idx relative to the (possibly filtered) pool
+                _bc_pool_target = _bc_target if _bc_target in _bc_dates_pool else (
+                    _bc_dates_pool[-1] if _bc_dates_pool else _bc_target
+                )
+                _bc_pool_idx = (_bc_dates_pool.index(_bc_pool_target)
+                                if _bc_pool_target in _bc_dates_pool
+                                else len(_bc_dates_pool))
+                _residual_bias = _compute_residual_bias(df, _bc_dates_pool, _bc_pool_idx)
+                # HIGH/CRITICAL anomaly days get a wider cap (15%)
+                _base_cap_pct = float(cfg.get("bias_cap_pct", 0.10))
+                _wa_sev = (_weather_result.severity if _weather_result else "NONE")
+                if _wa_sev in ("HIGH", "CRITICAL"):
+                    _bc_cap_mult = 1.50
+                elif _drastic_weather:
+                    _bc_cap_mult = 1.20
+                else:
+                    _bc_cap_mult = 1.0
+                _bc_cap = _base_cap_pct * _bc_cap_mult * _bc_load_level
+                _residual_bias = np.clip(_residual_bias, -_bc_cap, _bc_cap)
+                baseline_hist = baseline_hist + _residual_bias
+                _diag_vec("baseline_post_bias", baseline_hist)
+        except Exception:
+            pass
+
+    weather_impact_block = np.zeros(96, dtype=float)
+    weather_baseline = baseline_hist.copy()
+    weather_dev = 0.0
+    # This LSTM-primary path does not train the legacy weather residual model.
+    # Keep the legacy KPI/reporting vectors defined so final assembly can still
+    # expose component diagnostics without failing late in the run.
+    temp_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    hum_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    rain_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    apparent_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    cloud_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    sun_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    rad_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    wind_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    coef_temp = 0.0
+    coef_hum = 0.0
+    coef_rain = 0.0
+    temp_coeff_vec = np.zeros(_BLOCK_COUNT, dtype=float)
+    temp_up_coeff = np.zeros(_BLOCK_COUNT, dtype=float)
+    temp_down_coeff = np.zeros(_BLOCK_COUNT, dtype=float)
+    temp_profile = {
+        "source": "lstm_primary_no_legacy_weather_model",
+        "prior_coeff": coef_temp,
+        "global_increase_coeff": coef_temp,
+        "global_reduction_coeff": coef_temp,
+        "global_increase_samples": 0,
+        "global_reduction_samples": 0,
+        "diagnostics": {},
+    }
+    temperature_impact_block = temp_delta * coef_temp
 
     # ══════════════════════════════════════════════════════════════════
     # HYBRID ADDITIVE FORECAST MODEL
@@ -4268,58 +5248,8 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     # Fit separate slopes for short-term (14d) vs long-term (60d) residuals.
     # If short-term diverges >2× from long-term, trust short-term (regime change).
     # Clip is proportional to recent load (±5%) instead of fixed ±200 MW.
-    similar_dates = similar_days["date"].tolist() if not similar_days.empty else []
+    similar_dates = []
     trend_correction = np.zeros(96, dtype=float)
-
-    # Gather all recent daily residuals (up to 60 days)
-    all_dates = sorted(df["date"].dropna().unique().tolist())
-    target_idx = all_dates.index(target_date) if target_date in all_dates else len(all_dates) - 1
-    lookback_60 = all_dates[max(0, target_idx - 60):target_idx]
-    _synth_dates_trend: set = set()
-    if "_is_synthetic" in df.columns:
-        _synth_dates_trend = set(df[df["_is_synthetic"] == 1]["date"].astype(str).unique())
-    day_residuals_60 = []
-    for d in lookback_60:
-        if d in _synth_dates_trend:
-            continue  # synthetic load is a forecast — skip for residual trend fit
-        day_vals = df[df["date"] == d].sort_values("time_block")["total_drawal"].to_numpy()
-        if len(day_vals) == 96 and np.mean(day_vals) > 100:
-            day_residuals_60.append(float(np.mean(day_vals - safe_baseline)))
-
-    if len(day_residuals_60) >= 3:
-        x_all = np.arange(len(day_residuals_60), dtype=float)
-        slope_long = float(np.polyfit(x_all, day_residuals_60, 1)[0])
-
-        # Short-term: last 14 entries (or all if fewer)
-        short_n = min(14, len(day_residuals_60))
-        x_short = np.arange(short_n, dtype=float)
-        slope_short = float(np.polyfit(x_short, day_residuals_60[-short_n:], 1)[0])
-
-        # Regime change detection: if short-term diverges >2× from long-term, favor it
-        if abs(slope_long) > 1e-6 and abs(slope_short) > 2 * abs(slope_long):
-            slope = slope_short
-        else:
-            slope = 0.7 * slope_short + 0.3 * slope_long
-
-        # Proportional clip: ±5% of recent average load (not fixed ±200 MW)
-        recent_avg_load = float(np.mean(baseline_hist[baseline_hist > 100])) if np.any(baseline_hist > 100) else 1000.0
-        max_trend = 0.05 * recent_avg_load
-        trend_mw = float(np.clip(slope * 1.0, -max_trend, max_trend))
-        trend_correction = np.full(96, trend_mw, dtype=float)
-    elif similar_dates and len(similar_dates) >= 2:
-        # Fallback to similar-day residuals if not enough history
-        day_residuals = []
-        for d in similar_dates:
-            day_vals = df[df["date"] == d].sort_values("time_block")["total_drawal"].to_numpy()
-            if len(day_vals) == 96:
-                day_residuals.append(np.mean(day_vals - safe_baseline))
-        if len(day_residuals) >= 2:
-            x = np.arange(len(day_residuals), dtype=float)
-            slope = float(np.polyfit(x, day_residuals, 1)[0])
-            recent_avg_load = float(np.mean(baseline_hist[baseline_hist > 100])) if np.any(baseline_hist > 100) else 1000.0
-            max_trend = 0.05 * recent_avg_load
-            trend_mw = float(np.clip(slope * 1.0, -max_trend, max_trend))
-            trend_correction = np.full(96, trend_mw, dtype=float)
 
     # ── Component 4: Boundary Correction (anchor to actual level) ──────
     # Ratio-based correction over a wide window captures proportional level deviation.
@@ -4350,109 +5280,103 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             baseline_hist[b] = baseline_hist[b] * level_ratio
         safe_baseline = np.maximum(baseline_hist, 1.0)
 
-    # Additive boundary correction for forecast period — ratio already applied to actual
-    # blocks above; don't re-apply ratio to forecast (causes overshot jump).
+    # Additive and proportional boundary corrections for forecast period.
+    # The additive term handles MW offset; the proportional term handles days
+    # where live actuals are consistently below/above the LSTM baseline.
+    # On drastic-weather days the decay half-life is halved (24 blocks instead
+    # of 48) so the anchor to known actuals persists deeper into the peak window.
     boundary_correction = np.zeros(96, dtype=float)
+    boundary_level_correction = np.zeros(96, dtype=float)
+    _decay_half = 24.0 if _drastic_weather else 48.0
     for b in range(actual_blocks, 96):
         distance = b - actual_blocks + 1
-        decay = np.exp(-0.693 * distance / 48.0)
+        decay = np.exp(-0.693 * distance / _decay_half)
         boundary_correction[b] = boundary_bias_mw * decay
+        if actual_blocks > 0 and abs(level_ratio - 1.0) > 1e-4:
+            boundary_level_correction[b] = baseline_hist[b] * (level_ratio - 1.0) * decay
 
-    # ── Similar-day residual shape (intraday pattern from historical days) ──
     sim_residual_shape = np.zeros(96, dtype=float)
-    if similar_dates:
-        resid_stack = []
-        for d in similar_dates:
-            day_vals = df[df["date"] == d].sort_values("time_block")["total_drawal"].to_numpy()
-            if len(day_vals) == 96:
-                resid_stack.append(day_vals - safe_baseline)
-        if resid_stack:
-            sim_residual_shape = np.median(np.vstack(resid_stack), axis=0)
 
-    _step("6/7 applying India-specific adjustments...")
-    # ── India-Specific Adjustments (agriculture, festivals, events) ───
     india_adj = np.zeros(96, dtype=float)
     india_meta = {}
-    if compute_india_adjustments is not None:
-        try:
-            india_region = cfg.get("region", "punjab")
-            # Extract per-block temperatures if available (enables CDH model)
-            _block_temps = None
-            _avg_temp = 25.0
-            _avg_hum  = 50.0
-            if target_df is not None and not target_df.empty:
-                if "temperature" in target_df.columns:
-                    _t = target_df.sort_values("time_block")["temperature"].to_numpy()
-                    if len(_t) > 0:
-                        _t = _fill_nonfinite_vector(_t, fill_value=_avg_temp)
-                        _avg_temp = float(np.mean(_t)) if np.isfinite(_t).any() else 25.0
-                        _block_temps = _t if len(_t) == 96 else None
-                if "humidity" in target_df.columns:
-                    _h = target_df["humidity"].to_numpy()
-                    if len(_h) > 0:
-                        _h = _fill_nonfinite_vector(_h, fill_value=_avg_hum)
-                        _avg_hum = float(np.mean(_h)) if np.isfinite(_h).any() else 50.0
-            india_result = compute_india_adjustments(
-                state=india_region,
-                target_date=str(target_date),
-                baseline=baseline_hist,
-                config=cfg,
-                temperature=_avg_temp,
-                humidity=_avg_hum,
-                block_temps=_block_temps,
-            )
-            india_adj = np.asarray(india_result.get("total_adj_mw", np.zeros(96)), dtype=float)
-            india_meta = india_result
-        except Exception as _e:
-            logger.warning(f"India intelligence failed: {_e}")
 
-    _step("7/7 assembling final forecast...")
-    # ── Assemble Final Forecast ────────────────────────────────────────
+    _step("3/3 assembling final forecast...")
     forecast = np.zeros(96, dtype=float)
     for b in range(96):
         if b < actual_blocks:
-            forecast[b] = actual[b]  # known blocks = exact actual
+            forecast[b] = actual[b]
         else:
-            distance = b - actual_blocks + 1
-            # Similar-day shape influence grows as boundary correction decays
-            shape_weight = 1.0 - np.exp(-0.693 * distance / 24.0)
-            sim_shape_mw = sim_residual_shape[b] * shape_weight
-
             forecast[b] = (
                 baseline_hist[b]
-                + weather_residual[b]
                 + calendar_offset[b]
-                + trend_correction[b]
-                + boundary_correction[b]
-                + sim_shape_mw
-                + india_adj[b]
+                + boundary_level_correction[b]
             )
     forecast = np.maximum(forecast, 0)
+    _diag_vec("forecast_pre_stitch", forecast)
+
+    if "hybrid_ai_forecast_vec" not in locals():
+        hybrid_ai_forecast_vec = None
+
 
     # ── Legacy variables for downstream KPI reporting ──────────────────
     boundary_ratio = float(np.median(actual_partial / safe_baseline[:actual_blocks]) if actual_blocks > 0 else 1.0)
-    hybrid = baseline_hist + boundary_correction  # approximate hybrid for KPIs
+    hybrid = baseline_hist + boundary_level_correction  # approximate hybrid for KPIs
     hybrid_pre_calendar = hybrid.copy()
     calendar_adjustment_block = calendar_offset
     bias_factor = boundary_ratio
-    bias_applied = (baseline_hist + boundary_correction).copy()
+    bias_applied = (baseline_hist + boundary_level_correction).copy()
     alpha = 1.0
     beta = 0.0
     trend_slope = float(trend_correction[48]) if len(trend_correction) > 48 else 0.0
-    trend_center = 0.0
     trend_component = np.zeros(actual_blocks)
     trend_full = trend_correction.copy()
     rain_coeff = cfg["rain_coeffs"].get(season, 20.0)
-    # Rain impact via log-saturation (rebuild plan Step 13)
+    # Rain impact via log-saturation
     rain_impact_vec = np.full(96, rain_coeff, dtype=float)
     rain_impact_vec[69:] *= 1.8  # evening boost
     precip_raw = target_df["precipitation"].to_numpy(dtype=float) if "precipitation" in target_df.columns else np.zeros(96, dtype=float)
     precip_saturated = np.where(precip_raw > 0, np.log1p(precip_raw) * (5.0 / max(np.log1p(5.0), 1e-9)), 0.0)
     rain_impact = rain_impact_vec * precip_saturated
+
+    # ── Wind-gust dip ──────────────────────────────────────────────────────────
+    # High wind gusts reduce load: outdoor activities halt, industrial plant
+    # run at reduced capacity, and comfort-cooling drops (wind chill substitutes).
+    # Effect is proportional to excess wind above threshold, log-saturated.
+    # Peak-hour blocks (08:00–19:00, blocks 33–76) take a larger hit because
+    # commercial/industrial load is highest then.
+    _wind_gust_thresh = float(cfg.get("wind_gust_threshold_kmh", 30.0))
+    _wind_coeffs_cfg  = cfg.get("wind_coeffs", {"winter": 8.0, "spring": 10.0,
+                                                  "summer": 12.0, "fall": 10.0})
+    _wind_coeff = float(_wind_coeffs_cfg.get(season, 10.0))
+    if "wind_speed_10m" in target_df.columns:
+        wind_raw = target_df.sort_values("time_block")["wind_speed_10m"].to_numpy(dtype=float)
+        if len(wind_raw) != 96:
+            wind_raw = np.resize(wind_raw, 96)
+    else:
+        wind_raw = np.zeros(96, dtype=float)
+    wind_excess    = np.maximum(0.0, wind_raw - _wind_gust_thresh)
+    _norm          = max(np.log1p(30.0), 1e-9)           # ~1.0 at 30 km/h excess (≈ 60 km/h total)
+    wind_saturated = np.log1p(wind_excess) / _norm
+    wind_impact_vec = np.full(96, _wind_coeff, dtype=float)
+    wind_impact_vec[32:76] *= 1.5                         # peak-hour multiplier
+    wind_impact = wind_impact_vec * wind_saturated        # MW dip, positive = load reduction
+
     pattern_adjustment = sim_residual_shape.copy()
     residual_correction = boundary_correction.copy()
     residuals = actual_partial - hybrid[:actual_blocks]
-    residuals_clean = residuals.copy()
+
+    ramp_weather_meta: Dict[str, Any] = {"enabled": False}
+    ramp_adjustment = np.zeros(_BLOCK_COUNT, dtype=float)
+    block_bias_meta: Dict[str, Any] = {"enabled": False}
+    block_bias_applied = np.zeros(_BLOCK_COUNT, dtype=float)
+    spline_residual_meta: Dict[str, Any] = {"enabled": False}
+    spline_residual_adjustment = np.zeros(_BLOCK_COUNT, dtype=float)
+    calibration_meta: Dict[str, Any] = {"enabled": False}
+    calibration_applied = np.zeros(_BLOCK_COUNT, dtype=float)
+    momentum_meta: Dict[str, Any] = {"enabled": False}
+    momentum_adjustment = np.zeros(_BLOCK_COUNT, dtype=float)
+    ramp_limit_meta: Dict[str, Any] = {"enabled": False}
+    ramp_limit_adjustment = np.zeros(_BLOCK_COUNT, dtype=float)
 
     # ── Stitch: exact actuals + smooth 8-block cosine taper into forecast ─────
     stitched = forecast.copy()
@@ -4463,6 +5387,165 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             b = actual_blocks + t
             w = 0.5 * (1.0 - np.cos(np.pi * (t + 1) / (taper_len + 1)))  # cosine ease-in
             stitched[b] = actual_partial[-1] * (1.0 - w) + forecast[b] * w
+
+    # ── Evening storm pre-trigger (blocks 73-88, 18:00-22:00) ────────────────
+    # Analysis of May-June 2022-2025 shows wind_speed coefficient grew from
+    # -11 to -88 MW/(km/h) in the 18:00-21:00 window. Wind arrives 20-40 min
+    # before rain — the April 27 thunderstorm gap (-5000 MW) was detectable in
+    # wind data before rain hit. This trigger fires when the NWP forecast shows
+    # sustained wind >25 km/h in the 17:30-19:00 window (blocks 69-76) with
+    # any precipitation, applying a pre-emptive flat -60 MW/(km/h) correction
+    # to blocks 73-88. Enabled only when actual data hasn't covered those blocks.
+    _evening_storm_meta: Dict[str, Any] = {"enabled": False}
+    _evening_storm_adjustment = np.zeros(_BLOCK_COUNT, dtype=float)
+    _STORM_WIND_THRESH_KMH = float(accuracy_cfg.get("evening_storm_wind_threshold_kmh", 25.0))
+    _STORM_COEFF_MW_KMH    = float(accuracy_cfg.get("evening_storm_wind_coeff_mw_kmh", 60.0))
+    _STORM_PRECIP_THRESH   = float(accuracy_cfg.get("evening_storm_precip_threshold_mm", 2.0))
+    if actual_blocks < 73 and "wind_speed_10m" in target_df.columns:
+        try:
+            tdf_sorted = target_df.sort_values("time_block")
+            # Pre-storm window: blocks 69-76 (17:15-19:00)
+            _prestorm_wind = tdf_sorted[
+                tdf_sorted["time_block"].between(69, 76)
+            ]["wind_speed_10m"].to_numpy(dtype=float)
+            _prestorm_rain = tdf_sorted[
+                tdf_sorted["time_block"].between(69, 88)
+            ]["precipitation"].to_numpy(dtype=float) if "precipitation" in tdf_sorted.columns else np.zeros(1)
+            _avg_prestorm_wind = float(np.nanmean(_prestorm_wind)) if len(_prestorm_wind) else 0.0
+            _total_prestorm_rain = float(np.nansum(_prestorm_rain))
+            # Trigger: wind sustained >25 km/h AND any precip forecast in blocks 69-88
+            if _avg_prestorm_wind > _STORM_WIND_THRESH_KMH and _total_prestorm_rain > _STORM_PRECIP_THRESH:
+                # Apply -60 MW/(km/h) × excess wind to blocks 73-88
+                _excess_wind = max(0.0, _avg_prestorm_wind - _STORM_WIND_THRESH_KMH)
+                _storm_cut_mw = _STORM_COEFF_MW_KMH * _excess_wind
+                _storm_cut_mw = min(_storm_cut_mw, 2000.0)  # hard cap at 2000 MW
+                # Taper: full cut at block 73, fades to 50% by block 88
+                _storm_blocks = np.arange(73, 89)  # blocks 73-88
+                _storm_taper = np.linspace(1.0, 0.5, len(_storm_blocks))
+                for _bi, _blk in enumerate(_storm_blocks):
+                    if _blk > actual_blocks:
+                        _idx = _blk - 1
+                        _storm_cut = _storm_cut_mw * _storm_taper[_bi]
+                        _evening_storm_adjustment[_idx] = -_storm_cut
+                        stitched[_idx] = max(stitched[_idx] - _storm_cut, 0.0)
+                _evening_storm_meta = {
+                    "enabled": True,
+                    "triggered": True,
+                    "avg_prestorm_wind_kmh": round(_avg_prestorm_wind, 1),
+                    "total_prestorm_rain_mm": round(_total_prestorm_rain, 1),
+                    "storm_cut_mw": round(_storm_cut_mw, 1),
+                    "blocks_adjusted": "73-88",
+                }
+                logger.warning(
+                    "[storm-trigger] Evening storm pre-trigger FIRED: wind=%.1f km/h, "
+                    "rain=%.1fmm → cutting blocks 73-88 by up to %.0f MW",
+                    _avg_prestorm_wind, _total_prestorm_rain, _storm_cut_mw,
+                )
+            else:
+                _evening_storm_meta = {
+                    "enabled": True, "triggered": False,
+                    "avg_prestorm_wind_kmh": round(_avg_prestorm_wind, 1),
+                    "total_prestorm_rain_mm": round(_total_prestorm_rain, 1),
+                }
+        except Exception as _storm_err:
+            _evening_storm_meta = {"enabled": True, "triggered": False, "error": str(_storm_err)}
+
+    # Direct wind dip is diagnostic by default. Applying it on top of weather_base
+    # double-counts wind/rain effects and was a major source of over-correction.
+    if (
+        bool(accuracy_cfg.get("direct_wind_adjustment_enabled", False))
+        and actual_blocks < 96
+        and wind_impact[actual_blocks:].sum() > 0
+    ):
+        stitched[actual_blocks:] = np.maximum(
+            stitched[actual_blocks:] - wind_impact[actual_blocks:], 0.0
+        )
+
+    # Haryana afternoon ramp correction from the Excel accuracy strategy.
+    if build_afternoon_ramp_adjustment is not None and bool(accuracy_cfg.get("afternoon_ramp_enabled", True)):
+        try:
+            _ramp = build_afternoon_ramp_adjustment(
+                baseline_96=baseline_hist,
+                target_df=target_df,
+                season=season,
+                region=hb_region,
+                enabled=True,
+            )
+            ramp_adjustment = np.asarray(_ramp.adjustment_mw, dtype=float)
+            ramp_weather_meta = dict(_ramp.metadata)
+            if actual_blocks < _BLOCK_COUNT:
+                stitched[actual_blocks:] = np.maximum(stitched[actual_blocks:] + ramp_adjustment[actual_blocks:], 0.0)
+                temperature_impact_block = temperature_impact_block + ramp_adjustment
+                weather_impact_block = weather_impact_block + ramp_adjustment
+                weather_baseline = weather_baseline + ramp_adjustment
+        except Exception as _ramp_err:
+            ramp_weather_meta = {"enabled": True, "applied": False, "reason": str(_ramp_err)}
+
+    # Block-level systematic bias table. Sign convention is forecast - actual,
+    # so apply_bias_correction subtracts positive over-forecast bias and adds
+    # MW when recent history shows under-forecast.
+    if compute_bias_table is not None and apply_bias_correction is not None and bool(accuracy_cfg.get("block_bias_enabled", True)):
+        try:
+            _day_type_flag = "weekend" if pd.Timestamp(str(target_date)[:10]).dayofweek >= 5 else "weekday"
+            _bias_table, _bias_meta = compute_bias_table(
+                df,
+                target_date=str(target_date),
+                window_days=int(accuracy_cfg.get("block_bias_window_days", 30)),
+                day_type=_day_type_flag,
+                horizon=str(cfg.get("forecast_horizon", "t1")),
+                smooth_window=int(accuracy_cfg.get("block_bias_smooth_window", 4)),
+            )
+            _bias_result = apply_bias_correction(stitched, _bias_table, actual_blocks=actual_blocks, enabled=True)
+            block_bias_applied = _bias_result.applied_mw
+            live_bias_decay = np.zeros(_BLOCK_COUNT, dtype=float)
+            live_bias_decay[actual_blocks:] = boundary_correction[actual_blocks:]
+            final_bias_applied = (0.60 * block_bias_applied) + (0.40 * live_bias_decay)
+            if actual_blocks < _BLOCK_COUNT:
+                stitched[actual_blocks:] = np.maximum(stitched[actual_blocks:] + final_bias_applied[actual_blocks:], 0.0)
+            block_bias_meta = {
+                **_bias_meta,
+                **_bias_result.metadata,
+                "hierarchy": "single_final_bias",
+                "formula": "0.6 * rolling_block_bias + 0.4 * recent_live_bias_decay",
+                "applied_mw": final_bias_applied.tolist(),
+            }
+            block_bias_applied = final_bias_applied
+            residual_correction = final_bias_applied
+        except Exception as _bias_err:
+            block_bias_meta = {"enabled": True, "applied": False, "reason": str(_bias_err)}
+
+    # Spline residual shape carry. This replaces a flat future error extension
+    # when there are enough live actual points to infer an intraday residual shape.
+    if bool(accuracy_cfg.get("spline_residual_enabled", True)) and actual_blocks >= 6:
+        try:
+            known_x = np.arange(actual_blocks, dtype=float)
+            known_y = np.asarray(actual_partial - hybrid[:actual_blocks], dtype=float)
+            fut_x = np.arange(actual_blocks, _BLOCK_COUNT, dtype=float)
+            if fut_x.size and np.isfinite(known_y).sum() >= 4:
+                try:
+                    from scipy.interpolate import CubicSpline as _CubicSpline
+                    _spl = _CubicSpline(known_x, known_y, extrapolate=True)
+                    pred_resid = np.asarray(_spl(fut_x), dtype=float)
+                except Exception:
+                    deg = min(3, max(1, actual_blocks - 1))
+                    coeff = np.polyfit(known_x, known_y, deg=deg)
+                    pred_resid = np.polyval(coeff, fut_x)
+                taper = np.linspace(1.0, 0.30, fut_x.size)
+                cap = np.maximum(0.08 * np.maximum(stitched[actual_blocks:], 1.0), 200.0)
+                adj = np.clip(pred_resid * taper, -cap, cap)
+                spline_residual_adjustment[actual_blocks:] = adj
+                stitched[actual_blocks:] = np.maximum(stitched[actual_blocks:] + adj, 0.0)
+                pattern_adjustment = pattern_adjustment + spline_residual_adjustment
+                spline_residual_meta = {
+                    "enabled": True,
+                    "applied": bool(np.any(np.abs(adj) > 1e-6)),
+                    "known_blocks": int(actual_blocks),
+                    "mean_applied_mw": round(float(np.mean(adj)), 3),
+                    "max_abs_applied_mw": round(float(np.max(np.abs(adj))), 3),
+                    "applied_mw": spline_residual_adjustment.tolist(),
+                }
+        except Exception as _spl_err:
+            spline_residual_meta = {"enabled": True, "applied": False, "reason": str(_spl_err)}
 
     shrink_cfg = cfg.get("forecast_shrinkage", {}) if isinstance(cfg.get("forecast_shrinkage", {}), dict) else {}
     offpeak_weight = float(np.clip(float(shrink_cfg.get("offpeak_weight", 0.50)), 0.0, 1.0))
@@ -4476,39 +5559,224 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     if actual_blocks > 0:
         progress = float(np.clip(actual_blocks / _BLOCK_COUNT, 0.0, 1.0))
         shrink_weights = np.clip(shrink_weights + (known_blocks_bonus * progress), 0.0, 1.0)
+    if bool(accuracy_cfg.get("dynamic_shrinkage_enabled", True)):
+        try:
+            _hist = df[df["date"].astype(str) < str(target_date)].copy()
+            _dates = sorted(_hist["date"].dropna().astype(str).unique().tolist())
+            _hist = _hist[_hist["date"].astype(str).isin(set(_dates[-14:]))]
+            if not _hist.empty:
+                _grp = _hist.groupby("time_block")["total_drawal"]
+                _mean = _grp.mean().reindex(range(1, 97)).interpolate(limit_direction="both").fillna(0.0).to_numpy(dtype=float)
+                _std = _grp.std().reindex(range(1, 97)).interpolate(limit_direction="both").fillna(0.0).to_numpy(dtype=float)
+                _vol = np.divide(_std, np.maximum(_mean, 1.0), out=np.zeros_like(_std), where=_mean > 0)
+                # Gentler dynamic shrinkage: avoid pulling hot peak blocks back
+                # to baseline so hard that afternoon peaks under-forecast.
+                _dynamic_weight = np.clip(0.98 - (_vol * 3.0), 0.80, 0.98)
+                _dynamic_weight[peak_start_idx:peak_end_idx] = np.clip(
+                    _dynamic_weight[peak_start_idx:peak_end_idx] + 0.05,
+                    0.80,
+                    0.98,
+                )
+                shrink_weights = np.minimum(shrink_weights, _dynamic_weight)
+        except Exception:
+            pass
     shrink_weights[:actual_blocks] = 1.0
 
     stitched_raw = stitched.copy()
     stitched = (shrink_weights * stitched_raw) + ((1.0 - shrink_weights) * hybrid)
     stitched[:actual_blocks] = actual_partial
-    stitched_pre_hybrid_ai = stitched.copy()
 
-    _step("  → hybrid AI engine (ResNet-LSTM blend)...")
-    hybrid_ai_result = None
-    hybrid_ai_cfg = cfg.get("hybrid_ai", {}) if isinstance(cfg.get("hybrid_ai", {}), dict) else {}
-    if bool(hybrid_ai_cfg.get("enabled", True)) and HybridForecastingEngine is not None and HybridForecastConfig is not None:
+    helper_ai_result = None
+
+    # ── Base-day → T+1 seam smoother ──────────────────────────────────────────
+    # When the user is producing a pure forward forecast (no partial actuals
+    # for the target day), the very first blocks of the forecast often have a
+    # visible jump from the previous day's last block.  Bridge them: linearly
+    # taper the first `seam_window` blocks from a continuation of the prior
+    # day's tail toward the model forecast.  Off when actual_blocks > 0 (we
+    # already have a real anchor inside the day).
+    base_seam_cfg = cfg.get("base_seam_bridge", {}) if isinstance(cfg.get("base_seam_bridge", {}), dict) else {}
+    base_seam_window = int(np.clip(int(base_seam_cfg.get("window_blocks", 6)), 0, _BLOCK_COUNT))
+    if actual_blocks == 0 and base_seam_window > 0:
         try:
-            hybrid_engine = HybridForecastingEngine(
-                HybridForecastConfig(
-                    lookback_days=int(hybrid_ai_cfg.get("lookback_days", 7)),
-                    min_history_days=int(hybrid_ai_cfg.get("min_history_days", 21)),
-                    training_days=int(hybrid_ai_cfg.get("training_days", 60)),
-                    blend_weight=float(hybrid_ai_cfg.get("blend_weight", 0.35)),
-                    min_blend_weight=float(hybrid_ai_cfg.get("min_blend_weight", 0.10)),
-                    max_blend_weight=float(hybrid_ai_cfg.get("max_blend_weight", 0.45)),
-                    random_state=int(hybrid_ai_cfg.get("random_state", 42)),
-                    sequence_epochs=int(hybrid_ai_cfg.get("sequence_epochs", 60)),
+            _all_dates = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+            _target_str = str(target_date)
+            _prior_dates = [d for d in _all_dates if d < _target_str]
+            if _prior_dates:
+                _prev = _prior_dates[-1]
+                _prev_df = df[df["date"].astype(str) == _prev]
+                if not _prev_df.empty and "total_drawal" in _prev_df.columns:
+                    _prev_curve = (
+                        _prev_df.groupby("time_block")["total_drawal"]
+                        .mean()
+                        .reindex(range(1, 97))
+                        .ffill()
+                        .bfill()
+                        .to_numpy(dtype=float)
+                    )
+                    if np.isfinite(_prev_curve).any():
+                        # Bridge value at block 1 = prior block 96 + (block 1 - block 96) shape
+                        # of similar days picks up DOW seasonality automatically; here we only
+                        # need to remove the discontinuity at the seam.
+                        anchor_prev_last = float(_prev_curve[-1])
+                        forecast_block1 = float(stitched[0]) if np.isfinite(stitched[0]) else anchor_prev_last
+                        # Allowed jump per block (MW) — clamp drift so we never produce a
+                        # ridge if the prior day was anomalous.
+                        max_step = max(0.05 * max(anchor_prev_last, forecast_block1, 1.0), 25.0)
+                        target_block1 = anchor_prev_last + np.clip(
+                            forecast_block1 - anchor_prev_last, -max_step, max_step
+                        )
+                        # Linear taper: block i in [0, base_seam_window) gets weight i/window
+                        # toward the model forecast, (1 - i/window) toward target_block1.
+                        for i in range(base_seam_window):
+                            w_model = (i + 1) / float(base_seam_window + 1)
+                            stitched[i] = (1.0 - w_model) * target_block1 + w_model * float(stitched[i])
+                        logger.info(
+                            "✓ Base→T+1 seam smoothed: prev-last=%.1f, fc[0]=%.1f, target=%.1f, window=%d",
+                            anchor_prev_last, forecast_block1, target_block1, base_seam_window,
+                        )
+        except Exception as _seam_err:
+            logger.debug(f"Base→T+1 seam smoother skipped: {_seam_err}")
+
+    # ── Savitzky-Golay smoothing on forecasted blocks ─────────────────────────
+    # Removes per-block jaggedness introduced by independent ML predictions
+    # without shifting peaks (unlike causal smoothers).  Applied only to the
+    # blocks ahead of actuals, so real measurements are never modified.
+    # Gated by config["sg_smooth"]["enabled"] (default True).
+    _sg_cfg = cfg.get("sg_smooth", {}) if isinstance(cfg.get("sg_smooth", {}), dict) else {}
+    if bool(_sg_cfg.get("enabled", True)) and actual_blocks < _BLOCK_COUNT:
+        try:
+            _sg_window = int(_sg_cfg.get("window", 5))
+            _sg_order = int(_sg_cfg.get("polyorder", 2))
+            # window must be odd and > polyorder
+            if _sg_window % 2 == 0:
+                _sg_window += 1
+            _sg_window = max(_sg_window, _sg_order + 2 if _sg_order % 2 == 0 else _sg_order + 2)
+            try:
+                from scipy.signal import savgol_filter as _savgol
+                _smooth_region = _savgol(
+                    stitched[actual_blocks:],
+                    window_length=_sg_window,
+                    polyorder=_sg_order,
+                    mode="nearest",
                 )
+            except ImportError:
+                # Fallback: symmetric uniform moving average (no phase lag)
+                _pad = _sg_window // 2
+                _padded = np.pad(stitched[actual_blocks:], _pad, mode="edge")
+                _smooth_region = np.convolve(
+                    _padded, np.ones(_sg_window) / _sg_window, mode="valid"
+                )[:len(stitched) - actual_blocks]
+            # Blend 80/20: more aggressive smoothing reduces jagged spikes
+            # while Savitzky-Golay still preserves peak positions (FIX 6)
+            stitched[actual_blocks:] = (
+                0.80 * stitched[actual_blocks:] + 0.20 * np.maximum(_smooth_region, 0)
             )
-            hybrid_ai_result = hybrid_engine.run(df=df, target_date=target_date, fallback_forecast=stitched_pre_hybrid_ai)
-            if hybrid_ai_result is not None:
-                stitched = np.asarray(hybrid_ai_result.forecast, dtype=float)
+            # Preserve seam continuity: actual tail must remain unchanged
+            if actual_blocks > 0:
                 stitched[:actual_blocks] = actual_partial
-        except Exception as exc:
-            logger.warning("Hybrid forecasting engine failed for %s: %s", target_date, exc)
-            hybrid_ai_result = None
+        except Exception as _sg_err:
+            logger.debug("SG smoother skipped: %s", _sg_err)
+
+    horizon_calibration_correction = np.zeros(_BLOCK_COUNT, dtype=float)
+    horizon_calibration_meta: Dict[str, Any] = {"enabled": False}
+    if actual_blocks < _BLOCK_COUNT:
+        stitched, horizon_calibration_correction, horizon_calibration_meta = _recent_horizon_calibration(
+            df=df,
+            target_date=str(target_date),
+            forecast=stitched,
+            actual_blocks=int(actual_blocks),
+            actual_partial=actual_partial,
+            cfg=cfg,
+        )
+        if actual_blocks > 0:
+            stitched[:actual_blocks] = actual_partial
+        _diag_vec("stitched_post_horizon_calibration", stitched)
+
+    if apply_block_type_calibration is not None and bool(accuracy_cfg.get("calibration_enabled", True)):
+        try:
+            _cal = apply_block_type_calibration(
+                stitched,
+                target_date=str(target_date),
+                history_df=df,
+                actual_blocks=int(actual_blocks),
+                window_days=int(accuracy_cfg.get("calibration_window_days", 21)),
+                min_confidence=float(accuracy_cfg.get("calibration_min_confidence", 0.80)),
+                enabled=True,
+            )
+            stitched = _cal.forecast
+            calibration_applied = _cal.applied_mw
+            calibration_meta = dict(_cal.metadata)
+            if actual_blocks > 0:
+                stitched[:actual_blocks] = actual_partial
+        except Exception as _cal_err:
+            calibration_meta = {"enabled": True, "applied": False, "reason": str(_cal_err)}
+
+    if bool(accuracy_cfg.get("momentum_enabled", True)) and actual_blocks >= 5 and actual_blocks < _BLOCK_COUNT:
+        try:
+            momentum = float(actual_partial[-1] - actual_partial[-5])
+            decay_blocks = max(float(accuracy_cfg.get("momentum_decay_blocks", 8.0)), 1.0)
+            for i in range(actual_blocks, _BLOCK_COUNT):
+                dist = i - actual_blocks + 1
+                momentum_adjustment[i] = momentum * float(np.exp(-dist / decay_blocks))
+            cap = np.maximum(0.03 * np.maximum(stitched, 1.0), 75.0)
+            momentum_adjustment = np.clip(momentum_adjustment, -cap, cap)
+            stitched[actual_blocks:] = np.maximum(stitched[actual_blocks:] + momentum_adjustment[actual_blocks:], 0.0)
+            momentum_meta = {
+                "enabled": True,
+                "applied": bool(np.any(np.abs(momentum_adjustment[actual_blocks:]) > 1e-6)),
+                "raw_momentum_mw": round(momentum, 3),
+                "decay_blocks": float(decay_blocks),
+                "max_abs_applied_mw": round(float(np.max(np.abs(momentum_adjustment[actual_blocks:]))), 3),
+                "applied_mw": momentum_adjustment.tolist(),
+            }
+        except Exception as _mom_err:
+            momentum_meta = {"enabled": True, "applied": False, "reason": str(_mom_err)}
+
+    if bool(accuracy_cfg.get("ramp_limit_enabled", True)):
+        try:
+            _limited, _ramp_applied, _ramp_meta = _apply_ramp_limit(
+                stitched,
+                actual_blocks=int(actual_blocks),
+                max_ramp_mw=float(accuracy_cfg.get("max_ramp_mw", 300.0)),
+            )
+            stitched = _limited
+            ramp_limit_adjustment = _ramp_applied
+            ramp_limit_meta = _ramp_meta
+        except Exception as _ramp_limit_err:
+            ramp_limit_meta = {"enabled": True, "applied": False, "reason": str(_ramp_limit_err)}
+
+    _diag_vec("stitched_final", stitched)
 
     baseline_vec = np.asarray(stitched, dtype=float)
+    if "temperature_impact_block" not in locals():
+        temperature_impact_block = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "temp_delta" not in locals():
+        temp_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "hum_delta" not in locals():
+        hum_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "rain_delta" not in locals():
+        rain_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "apparent_delta" not in locals():
+        apparent_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "cloud_delta" not in locals():
+        cloud_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "sun_delta" not in locals():
+        sun_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "rad_delta" not in locals():
+        rad_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "wind_delta" not in locals():
+        wind_delta = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "coef_hum" not in locals():
+        coef_hum = 0.0
+    if "coef_rain" not in locals():
+        coef_rain = 0.0
+    if "temp_coeff_vec" not in locals():
+        temp_coeff_vec = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "temp_up_coeff" not in locals():
+        temp_up_coeff = np.zeros(_BLOCK_COUNT, dtype=float)
+    if "temp_down_coeff" not in locals():
+        temp_down_coeff = np.zeros(_BLOCK_COUNT, dtype=float)
     weather_base = np.divide(
         weather_impact_block,
         np.maximum(baseline_vec, 1e-6),
@@ -4603,7 +5871,6 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     manual_scaled = block_driver_matrix["manual_scaled"].to_numpy(dtype=float)
     clamped_impact = block_driver_matrix["final_impact"].to_numpy(dtype=float)
 
-    weather_contrib_mw = baseline_vec * weather_scaled * selection_mask
     temperature_contrib_mw = baseline_vec * temperature_scaled * selection_mask
     humidity_contrib_mw = baseline_vec * humidity_scaled * selection_mask
     precipitation_contrib_mw = baseline_vec * precipitation_scaled * selection_mask
@@ -4646,23 +5913,14 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     p50 = stitched.copy()
     p10 = np.maximum(p50 - (z_val * sigma_block), 0.0)
     p90 = p50 + (z_val * sigma_block)
-    if hybrid_ai_result is not None:
-        p50 = np.asarray(hybrid_ai_result.forecast, dtype=float)
-        p10 = np.asarray(hybrid_ai_result.p10, dtype=float)
-        p90 = np.asarray(hybrid_ai_result.p90, dtype=float)
-        p50[:actual_blocks] = actual_partial
-        p10[:actual_blocks] = actual_partial
-        p90[:actual_blocks] = actual_partial
     uncertainty_width_mw = p90 - p10
     uncertainty_width_pct = (uncertainty_width_mw / np.maximum(p50, 1e-6)) * 100.0
     forecast_confidence = np.clip(1.0 - (uncertainty_width_pct / 100.0), 0.05, 0.99)
-    if hybrid_ai_result is not None:
-        forecast_confidence = np.asarray(hybrid_ai_result.confidence, dtype=float)
-        forecast_confidence[:actual_blocks] = 0.99
 
     weather_sens = np.abs(weather_scaled)
     calendar_sens = np.abs(daytype_scaled) + np.abs(holiday_scaled)
-    operational_sens = np.abs((trend_applied + pattern_adjustment - rain_impact) / np.maximum(baseline_vec, 1e-6))
+    direct_rain_for_sensitivity = rain_impact if bool(accuracy_cfg.get("direct_rain_adjustment_enabled", False)) else 0.0
+    operational_sens = np.abs((trend_applied + pattern_adjustment - direct_rain_for_sensitivity) / np.maximum(baseline_vec, 1e-6))
     manual_sens = np.abs(manual_scaled)
     sens_stack = np.vstack([weather_sens, calendar_sens, operational_sens, manual_sens])
     dominant_idx = np.argmax(sens_stack, axis=0)
@@ -4808,9 +6066,8 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     window_len = max(1, 96 - window_start)
     temp_impact = float(np.sum(temperature_impact_block[window_start:])) / window_len
     hum_impact = float(np.sum((hum_delta * coef_hum)[window_start:])) / window_len
-    rain_driver = float(np.sum((rain_delta * coef_rain)[window_start:])) / window_len
     rain_impact_total = float(np.sum(rain_impact[window_start:])) / window_len
-    actual_len = max(1, int(actual_blocks))
+    wind_impact_total = float(np.sum(wind_impact[window_start:])) / window_len
     bias_mw = float(np.mean(residuals)) if len(residuals) else 0.0
     trend_amp = float(np.mean(np.abs(trend_component))) if len(trend_component) else 0.0
     trend_mw = trend_amp if trend_slope >= 0 else -trend_amp
@@ -4820,7 +6077,8 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     driver_values = [
         ("Temperature impact", temp_impact),
         ("Humidity impact", hum_impact),
-        ("Rain impact", -rain_impact_total),
+        ("Rain impact (diagnostic)", -rain_impact_total),
+        ("Wind gust dip (diagnostic)", -wind_impact_total),
         ("Bias MW", bias_mw),
         ("Trend MW", trend_mw),
         ("Pattern MW", pattern_mw),
@@ -4850,6 +6108,13 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "bias_applied": float(bias_applied[i]),
             "trend_component": float(trend_applied[i]),
             "rain_adjustment": float(rain_impact[i]),
+            "wind_adjustment": float(wind_impact[i]),
+            "ramp_weather_adjustment": float(ramp_adjustment[i]),
+            "block_bias_correction": float(block_bias_applied[i]),
+            "spline_residual_adjustment": float(spline_residual_adjustment[i]),
+            "calibration_adjustment": float(calibration_applied[i]),
+            "momentum_adjustment": float(momentum_adjustment[i]),
+            "ramp_limit_adjustment": float(ramp_limit_adjustment[i]),
             "pattern_adjustment": float(pattern_adjustment[i]),
             "residual_correction": float(residual_correction[i]),
             "human_behaviour": float(human_behaviour_adj[i]),
@@ -4899,6 +6164,40 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
 
     dip_explanations = sorted(dip_explanations, key=lambda d: d["drop_mw"])[:6]
 
+    same_month_last_year_diag = None
+    try:
+        tdt = pd.to_datetime(target_date, errors="coerce")
+        if pd.notna(tdt):
+            last_year = int(tdt.year) - 1
+            month = int(tdt.month)
+            diag = df.copy()
+            diag["date"] = diag["date"].astype(str)
+            diag["_dt"] = pd.to_datetime(diag["date"], errors="coerce")
+            diag = diag[pd.notna(diag["_dt"])]
+            diag["_year"] = diag["_dt"].dt.year
+            diag["_month"] = diag["_dt"].dt.month
+            ly = diag[(diag["_year"] == last_year) & (diag["_month"] == month)]
+            if not ly.empty:
+                is_weekend = int(tdt.dayofweek >= 5)
+                ly["_is_weekend"] = (ly["_dt"].dt.dayofweek >= 5).astype(int)
+                ly = ly[ly["_is_weekend"] == is_weekend]
+                by_day = ly.groupby("date")["total_drawal"].agg(["mean", "max"]).reset_index()
+                rain_col = "rain" if "rain" in ly.columns else ("precipitation" if "precipitation" in ly.columns else None)
+                rainy_days = None
+                if rain_col:
+                    rain_by_day = ly.groupby("date")[rain_col].sum()
+                    rainy_days = int((rain_by_day > 0.1).sum())
+                same_month_last_year_diag = {
+                    "year": last_year,
+                    "month": month,
+                    "n_days": int(by_day["date"].nunique()),
+                    "avg_peak_mw": float(by_day["max"].mean()) if len(by_day) else None,
+                    "avg_mean_mw": float(by_day["mean"].mean()) if len(by_day) else None,
+                    "rainy_days": rainy_days,
+                }
+    except Exception:
+        same_month_last_year_diag = None
+
     response = {
         "date": target_date,
         "metadata": {
@@ -4917,8 +6216,22 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 if (_CALIBRATED_BEHAVIOUR and (INDIAN_STATE_REGIONS.get(hb_region.lower().strip(), hb_region.lower().strip()), season, hb_day_type) in _CALIBRATED_BEHAVIOUR)
                 else "Hardcoded"
             ),
-            "hybrid_ai_engine": hybrid_ai_result.metadata if hybrid_ai_result is not None else {"enabled": False},
-            "hybrid_ai_explanation": hybrid_ai_result.explanation if hybrid_ai_result is not None else "Hybrid engine unavailable; fallback forecast retained.",
+            "hybrid_ai_engine": {
+                "enabled": hybrid_ai_forecast_vec is not None,
+                "variant": ai_cfg.get("variant", "attention_seq2seq"),
+                "blend_weight": float(ai_cfg.get("blend_weight", 0.35)) if hybrid_ai_forecast_vec is not None else 0.0
+            },
+            "hybrid_ai_explanation": "Attention-based Seq2Seq residual corrector applied." if hybrid_ai_forecast_vec is not None else "Hybrid engine unavailable.",
+            "horizon_calibration": horizon_calibration_meta,
+            "bias_correction": block_bias_meta,
+            "ramp_weather": ramp_weather_meta,
+            "spline_residual": spline_residual_meta,
+            "calibration_layer": calibration_meta,
+            "momentum": momentum_meta,
+            "ramp_limit": ramp_limit_meta,
+            "evening_storm_trigger": _evening_storm_meta,
+
+            "same_month_last_year": same_month_last_year_diag,
             "human_behaviour_learning": _CALIBRATED_BEHAVIOUR_META.get(
                 (INDIAN_STATE_REGIONS.get(hb_region.lower().strip(), hb_region.lower().strip()), season, hb_day_type),
                 {"source": "hardcoded_profiles"},
@@ -4931,8 +6244,12 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             },
             "target_day_type_extended": hb_day_type if 'hb_day_type' in dir() else day_type,
             "holiday_flags": target_holiday_flags,
-            "weather_divergence_gate": float(np.mean(divergence_gate)) if 'divergence_gate' in dir() else None,
-            "avg_temp_divergence_c": float(avg_temp_divergence) if 'avg_temp_divergence' in dir() else None,
+            "weather_divergence_gate": (
+                float(np.mean(locals()["divergence_gate"])) if "divergence_gate" in locals() else None
+            ),
+            "avg_temp_divergence_c": (
+                float(locals()["avg_temp_divergence"]) if "avg_temp_divergence" in locals() else None
+            ),
             "model_scope": "global",
             "feature_schema": {
                 "cross_day_lags": ["lag_1", "lag_7"],
@@ -4958,7 +6275,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "selection": cfg.get("selection"),
             "selection_smoothing": bool(cfg.get("selection_smoothing", False)),
             "decision_mode": "block_exogenous_attribution_v1",
-            "similar_days": similar_days[["date", "similarity_score", "temp_diff", "hum_diff", "rain_match"]].to_dict("records") if not similar_days.empty else [],
+            "similar_days": similar_days[[c for c in ["date", "similarity_score", "temp_mean", "hum_mean", "rain_any", "pool", "is_last_year_obs", "avg_load"] if c in similar_days.columns]].to_dict("records") if not similar_days.empty else [],
             "weather_coefs": {k: round(float(v), 4) for k, v in weather_coefs.items()} if weather_coefs else {},
             "drivers": driver_table,
         },
@@ -4971,8 +6288,6 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         "series": {
             "blocks": list(range(1, 97)),
             "historical_baseline": baseline_hist.tolist(),
-            "ml_baseline": _ml_baseline_vec.tolist(),
-            "ml_baseline_meta": _ml_baseline_meta,
             "weather_feature_deltas": {
                 "temperature": temp_delta.tolist(),
                 "humidity": hum_delta.tolist(),
@@ -4997,8 +6312,16 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             "trend": trend_full.tolist(),
             "trend_component": (trend_full * trend_weight).tolist(),
             "rain_adjustment": rain_impact.tolist(),
+            "wind_adjustment": wind_impact.tolist(),
+            "ramp_weather_adjustment": ramp_adjustment.tolist(),
+            "block_bias_correction": block_bias_applied.tolist(),
+            "spline_residual_adjustment": spline_residual_adjustment.tolist(),
+            "calibration_adjustment": calibration_applied.tolist(),
+            "momentum_adjustment": momentum_adjustment.tolist(),
+            "ramp_limit_adjustment": ramp_limit_adjustment.tolist(),
             "pattern_adjustment": pattern_adjustment.tolist(),
             "residual_correction": residual_correction.tolist(),
+            "horizon_calibration_correction": horizon_calibration_correction.tolist(),
             "human_behaviour": human_behaviour_adj.tolist(),
             "temperature_contrib_mw": temperature_contrib_mw.tolist(),
             "humidity_contrib_mw": humidity_contrib_mw.tolist(),
@@ -5020,21 +6343,21 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 "weather_total": (weather_scaled * selection_mask * 100.0).tolist(),
             },
             "forecast_raw_before_shrinkage": stitched_raw.tolist(),
-            "forecast_after_shrinkage_before_hybrid_ai": stitched_pre_hybrid_ai.tolist(),
-            "hybrid_ai_forecast": (
-                np.asarray(hybrid_ai_result.forecast, dtype=float).tolist()
-                if hybrid_ai_result is not None
-                else stitched_pre_hybrid_ai.tolist()
-            ),
+            "forecast_after_shrinkage": stitched_raw.tolist(),
             "forecast": stitched.tolist(),
+            "hybrid_ai_forecast": hybrid_ai_forecast_vec.tolist() if hybrid_ai_forecast_vec is not None else stitched.tolist(),
             "final_load": final_load.tolist(),
+
+            # debug_stages diagnostics are emitted as log lines when
+            # config["debug_stages"]=True; no extra keys added to response.
             "selection_mask": selection_mask.tolist(),
             "actual": [float(actual_full[i]) if i < actual_blocks else None for i in range(len(actual_full))],
         },
-        "explanation": hybrid_ai_result.explanation if hybrid_ai_result is not None else "Forecast generated by statistical fallback pipeline.",
+        "explanation": "Forecast generated by statistical pipeline.",
         "bias_factor": round(bias_factor, 4),
         "trend_curve": trend_full.tolist(),
         "rain_adjustment": rain_impact.tolist(),
+        "wind_adjustment": wind_impact.tolist(),
         "driver_contributions": driver_table,
         "similar_days": similar_days[["date", "similarity_score", "temp_diff", "hum_diff", "rain_match"]].to_dict("records") if not similar_days.empty else [],
         "peak_impact": peak_impact,
@@ -5047,6 +6370,28 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
         "decision_signals": decision_signals,
         "india_intelligence": india_meta,
         "top_contributor_slots": top_contributor_slots,
+        # ── Weather anomaly flags (populated when detect_weather_anomalies ran) ──
+        "weather_anomaly_flags": (
+            {
+                "severity":               _weather_result.severity,
+                "description":            _weather_result.description,
+                "load_impact_estimate_mw": _weather_result.load_impact_estimate_mw,
+                "day_level":              _weather_result.day_flags,
+                "block_level":            _weather_result.block_flags,
+            }
+            if _weather_result is not None
+            else {"severity": "NONE", "description": "No anomaly", "day_level": {}, "block_level": {}}
+        ),
+        # ── T+2 forecast (96 blocks, next calendar day) ───────────────────────
+        "t2_forecast": (
+            {
+                "date": str((pd.Timestamp(str(target_date)[:10]) + pd.Timedelta(days=1)).date()),
+                "blocks": _lstm_t2_vec.tolist() if _lstm_t2_vec is not None else [],
+                "weather_anomaly_flags": {"severity": "NONE", "description": "Not computed"},
+            }
+            if _lstm_t2_vec is not None and len(_lstm_t2_vec) == 96
+            else None
+        ),
     }
 
     _step("✓ DONE — pipeline complete")
@@ -5054,41 +6399,193 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
 
 
 # ── Weather DB fetch helper ───────────────────────────────────────────────────
+class WeatherDataUnavailable(Exception):
+    """Raised when MySQL weather data is unavailable (no fallback)."""
+    pass
+
+
+def _recompute_precipitation_if_split(wdf: pd.DataFrame) -> pd.DataFrame:
+    """If rain/showers/snowfall columns are present, set precipitation to
+    their per-block sum.  This is more accurate than the upstream
+    "precipitation" field for providers that publish the sum with rounding,
+    and lets downstream code keep referencing a single "precipitation"
+    aggregate while we surface the components separately for the UI."""
+    if wdf is None or wdf.empty:
+        return wdf
+    components = [c for c in ("rain", "showers", "snowfall") if c in wdf.columns]
+    if not components:
+        return wdf
+    summed = sum(pd.to_numeric(wdf[c], errors="coerce").fillna(0.0) for c in components)
+    wdf = wdf.copy()
+    wdf["precipitation"] = summed
+    return wdf
+
+
 def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFrame]:
     """
-    Fetch block-level weather for t2_date from the Django pipeline API
-    (weather_mean table in MySQL).  Returns a 96-row DataFrame with columns
-    matching the pipeline schema, or None if unavailable.
-    """
-    import requests as _req
+    Fetch block-level weather from MySQL (via Django pipeline API).
+    MySQL is the ONLY source — no SQLite/CSV fallback.
 
-    pipeline_base = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001").rstrip("/")
+    For Haryana, this also attempts a per-location fetch via
+    `/weather/by_location` and aggregates with circle-load weights from
+    `haryana_circle_weights.py` so a localised event (e.g. rain only in
+    Gurugram) only moves the state-level forecast in proportion to that
+    circle's share of total load.  Falls back to `/weather/mean` if the
+    per-location endpoint isn't available.
+
+    Raises WeatherDataUnavailable if MySQL is unreachable or has no data
+    for the requested (region, date) pair.  Caller must surface this as
+    a user-facing error.
+    """
+    _log = logging.getLogger(__name__)
+    state = region.upper().replace(" ", "_").replace("-", "_")
+
+    import requests as _req
+    pipeline_base = os.environ.get("PIPELINE_API_BASE_URL", "http://3.108.54.200:8001").rstrip("/")
     api_token     = os.environ.get("PIPELINE_API_TOKEN", os.environ.get("API_SECRET_KEY", "flagbearer"))
-    state         = region.upper().replace(" ", "_").replace("-", "_")
+    headers = {"Authorization": f"Bearer {api_token}"}
+
+    # ── Per-location weighted aggregation (if applicable) ─────────────────────
+    # HARYANA  → hand-curated CIRCLE_CONTRIBUTION_PCT (haryana_circle_weights).
+    # OTHERS   → learned weights from exports/location_weights_<state>.json
+    #            (precomputed via scripts/learn_location_weights.py).
+    aggregator = None
+    aggregator_label = ""
+    if state == "HARYANA":
+        try:
+            from .haryana_circle_weights import aggregate_weather_by_circle  # type: ignore
+        except Exception:
+            try:
+                from haryana_circle_weights import aggregate_weather_by_circle  # type: ignore
+            except Exception:
+                aggregate_weather_by_circle = None  # type: ignore
+        if aggregate_weather_by_circle is not None:
+            aggregator = lambda loc_df: aggregate_weather_by_circle(  # noqa: E731
+                loc_df, location_col="location", block_col="time_block"
+            )
+            aggregator_label = "haryana_circle_weights"
+    else:
+        try:
+            from .learned_location_weights import (  # type: ignore
+                load_cached_weights,
+                aggregate_with_learned_weights,
+            )
+        except Exception:
+            try:
+                from learned_location_weights import (  # type: ignore
+                    load_cached_weights,
+                    aggregate_with_learned_weights,
+                )
+            except Exception:
+                load_cached_weights = None  # type: ignore
+                aggregate_with_learned_weights = None  # type: ignore
+        if load_cached_weights is not None and aggregate_with_learned_weights is not None:
+            cached = load_cached_weights(state)
+            if cached:
+                aggregator = lambda loc_df, _w=cached: aggregate_with_learned_weights(  # noqa: E731
+                    loc_df, _w, location_col="location", block_col="time_block"
+                )
+                aggregator_label = f"learned_weights({len(cached)} locs)"
+
+    if aggregator is not None:
+            try:
+                resp_loc = _req.get(
+                    f"{pipeline_base}/weather/by_location",
+                    params={"state": state, "date": t2_date, "limit": 5000},
+                    headers=headers,
+                    timeout=10,
+                )
+                if resp_loc.status_code == 200:
+                    loc_rows = resp_loc.json()
+                    if isinstance(loc_rows, list) and loc_rows:
+                        loc_df = pd.DataFrame(loc_rows)
+                        rename = {
+                            "temperature_2m": "temperature",
+                            "relative_humidity_2m": "humidity",
+                        }
+                        loc_df = loc_df.rename(
+                            columns={k: v for k, v in rename.items() if k in loc_df.columns}
+                        )
+                        if "location" not in loc_df.columns:
+                            for alt in ("city", "station", "name"):
+                                if alt in loc_df.columns:
+                                    loc_df = loc_df.rename(columns={alt: "location"})
+                                    break
+                        loc_df["time_block"] = pd.to_numeric(
+                            loc_df.get("time_block", loc_df.get("block", pd.Series(dtype=float))),
+                            errors="coerce",
+                        ).astype("Int64")
+                        loc_df = loc_df[loc_df["time_block"].between(1, 96)].copy()
+                        if not loc_df.empty and "location" in loc_df.columns:
+                            wdf = aggregator(loc_df)
+                            if wdf is not None and not wdf.empty and len(wdf) >= 10:
+                                wdf["date"] = t2_date
+                                wdf["time_block"] = wdf["time_block"].astype("Int64")
+                                wdf = wdf.sort_values("time_block").reset_index(drop=True)
+                                wdf = _recompute_precipitation_if_split(wdf)
+                                _log.info(
+                                    "[weather] MySQL per-location aggregate: %d blocks for %s %s "
+                                    "(method=%s)",
+                                    len(wdf), region, t2_date, aggregator_label,
+                                )
+                                return wdf
+            except _req.exceptions.RequestException as exc:
+                _log.info("[weather] per-location endpoint not available, falling back to /weather/mean: %s", exc)
+            except Exception as exc:
+                _log.warning("[weather] per-location aggregation failed, falling back: %s", exc)
 
     try:
         resp = _req.get(
             f"{pipeline_base}/weather/mean",
             params={"state": state, "date": t2_date, "limit": 100},
-            headers={"Authorization": f"Bearer {api_token}"},
+            headers=headers,
             timeout=10,
         )
-        resp.raise_for_status()
-        rows = resp.json()
-        if not isinstance(rows, list) or not rows:
-            return None
+    except _req.exceptions.RequestException as exc:
+        raise WeatherDataUnavailable(
+            f"MySQL weather API unreachable ({pipeline_base}): {exc}"
+        ) from exc
 
-        wdf = pd.DataFrame(rows)
-        wdf["date"]       = pd.to_datetime(wdf["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-        wdf["time_block"] = pd.to_numeric(wdf.get("time_block", wdf.get("block", pd.Series(dtype=float))),
-                                          errors="coerce").astype("Int64")
-        wdf = wdf[wdf["time_block"].between(1, 96)].sort_values("time_block").reset_index(drop=True)
-        if len(wdf) < 10:
-            return None
-        return wdf
-    except Exception as _e:
-        logging.getLogger(__name__).warning("T+2 weather DB fetch failed for %s %s: %s", region, t2_date, _e)
-        return None
+    if resp.status_code != 200:
+        raise WeatherDataUnavailable(
+            f"MySQL weather API returned {resp.status_code} for {state} {t2_date}"
+        )
+
+    try:
+        rows = resp.json()
+    except ValueError as exc:
+        raise WeatherDataUnavailable(f"MySQL weather API returned non-JSON: {exc}") from exc
+
+    if not isinstance(rows, list) or not rows:
+        raise WeatherDataUnavailable(
+            f"No weather data in MySQL for {region} on {t2_date}"
+        )
+
+    wdf = pd.DataFrame(rows)
+    rename = {
+        "temperature_2m": "temperature",
+        "relative_humidity_2m": "humidity",
+        "rain_mm": "rain",
+        "showers_mm": "showers",
+        "snowfall_cm": "snowfall",
+    }
+    wdf = wdf.rename(columns={k: v for k, v in rename.items() if k in wdf.columns})
+    wdf["date"]       = pd.to_datetime(wdf["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    wdf["time_block"] = pd.to_numeric(
+        wdf.get("time_block", wdf.get("block", pd.Series(dtype=float))),
+        errors="coerce",
+    ).astype("Int64")
+    wdf = wdf[wdf["time_block"].between(1, 96)].sort_values("time_block").reset_index(drop=True)
+
+    if len(wdf) < 10:
+        raise WeatherDataUnavailable(
+            f"MySQL weather for {region} {t2_date} has only {len(wdf)} blocks (need ≥10)"
+        )
+
+    wdf = _recompute_precipitation_if_split(wdf)
+
+    _log.info("[weather] MySQL: %d blocks for %s %s", len(wdf), region, t2_date)
+    return wdf
 
 
 def _inject_weather_into_rows(target_df: pd.DataFrame, weather_df: pd.DataFrame) -> pd.DataFrame:
@@ -5098,7 +6595,13 @@ def _inject_weather_into_rows(target_df: pd.DataFrame, weather_df: pd.DataFrame)
     target_df is added.  time_block must be an integer key in both frames.
     """
     WEATHER_COLS = [
-        "temperature", "humidity", "precipitation",
+        "temperature", "humidity",
+        # Precipitation aggregate + decomposed forms.  Open-Meteo and similar
+        # providers expose rain, showers, and snowfall separately; their sum
+        # equals "precipitation".  We surface all four so the UI can show the
+        # right form (rain vs snowfall has very different load impact) and
+        # so future coefficient layers can treat them differently.
+        "precipitation", "rain", "showers", "snowfall",
         "apparent_temperature", "cloud_cover", "cloud_cover_low",
         "sunshine_duration", "direct_radiation", "wind_speed_10m",
     ]
@@ -5127,6 +6630,23 @@ def _inject_weather_into_rows(target_df: pd.DataFrame, weather_df: pd.DataFrame)
 
 
 # ── T+2 (Day-After-Tomorrow) Forecast Pipeline ────────────────────────────────
+def _get_lag7_row(df: pd.DataFrame, target_date: str) -> Optional[pd.DataFrame]:
+    """Return the 96-block actual for the same weekday 7 days before target_date.
+
+    Used as a real-data anchor for T+2 so the pipeline does not propagate
+    T+1 forecast error into T+2's baseline.  Returns None when lag-7 data
+    is missing or incomplete (< 48 blocks).
+    """
+    try:
+        lag7_date = (pd.Timestamp(target_date) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        rows = df[df["date"].astype(str) == lag7_date].copy()
+        if rows.empty or int(rows["time_block"].nunique()) < 48:
+            return None
+        return rows
+    except Exception:
+        return None
+
+
 def run_t2_pipeline(
     df: pd.DataFrame,
     t1_date: str,
@@ -5144,23 +6664,139 @@ def run_t2_pipeline(
     - Forecast T+2 with actual_blocks=0.
     - Apply a short seam taper so T+1 block 96 and T+2 block 1 remain continuous.
     """
+    df = _ensure_time_block_1_based(df)
+
     try:
         t1_dt = pd.Timestamp(t1_date)
     except Exception:
         raise ValueError(f"Invalid t1_date: {t1_date!r}")
 
+    # ── Data availability check ───────────────────────────────────────────────
+    # Layout:
+    #   base_date  (April 24) = last date with real actuals in df
+    #   t1_date    (April 25) = T+1 target — forecasted, no real actuals
+    #   t2_date    (April 26) = T+2 target — forecasted, no real actuals
+    #
+    # We need at least some data for the base_date so the pipeline has recent
+    # context.  If base_date is completely missing, reject early with a clear
+    # message.  Partial data (< 96 blocks) is allowed — the pipeline handles it.
+    import logging as _log_mod
+    _avail_logger = _log_mod.getLogger(__name__)
+
+    base_date_str = (t1_dt - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    base_day_df = df[df["date"].astype(str) == base_date_str]
+    base_blocks = int(base_day_df["time_block"].nunique()) if not base_day_df.empty else 0
+
+    # Also find the true latest date in the df (may be newer than base_date_str)
+    available_dates = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+    latest_date = available_dates[-1] if available_dates else None
+    latest_blocks = (
+        int(df[df["date"].astype(str) == latest_date]["time_block"].nunique())
+        if latest_date else 0
+    )
+
+    if base_blocks == 0 and latest_blocks == 0:
+        raise ValueError(
+            "No historical data available. Please load the latest data and retry."
+        )
+
+    if base_blocks == 0 and latest_date:
+        raise ValueError(
+            f"No data for reference date {base_date_str}. "
+            f"Latest available: {latest_date} with {latest_blocks}/96 blocks. "
+            "Please add the latest data and retry."
+        )
+
+    _avail_logger.info(
+        "[T+2] base=%s %d/96 blocks | t1=%s | t2=%s",
+        base_date_str, base_blocks, t1_date, (t1_dt + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+    )
+
     t2_dt = t1_dt + pd.Timedelta(days=1)
     t2_date = t2_dt.strftime("%Y-%m-%d")
 
     cfg = dict(config or {})
-    seam_cfg = cfg.get("t2_seam_bridge", {}) if isinstance(cfg.get("t2_seam_bridge", {}), dict) else {}
-    seam_window = int(np.clip(int(seam_cfg.get("window_blocks", 8)), 1, _BLOCK_COUNT))
+    cfg.setdefault("forecast_horizon", "t2")
+    cfg.setdefault("t2_level_norm", {"enabled": True, "blend": 0.45, "ratio_cap": 1.12})
+    accuracy_cfg = cfg.get("accuracy_corrections", {}) if isinstance(cfg.get("accuracy_corrections", {}), dict) else {}
+    _hc = cfg.get("horizon_calibration", {}) if isinstance(cfg.get("horizon_calibration", {}), dict) else {}
+    _hc.setdefault("enabled", True)
+    _hc.setdefault("t2_blend", 0.72)
+    _hc.setdefault("t2_segment_blend", 0.45)
+    _hc.setdefault("t2_ratio_cap", 0.08)
+    _hc.setdefault("t2_live_decay_half_blocks", 12.0)
+    cfg["horizon_calibration"] = _hc
+    # Signal to sub-pipelines whether the base date has complete data
+    cfg["_t2_base_blocks"] = base_blocks
+    cfg["_t2_base_complete"] = base_blocks == 96
 
+    seam_cfg = cfg.get("t2_seam_bridge", {}) if isinstance(cfg.get("t2_seam_bridge", {}), dict) else {}
+    # Smaller seam window so T+1 forecast error doesn't bleed into T+2's morning.
+    # Each T+2 day now runs its own similar-day selection (Phase 1 rewrite),
+    # so it doesn't need a wide bridge to look "continuous".
+    seam_window = int(np.clip(int(seam_cfg.get("window_blocks", 4)), 1, _BLOCK_COUNT))
+
+    # Infer region from df if not explicitly passed (used for weather DB fetch).
+    _region = region
+    if not _region and "state" in df.columns:
+        _region = str(df["state"].dropna().iloc[0]) if not df["state"].dropna().empty else None
+    if not _region and "region" in df.columns:
+        _region = str(df["region"].dropna().iloc[0]) if not df["region"].dropna().empty else None
+
+    # T+1 template rows: may not exist in the historical dataframe (future forecast).
+    # If missing, synthesize a placeholder day from the latest available day and
+    # inject weather for the target date when possible.
     t1_rows = df[df["date"].astype(str) == t1_date].copy()
     if t1_rows.empty:
-        raise ValueError(f"T+1 date {t1_date} not found in dataframe; cannot forecast sequential T+2.")
+        dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+        if not dates_in_df:
+            raise ValueError("No dates available in dataframe; cannot synthesise T+1/T+2.")
 
-    # ── Step 1: Forecast T+1 with zero actuals (pure forward forecast) ───────
+        # Prefer the latest date strictly before t1_date as template; else fallback to latest.
+        try:
+            t1_ts = pd.to_datetime(t1_date, errors="coerce")
+        except Exception:
+            t1_ts = pd.NaT
+
+        template_date = dates_in_df[-1]
+        if pd.notna(t1_ts):
+            dts = pd.to_datetime(pd.Series(dates_in_df), errors="coerce")
+            prior = dts[dts < t1_ts]
+            if not prior.empty:
+                template_date = str(pd.Series(dates_in_df).iloc[int(prior.index.max())])
+
+        template_rows = df[df["date"].astype(str) == template_date].copy()
+        if template_rows.empty:
+            raise ValueError(f"Template date {template_date} not found; cannot synthesise T+1 day {t1_date}.")
+
+        t1_rows = _build_synthetic_forecast_day(
+            template_df=template_rows,
+            target_date=t1_date,
+            forecast=np.zeros(_BLOCK_COUNT, dtype=float),
+            zero_actuals=True,
+        )
+        t1_rows["_is_synthetic"] = 1
+
+        # Fetch real weather for T+1 if available; else keep template weather.
+        try:
+            if _region:
+                t1_weather_df = _fetch_t2_weather_from_db(t1_date, _region)
+            else:
+                t1_weather_df = None
+        except Exception:
+            t1_weather_df = None
+
+        if t1_weather_df is not None:
+            t1_rows = _inject_weather_into_rows(t1_rows, t1_weather_df)
+
+        # Ensure the pipeline sees the target_date rows.
+        df = pd.concat([df, t1_rows], ignore_index=True)
+
+    # ── Step 1: Forecast T+1 (April 25) with zero actuals ───────────────────
+    # T+1 is a future date — it has no real actuals yet.  The pipeline uses the
+    # full historical df (which now includes the complete base-date / April 24 data)
+    # as context.  actual_blocks=0 tells it: "produce a pure forward forecast."
+    # DO NOT pass the synthetic t1_rows block count — those are placeholder zeros.
     t1_result = run_short_term_pipeline(
         df=df,
         target_date=t1_date,
@@ -5173,27 +6809,45 @@ def run_t2_pipeline(
         fill_value=0.0,
     )
 
-    # ── Step 2: Build T+1 synthetic row using forecasted load as history ─────
-    #   Weather columns are kept from the real T+1 day (they already exist in df).
-    #   Mark as synthetic so baseline window MAPE backtest and similar-day candidate
-    #   selection skip this row — its "actuals" are the forecast, not real data.
-    t1_synthetic = _build_synthetic_forecast_day(
-        template_df=t1_rows,
-        target_date=t1_date,
-        forecast=t1_forecast,
-        zero_actuals=False,
-    )
+    # ── Step 2: Build T+1 synthetic row for T+2 context ─────────────────────
+    # FIX 1: Use lag-7 real actuals as the T+1 load anchor instead of the T+1
+    # forecast.  This breaks the error-propagation chain: if T+1 forecast is
+    # wrong, T+2 no longer inherits that error through its "yesterday" context.
+    # The seam continuity correction (below) still uses t1_forecast to ensure
+    # the T+2 curve starts at the right absolute level — only the baseline
+    # SHAPE context switches to a real historical anchor.
+    _lag7_rows = _get_lag7_row(df, t1_date)
+    if _lag7_rows is not None:
+        _lag7_load = (
+            _lag7_rows.groupby("time_block")["total_drawal"]
+            .mean()
+            .reindex(range(1, 97))
+            .ffill().bfill()
+            .to_numpy(dtype=float)
+        )
+        t1_synthetic = _build_synthetic_forecast_day(
+            template_df=t1_rows,
+            target_date=t1_date,
+            forecast=_lag7_load,
+            zero_actuals=False,
+        )
+        _avail_logger.info(
+            "[T+2] Using lag-7 real anchor (%s) as T+1 synthetic load for T+2 context.",
+            (pd.Timestamp(t1_date) - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+        )
+    else:
+        # Lag-7 not available — fall back to T+1 forecast (old behaviour)
+        t1_synthetic = _build_synthetic_forecast_day(
+            template_df=t1_rows,
+            target_date=t1_date,
+            forecast=t1_forecast,
+            zero_actuals=False,
+        )
+        _avail_logger.warning("[T+2] Lag-7 data unavailable — using T+1 forecast as synthetic anchor.")
     t1_synthetic["_is_synthetic"] = 1
 
     # ── Step 3: Build T+2 rows — use DB weather if available ─────────────────
     dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
-
-    # Infer region from df if not explicitly passed
-    _region = region
-    if not _region and "state" in df.columns:
-        _region = str(df["state"].dropna().iloc[0]) if not df["state"].dropna().empty else None
-    if not _region and "region" in df.columns:
-        _region = str(df["region"].dropna().iloc[0]) if not df["region"].dropna().empty else None
 
     # Fetch real T+2 weather from MySQL via Django API
     t2_weather_df = None
@@ -5283,6 +6937,64 @@ def run_t2_pipeline(
 
     result_series = result.get("series", {}) if isinstance(result, dict) else {}
     t2_forecast = _normalize_block_vector(result_series.get("forecast"), length=_BLOCK_COUNT, fill_value=0.0)
+
+    # ── T+2 Load-Level Normalisation (optional) ──────────────────────────────
+    # When T+1 overnight forecast is meaningfully higher than T+2 overnight
+    # (i.e., T+1 "sees" higher current-year load than T+2's similar-day pool),
+    # gently scale T+2 up.  Only applies in the up direction — avoids amplifying
+    # over-forecasts.  Conservative blend (0.30) keeps the correction subtle.
+    # Enabled by route defaults for T+2; can be disabled via cfg["t2_level_norm"]["enabled"]=false.
+    _t2_norm_cfg     = cfg.get("t2_level_norm", {})
+    _t2_norm_enabled = bool(_t2_norm_cfg.get("enabled", False))
+    _t2_norm_blend   = float(_t2_norm_cfg.get("blend", 0.30))
+    _t2_norm_cap     = float(_t2_norm_cfg.get("ratio_cap", 1.15))
+    _t2_level_ratio  = 1.0
+    if _t2_norm_enabled:
+        try:
+            _t1_night = t1_forecast[:24]
+            _t2_night = t2_forecast[:24]
+            _t1_night_mean = float(np.mean(_t1_night[_t1_night > 0])) if (_t1_night > 0).any() else 0.0
+            _t2_night_mean = float(np.mean(_t2_night[_t2_night > 0])) if (_t2_night > 0).any() else 0.0
+            if _t2_night_mean > 100.0 and _t1_night_mean > 100.0:
+                raw_ratio = _t1_night_mean / _t2_night_mean
+                # Only scale up (fix under-forecast) — never scale down
+                if raw_ratio > 1.0:
+                    capped_ratio = float(np.clip(raw_ratio, 1.0, _t2_norm_cap))
+                    _t2_level_ratio = capped_ratio
+                    t2_scaled   = t2_forecast * capped_ratio
+                    t2_forecast = (1.0 - _t2_norm_blend) * t2_forecast + _t2_norm_blend * t2_scaled
+                    _avail_logger.info(
+                        "[T+2] Level norm (up-only): T+1_night=%.0f T+2_night=%.0f "
+                        "ratio=%.3f blend=%.2f",
+                        _t1_night_mean, _t2_night_mean, capped_ratio, _t2_norm_blend,
+                    )
+        except Exception as _norm_err:
+            _avail_logger.warning("[T+2] Load-level normalisation failed: %s", _norm_err)
+
+    t2_bias_meta: Dict[str, Any] = {"enabled": False}
+    t2_bias_applied = np.zeros(_BLOCK_COUNT, dtype=float)
+    if (
+        build_t2_bias_correction is not None
+        and apply_t2_night_correction is not None
+        and bool(accuracy_cfg.get("t2_night_bias_enabled", True))
+    ):
+        try:
+            t2_corr, t2_corr_meta = build_t2_bias_correction(
+                None,
+                fallback_night_mw=float(accuracy_cfg.get("t2_fallback_night_mw", 250.0)),
+                min_samples=int(accuracy_cfg.get("t2_bias_min_samples", 7)),
+            )
+            t2_bias_result = apply_t2_night_correction(t2_forecast, t2_corr, enabled=True)
+            t2_forecast = t2_bias_result.forecast
+            t2_bias_applied = t2_bias_result.applied_mw
+            t2_bias_meta = {**t2_corr_meta, **t2_bias_result.metadata}
+            _avail_logger.info(
+                "[T+2] Night bias correction applied: mean night %.1f MW",
+                float(np.mean(t2_bias_applied[:32])),
+            )
+        except Exception as _t2_bias_err:
+            t2_bias_meta = {"enabled": True, "applied": False, "reason": str(_t2_bias_err)}
+
     # Use a weighted average of the last few T+1 blocks as the seam anchor
     # to avoid propagating single-block noise into T+2.
     _seam_tail = int(np.clip(int(seam_cfg.get("anchor_tail_blocks", 4)), 1, min(12, _BLOCK_COUNT)))
@@ -5302,6 +7014,7 @@ def run_t2_pipeline(
             result_series["final_load"] = t2_adjusted.tolist()
         if "hybrid_ai_forecast" in result_series:
             result_series["hybrid_ai_forecast"] = t2_adjusted.tolist()
+        result_series["t2_bias_correction"] = t2_bias_applied.tolist()
         
         # Inject T+1 forecast as "yesterday" for UI comparison
         result_series["yesterday"] = t1_forecast.tolist()
@@ -5314,6 +7027,7 @@ def run_t2_pipeline(
                 row["final_load"] = float(t2_adjusted[idx])
                 # Also inject into the tabular view
                 row["yesterday"] = float(t1_forecast[idx])
+                row["t2_bias_correction"] = float(t2_bias_applied[idx])
 
     metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
     if isinstance(metadata, dict):
@@ -5324,10 +7038,63 @@ def run_t2_pipeline(
             "seam_window_blocks": int(seam_window),
             "seam_gap_before_mw": round(float(seam_gap_before), 3),
             "seam_gap_after_mw": round(float(seam_gap_after), 3),
+            "t2_level_norm_ratio": round(float(_t2_level_ratio), 4),
+            "t2_level_norm_enabled": _t2_norm_enabled,
         }
+        metadata["t2_bias_correction"] = t2_bias_meta
 
     result["horizon"] = "t2"
     result["t1_date"] = t1_date
     result["t2_date"] = t2_date
     result["t1_forecast"] = t1_forecast.tolist()
+
+    # Build weather_analysis from T+2 weather data so the UI can display
+    # avg temperature, humidity, precipitation metrics on the T+2 tab.
+    if t2_weather_df is not None and not t2_weather_df.empty:
+        try:
+            _wdf = t2_weather_df.copy()
+            if "time_block" in _wdf.columns:
+                _wdf = _wdf.set_index("time_block").reindex(range(1, 97)).ffill().bfill()
+            _w_cols = ["temperature", "humidity", "precipitation", "wind_speed",
+                       "cloud_cover", "direct_radiation", "sunshine_duration", "solar_radiation"]
+            for _c in _w_cols:
+                if _c not in _wdf.columns:
+                    _wdf[_c] = 0.0
+            if "wind_speed" not in _wdf.columns and "wind_speed_10m" in _wdf.columns:
+                _wdf["wind_speed"] = _wdf["wind_speed_10m"]
+            if "solar_radiation" not in _wdf.columns and "direct_radiation" in _wdf.columns:
+                _wdf["solar_radiation"] = _wdf["direct_radiation"]
+            # Use T+1 rows as "normal" baseline for T+2 intraday comparison
+            _t1_rows = df[df["date"].astype(str) == t1_date].copy()
+            _normal = (
+                _t1_rows.set_index("time_block").reindex(range(1, 97)).ffill().bfill()
+                if not _t1_rows.empty
+                else _wdf.copy()
+            )
+            _intra = {}
+            for _col in ["temperature", "humidity", "precipitation", "cloud_cover",
+                         "solar_radiation", "wind_speed"]:
+                _intra[_col] = {
+                    "actual": [round(float(v), 2) for v in _wdf[_col].tolist()],
+                    "normal": [round(float(v), 2) for v in (_normal[_col].tolist() if _col in _normal.columns else _wdf[_col].tolist())],
+                    "delta":  [round(float(a - n), 2) for a, n in zip(_wdf[_col].tolist(), (_normal[_col].tolist() if _col in _normal.columns else [0]*96))],
+                }
+            _precip = _wdf["precipitation"]
+            result["weather_analysis"] = {
+                "intraday": _intra,
+                "peak_windows": {},
+                "rain_metrics": {
+                    "total_mm": round(float(_precip.sum()), 1),
+                    "max_intensity": round(float(_precip.max()), 1),
+                    "rain_hours": round(float((_precip > 0).sum() * 0.25), 1),
+                    "load_impact_mw": 0.0,
+                    "cloud_factor": 0.0,
+                },
+                "dod_changes": {},
+                "dod_series": {},
+                "sensitivity": {},
+            }
+        except Exception as _wx_err:
+            _log.warning("[T+2] weather_analysis build failed: %s", _wx_err)
+
     return result
