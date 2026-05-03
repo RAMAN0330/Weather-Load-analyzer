@@ -8,7 +8,7 @@ managed=True → Django creates/migrates these tables in MySQL.
 import secrets
 from datetime import datetime, timedelta
 
-from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 
 

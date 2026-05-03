@@ -11,7 +11,6 @@ Endpoints:
 """
 
 import json
-import os
 import secrets
 from datetime import timezone
 from typing import Optional
@@ -23,7 +22,6 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from .auth_db import (
-    SessionLocal,
     create_session,
     create_user,
     delete_session,

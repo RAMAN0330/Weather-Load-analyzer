@@ -1,0 +1,41 @@
+/* Design tokens — VidyutPragya redesign.
+   Values stored as raw HSL channels so Tailwind's <alpha-value> syntax works. */
+
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — deep, slightly cool to make warm accent pop */
+  --bg-base: 230 14% 5%;       /* #0A0B10 */
+  --bg-elev-1: 228 13% 10%;    /* #14161D */
+  --bg-elev-2: 226 14% 13%;    /* #1B1E27 */
+  --bg-elev-3: 226 14% 17%;    /* #232631 */
+
+  --border: 226 10% 22%;       /* #2A2D38 */
+  --ring: 22 90% 55%;          /* matches accent */
+
+  /* Text */
+  --fg: 230 14% 92%;           /* #ECEEF3 */
+  --fg-muted: 228 11% 60%;     /* #8B90A0 */
+  --fg-faint: 228 11% 42%;     /* #5B6072 */
+
+  /* Brand */
+  --accent: 22 87% 55%;        /* #F07825 */
+  --accent-fg: 0 0% 100%;
+  --accent-2: 211 71% 62%;     /* #5B9FE4 */
+  --accent-2-fg: 0 0% 100%;
+
+  /* Semantic */
+  --success: 142 71% 56%;      /* #4ADE80 */
+  --warning: 38 92% 50%;       /* #F59E0B */
+  --danger: 0 84% 60%;         /* #EF4444 */
+  --info: 211 71% 62%;
+
+  /* Chart series — referenced from echartsTheme */
+  --chart-forecast: var(--accent);
+  --chart-actual: var(--fg);
+  --chart-baseline: var(--fg-muted);
+  --chart-similar: var(--accent-2);
+  --chart-confidence: var(--accent);
+}

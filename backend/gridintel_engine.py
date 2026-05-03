@@ -1,14 +1,14 @@
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 try:
-    from .engine import EDAEngine, FeatureRegistry
+    from .engine import EDAEngine
 except Exception:
-    from engine import EDAEngine, FeatureRegistry
+    from engine import EDAEngine
 
 
 @dataclass
@@ -21,20 +21,8 @@ class DataLayerConfig:
 class DataLayer:
     def __init__(self, config: DataLayerConfig):
         self.config = config
-        self._raw_df = self._load_multi_csv(config.data_path)
-        self._df = self._preprocess(self._raw_df)
-
-    def _load_multi_csv(self, path: str) -> pd.DataFrame:
-        if os.path.isdir(path):
-            frames = []
-            for name in os.listdir(path):
-                if name.lower().endswith(".csv"):
-                    frames.append(pd.read_csv(os.path.join(path, name)))
-            if frames:
-                return pd.concat(frames, ignore_index=True)
-        if os.path.exists(path):
-            return pd.read_csv(path)
-        return pd.DataFrame()
+        self._raw_df = pd.DataFrame()
+        self._df = pd.DataFrame()
 
     def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
@@ -290,11 +278,11 @@ class KPIEngine:
 
 
 class GridIntelControlDesk:
-    def __init__(self, data_path: str):
-        self.data_layer = DataLayer(DataLayerConfig(data_path=data_path))
+    def __init__(self, data_path: str = ""):
+        self.data_layer = DataLayer(DataLayerConfig(data_path=data_path or ""))
         self.fe = FeatureEngineering()
         self.kpis = KPIEngine()
-        self.eda = EDAEngine(data_path)
+        self.eda = EDAEngine(data_path or "")
 
     def _wrap(self, charts: Dict[str, Any], kpis: Dict[str, Any], insights: List[str], meta: Dict[str, Any]) -> Dict[str, Any]:
         return {"charts": charts, "kpis": kpis, "insights": insights, "metadata": meta}
@@ -349,17 +337,25 @@ class GridIntelControlDesk:
                 # Fallback if relative import fails and not in path
                 from backend.short_term_pipeline import run_short_term_pipeline
 
-        # Load ample history for the pipeline
-        freq_extended_start = pd.to_datetime(start) - pd.Timedelta(days=60)
-        df = self.fe.add_features(self.data_layer.get_data(freq_extended_start.strftime("%Y-%m-%d"), end))
-        
-        # Determine dates to forecast
+        # Load ample history for the pipeline; if a training range is set (via /api/switch-region),
+        # ensure the DF covers it plus the same-window last year.
+        train_range = getattr(self, "train_range", None)
         req_start = pd.to_datetime(start)
         req_end = pd.to_datetime(end)
+        if isinstance(train_range, dict) and train_range.get("from") and train_range.get("to"):
+            tr_from = pd.to_datetime(train_range["from"])
+            tr_to = pd.to_datetime(train_range["to"])
+            needed_start = min(req_start - pd.Timedelta(days=60), tr_from - pd.Timedelta(days=430))
+            needed_end = max(req_end, tr_to)
+            df = self.fe.add_features(self.data_layer.get_data(needed_start.strftime("%Y-%m-%d"), needed_end.strftime("%Y-%m-%d")))
+        else:
+            freq_extended_start = req_start - pd.Timedelta(days=60)
+            df = self.fe.add_features(self.data_layer.get_data(freq_extended_start.strftime("%Y-%m-%d"), end))
+        
+        # Determine dates to forecast
         date_range = pd.date_range(req_start, req_end, freq='D')
         
         all_forecasts = []
-        all_residuals = []
         insights = []
         kpis = {}
         
@@ -372,11 +368,6 @@ class GridIntelControlDesk:
             # If date is in the past/today, we might have actuals.
             
             # Check if we have actual data for this day to set actual_blocks
-            day_data = df[df['Date'] == dt.date()]
-            actual_count = 0
-            if not day_data.empty and feature in day_data.columns:
-                actual_count = day_data[feature].count()
-                
             # Run pipeline
             try:
                 # If target date is today/future, actual_blocks might be 0 or partial. 
@@ -385,16 +376,39 @@ class GridIntelControlDesk:
                 # Let's align with the previous behavior: Forecast for the future.
                 # If start date > max data date, actual_blocks = 0.
                 
-                pipeline_res = run_short_term_pipeline(df, d_str, actual_blocks=0, config={
-                    "human_behaviour_weight": 0.0, # Keep disabled until dynamic sigmoid implemented
-                    "weather_gating": {"similar_day": 0.45, "ml_model": 0.35, "elasticity": 0.20}, # Explicit Gating
-                    "trend_weight": 0.1, 
-                    "pattern_weight": 0.3, 
-                    "weather_tune": True,
-                    "weather_tune_iters": 30,
-                    "auto_similarity_from_data": True,
-                    "correction_smoothing": True
-                })
+                if isinstance(train_range, dict) and train_range.get("from") and train_range.get("to"):
+                    pipeline_res = run_short_term_pipeline(
+                        df,
+                        d_str,
+                        actual_blocks=0,
+                        config={
+                            "human_behaviour_weight": 0.0,
+                            "weather_gating": {"similar_day": 0.45, "ml_model": 0.35, "elasticity": 0.20},
+                            "trend_weight": 0.1,
+                            "pattern_weight": 0.3,
+                            "weather_tune": True,
+                            "weather_tune_iters": 30,
+                            "auto_similarity_from_data": True,
+                            "correction_smoothing": True,
+                            "training_range": train_range,
+                        },
+                    )
+                else:
+                    pipeline_res = run_short_term_pipeline(
+                        df,
+                        d_str,
+                        actual_blocks=0,
+                        config={
+                            "human_behaviour_weight": 0.0,
+                            "weather_gating": {"similar_day": 0.45, "ml_model": 0.35, "elasticity": 0.20},
+                            "trend_weight": 0.1,
+                            "pattern_weight": 0.3,
+                            "weather_tune": True,
+                            "weather_tune_iters": 30,
+                            "auto_similarity_from_data": True,
+                            "correction_smoothing": True,
+                        },
+                    )
                 
                 # Extract forecast curve
                 f_df = pd.DataFrame(pipeline_res['forecast_df'])

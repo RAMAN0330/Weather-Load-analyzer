@@ -24,14 +24,6 @@ except ImportError:
     LGBMRegressor = None
 
 try:
-    from .hybrid_ai_engine import run_attention_hybrid_ai
-except ImportError:
-    try:
-        from hybrid_ai_engine import run_attention_hybrid_ai
-    except ImportError:
-        run_attention_hybrid_ai = None
-
-try:
     from .helper_model import run_helper_forecast
 except ImportError:
     try:
@@ -140,6 +132,7 @@ DEFAULT_CONFIG = {
     "humidity_band": 12.0,
     "require_rain_match": True,
     "wind_gust_threshold_kmh": 25.0,   # ↓ from 30 — earlier gust-dip activation
+    "sldc_wind_threshold_kmh": 65.0,   # 80m wind above this triggers SLDC feeder-cut correction
     "similarity_weights": {"temp": 0.55, "humidity": 0.25, "rain": 0.2},
     "auto_similarity_from_data": True,
     "auto_require_rain_match": True,
@@ -278,7 +271,7 @@ DEFAULT_CONFIG = {
         "ramp_limit_enabled": True,
         "max_ramp_mw": 300.0,
         "momentum_enabled": True,
-        "momentum_decay_blocks": 8.0,
+        "momentum_decay_blocks": 5.0,
         "t2_night_bias_enabled": True,
         "t2_fallback_night_mw": 350.0,
         # Ramp block sample weighting in ML training (blocks 48-68)
@@ -2284,6 +2277,28 @@ def _compute_residual_bias(
             .reindex(range(1, 97))
         )
         resid = (actual - rolling).to_numpy(dtype=float)
+
+        # Exclude load-shedding / grid-outage days from bias pool.
+        # A >30% drop within any 1-hour window (4 blocks) is not a model error — it's
+        # an external event that would corrupt the residual estimate if included.
+        _act_arr = actual.to_numpy(dtype=float)
+        _valid_act = np.isfinite(_act_arr) & (_act_arr > 0)
+        _anomalous = False
+        if _valid_act.sum() >= 8:
+            for _bi in range(4, len(_act_arr)):
+                if _valid_act[_bi] and _valid_act[_bi - 4] and _act_arr[_bi - 4] > 500:
+                    if _act_arr[_bi] < 0.70 * _act_arr[_bi - 4]:
+                        _anomalous = True
+                        break
+        if _anomalous:
+            continue
+
+        # Also exclude days where hub-height wind exceeded SLDC protection threshold —
+        # those are supply-cut events (feeder trips), not demand errors.
+        _day_wind80 = float(day_df["wind_speed_80m"].max()) if "wind_speed_80m" in day_df.columns else 0.0
+        if _day_wind80 >= 65.0:
+            continue
+
         if np.isfinite(resid).any():
             residuals_list.append(resid)
 
@@ -2389,7 +2404,10 @@ def _recent_horizon_calibration(
 
         if horizon == "t2":
             # T+2 has no live actual anchor and historically drifts in daily level.
-            anchor = (0.30 * last_vec) + (0.30 * last3) + (0.40 * same_wd_recent)
+            # Sunday (6) and Monday (0) have higher same-weekday anchor noise — use 0.30 weight
+            # to avoid cascading errors when the prior same-weekday was anomalous.
+            _t2_same_wd_w = 0.30 if target_ts.dayofweek in (0, 6) else 0.40
+            anchor = (0.30 * last_vec) + (0.30 * last3) + (_t2_same_wd_w * same_wd_recent) + ((0.40 - _t2_same_wd_w) * last7)
             ratio_cap = float(cal_cfg.get("t2_ratio_cap", 0.08))
             blend = float(cal_cfg.get("t2_blend", 0.68))
             segment_blend = float(cal_cfg.get("t2_segment_blend", 0.40))
@@ -4902,6 +4920,27 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     cfg = DEFAULT_CONFIG.copy()
     if config:
         cfg.update(config)
+
+    # Apply region-specific seasonal overrides (REGION_ACCURACY_CONFIG was defined but never merged)
+    try:
+        _region_key = str(cfg.get("region", "haryana")).lower()
+        _r_cfg = REGION_ACCURACY_CONFIG.get(_region_key, {})
+        if _r_cfg:
+            _tgt_month = pd.Timestamp(str(target_date)[:10]).month
+            _bwd = _r_cfg.get("bias_window_days", {})
+            if isinstance(_bwd, dict):
+                if _tgt_month in (4, 5, 6) and "apr-jun" in _bwd:
+                    _seasonal_window = int(_bwd["apr-jun"])
+                elif _tgt_month in (6, 7, 8, 9) and "jun-sep" in _bwd:
+                    _seasonal_window = int(_bwd["jun-sep"])
+                else:
+                    _seasonal_window = int(_bwd.get("default", 30))
+                if "accuracy_corrections" not in cfg or not isinstance(cfg.get("accuracy_corrections"), dict):
+                    cfg["accuracy_corrections"] = {}
+                cfg["accuracy_corrections"].setdefault("block_bias_window_days", _seasonal_window)
+    except Exception:
+        pass
+
     accuracy_cfg = cfg.get("accuracy_corrections", {}) if isinstance(cfg.get("accuracy_corrections", {}), dict) else {}
     ai_cfg = cfg.get("hybrid_ai", {}) if isinstance(cfg.get("hybrid_ai", {}), dict) else {}
     # Extract callback (not a real config param, remove before use)
@@ -4951,7 +4990,8 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     df["date"] = df["date"].astype(str)
     # Ensure optional weather columns exist (may be absent in older datasets)
     for _oc in ["apparent_temperature", "cloud_cover", "sunshine_duration",
-                 "direct_radiation", "wind_speed_10m", "cloud_cover_low"]:
+                 "direct_radiation", "wind_speed_10m", "cloud_cover_low",
+                 "wind_speed_80m"]:
         if _oc not in df.columns:
             df[_oc] = 0.0
 
@@ -5083,9 +5123,34 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
 
     _target_month = pd.Timestamp(str(target_date)[:10]).month
     if _target_month in (4, 5, 6):
-        _adaptive_window = 3
+        # May pre-monsoon is highly volatile; 3 days is too narrow when all 3 are anomalous.
+        # Check if recent days had elevated load variance — if so, widen to 5 to dilute anomalies.
+        try:
+            _pre = df[df["date"].astype(str) < str(target_date)].copy()
+            _pre_dates = sorted(_pre["date"].dropna().astype(str).unique())[-5:]
+            if len(_pre_dates) >= 3:
+                _daily_means = [_pre[_pre["date"].astype(str) == _d]["total_drawal"].mean() for _d in _pre_dates]
+                _cv = float(np.std(_daily_means) / (np.mean(_daily_means) + 1e-6))
+                _adaptive_window = 5 if _cv > 0.05 else 3  # extend if day-to-day load varies >5%
+            else:
+                _adaptive_window = 3
+        except Exception:
+            _adaptive_window = 3
     elif _target_month in (7, 8, 9):
-        _adaptive_window = 5
+        # Check for monsoon onset: if recent days show rainfall, patterns are changing fast →
+        # use a shorter window so the baseline follows the new regime rather than dry-season history.
+        try:
+            _pre_m = df[df["date"].astype(str) < str(target_date)].copy()
+            _pre_dates_m = sorted(_pre_m["date"].dropna().astype(str).unique())[-7:]
+            _rain_col = "precipitation" if "precipitation" in _pre_m.columns else ("rain" if "rain" in _pre_m.columns else None)
+            if _rain_col:
+                _daily_rain = _pre_m[_pre_m["date"].astype(str).isin(_pre_dates_m)].groupby("date")[_rain_col].sum()
+                _rainy_days = int((_daily_rain > 3.0).sum())
+                _adaptive_window = 3 if _rainy_days >= 3 else 5  # monsoon active → shorter window
+            else:
+                _adaptive_window = 5
+        except Exception:
+            _adaptive_window = 5
     else:
         _adaptive_window = 7
     _hist_for_base = df[df["date"].astype(str) < str(target_date)].copy()
@@ -5098,6 +5163,16 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     best_window = _adaptive_window
     _recent_avg = _hist_for_base.groupby("time_block")["total_drawal"].mean()
     statistical_baseline = _recent_avg.reindex(range(1, 97)).ffill().bfill().fillna(0.0).to_numpy(dtype=float)
+
+    if statistical_baseline.sum() == 0:
+        logger.error(
+            "[pipeline:%s] Similar-day baseline is all-zeros (no valid dates found in window=%d). "
+            "Falling back to full-history 7-day mean.",
+            target_date, _adaptive_window,
+        )
+        _fb_hist = df[df["date"].astype(str) < str(target_date)].copy()
+        _fb_avg = _fb_hist.groupby("time_block")["total_drawal"].mean()
+        statistical_baseline = _fb_avg.reindex(range(1, 97)).ffill().bfill().fillna(3000.0).to_numpy(dtype=float)
 
     if _lstm_vec is not None and len(_lstm_vec) == 96 and np.any(statistical_baseline > 0):
         lstm_full = _as_96_vector(_lstm_vec)
@@ -5122,7 +5197,28 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     _wx_rain   = float(_tgt_wx["rain"].mean())    if "rain"          in _tgt_wx.columns else 0.0
     _wx_shower = float(_tgt_wx["showers"].mean()) if "showers"       in _tgt_wx.columns else 0.0
     _wx_snow   = float(_tgt_wx["snowfall"].mean()) if "snowfall"      in _tgt_wx.columns else 0.0
-    _wx_wind   = float(_tgt_wx["wind_speed_10m"].max()) if "wind_speed_10m" in _tgt_wx.columns else 0.0
+    if "wind_speed_10m" in _tgt_wx.columns:
+        _wx_wind = float(_tgt_wx["wind_speed_10m"].max())
+    else:
+        _wx_wind = 12.0  # Haryana climatological average ~12 km/h; 0.0 would suppress drastic-weather detection
+        logger.warning("[pipeline:%s] weather column 'wind_speed_10m' missing — using climatological default 12.0 km/h", target_date)
+    # Hub-height wind (80m) — proxy for SLDC feeder-protection threshold.
+    # 80m wind is what transmission towers / conductors experience; surface (10m)
+    # is a demand-side comfort signal and is kept separate.
+    if "wind_speed_80m" in _tgt_wx.columns and float(_tgt_wx["wind_speed_80m"].max()) > 0:
+        _wx_wind_80m = float(_tgt_wx["wind_speed_80m"].max())
+    else:
+        _wx_wind_80m = _wx_wind * 1.4   # empirical: 80m ≈ 1.4× surface over open terrain
+        logger.debug("[pipeline:%s] wind_speed_80m absent — estimated from 10m (×1.4)", target_date)
+    _sldc_threshold  = float(cfg.get("sldc_wind_threshold_kmh", 65.0))
+    _high_wind_risk  = _wx_wind_80m >= _sldc_threshold
+    if _high_wind_risk:
+        logger.warning(
+            "[pipeline:%s] HIGH WIND RISK: wind_80m=%.1f km/h >= SLDC threshold %.1f — "
+            "feeder-cut load shedding likely; shedding correction will be applied",
+            target_date, _wx_wind_80m, _sldc_threshold,
+        )
+
     _wx_precip_severity = min(1.0, (_wx_rain + _wx_shower * 1.5 + _wx_snow * 5.0) / 5.0)
     _wx_wind_severity   = max(0.0, (_wx_wind - float(cfg.get("wind_gust_threshold_kmh", 25.0))) / 30.0)
     _drastic_weather    = (_wx_precip_severity > 0.2 or _wx_wind_severity > 0.3 or _wx_snow > 0.5)
@@ -5180,8 +5276,9 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                 _residual_bias = np.clip(_residual_bias, -_bc_cap, _bc_cap)
                 baseline_hist = baseline_hist + _residual_bias
                 _diag_vec("baseline_post_bias", baseline_hist)
-        except Exception:
-            pass
+        except Exception as _bc_err:
+            logger.error("Residual bias correction failed: %s", _bc_err, exc_info=True)
+            # baseline_hist remains uncorrected — pipeline continues with unbiased baseline
 
     weather_impact_block = np.zeros(96, dtype=float)
     weather_baseline = baseline_hist.copy()
@@ -5361,6 +5458,20 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
     wind_impact_vec[32:76] *= 1.5                         # peak-hour multiplier
     wind_impact = wind_impact_vec * wind_saturated        # MW dip, positive = load reduction
 
+    # SLDC grid-security shedding correction (80m wind).
+    # When hub-height wind exceeds the SLDC protection threshold, feeders are cut —
+    # this is a supply-side event independent of demand.  Correction is flat across
+    # all blocks (SLDC curtailment applies round-the-clock once triggered).
+    _sldc_correction = np.zeros(96, dtype=float)
+    if _high_wind_risk:
+        _sldc_excess = max(0.0, _wx_wind_80m - _sldc_threshold)
+        _sldc_mw = min(30.0 * np.log1p(_sldc_excess / 10.0) * 10.0, 600.0)
+        _sldc_correction[:] = _sldc_mw
+        logger.info(
+            "[pipeline:%s] SLDC shedding correction: -%.0f MW flat (80m_wind=%.1f km/h, excess=%.1f km/h)",
+            target_date, _sldc_mw, _wx_wind_80m, _sldc_excess,
+        )
+
     pattern_adjustment = sim_residual_shape.copy()
     residual_correction = boundary_correction.copy()
     residuals = actual_partial - hybrid[:actual_blocks]
@@ -5461,6 +5572,14 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             stitched[actual_blocks:] - wind_impact[actual_blocks:], 0.0
         )
 
+    # SLDC feeder-cut correction (80m wind, supply-side).
+    # Applied to all future blocks regardless of actual_blocks; unlike the
+    # demand-side wind_impact this is a flat curtailment across the whole day.
+    if _high_wind_risk and actual_blocks < 96:
+        stitched[actual_blocks:] = np.maximum(
+            stitched[actual_blocks:] - _sldc_correction[actual_blocks:], 0.0
+        )
+
     # Haryana afternoon ramp correction from the Excel accuracy strategy.
     if build_afternoon_ramp_adjustment is not None and bool(accuracy_cfg.get("afternoon_ramp_enabled", True)):
         try:
@@ -5545,6 +5664,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
                     "applied_mw": spline_residual_adjustment.tolist(),
                 }
         except Exception as _spl_err:
+            logger.warning("Spline residual adjustment skipped: %s", _spl_err)
             spline_residual_meta = {"enabled": True, "applied": False, "reason": str(_spl_err)}
 
     shrink_cfg = cfg.get("forecast_shrinkage", {}) if isinstance(cfg.get("forecast_shrinkage", {}), dict) else {}
@@ -5710,6 +5830,7 @@ def run_short_term_pipeline(df: pd.DataFrame, target_date: str, actual_blocks: i
             if actual_blocks > 0:
                 stitched[:actual_blocks] = actual_partial
         except Exception as _cal_err:
+            logger.error("Calibration layer failed: %s", _cal_err, exc_info=True)
             calibration_meta = {"enabled": True, "applied": False, "reason": str(_cal_err)}
 
     if bool(accuracy_cfg.get("momentum_enabled", True)) and actual_blocks >= 5 and actual_blocks < _BLOCK_COUNT:
@@ -6604,6 +6725,7 @@ def _inject_weather_into_rows(target_df: pd.DataFrame, weather_df: pd.DataFrame)
         "precipitation", "rain", "showers", "snowfall",
         "apparent_temperature", "cloud_cover", "cloud_cover_low",
         "sunshine_duration", "direct_radiation", "wind_speed_10m",
+        "wind_speed_80m",   # hub-height wind — SLDC feeder-cut detection
     ]
 
     result = target_df.copy()
@@ -6718,7 +6840,11 @@ def run_t2_pipeline(
     cfg = dict(config or {})
     cfg.setdefault("forecast_horizon", "t2")
     cfg.setdefault("t2_level_norm", {"enabled": True, "blend": 0.45, "ratio_cap": 1.12})
-    accuracy_cfg = cfg.get("accuracy_corrections", {}) if isinstance(cfg.get("accuracy_corrections", {}), dict) else {}
+    # Ensure T+2 bias correction is always on unless explicitly disabled
+    if "accuracy_corrections" not in cfg or not isinstance(cfg.get("accuracy_corrections"), dict):
+        cfg["accuracy_corrections"] = {}
+    cfg["accuracy_corrections"].setdefault("t2_night_bias_enabled", True)
+    accuracy_cfg = cfg["accuracy_corrections"]
     _hc = cfg.get("horizon_calibration", {}) if isinstance(cfg.get("horizon_calibration", {}), dict) else {}
     _hc.setdefault("enabled", True)
     _hc.setdefault("t2_blend", 0.72)
@@ -6947,7 +7073,7 @@ def run_t2_pipeline(
     _t2_norm_cfg     = cfg.get("t2_level_norm", {})
     _t2_norm_enabled = bool(_t2_norm_cfg.get("enabled", False))
     _t2_norm_blend   = float(_t2_norm_cfg.get("blend", 0.30))
-    _t2_norm_cap     = float(_t2_norm_cfg.get("ratio_cap", 1.15))
+    _t2_norm_cap     = float(_t2_norm_cfg.get("ratio_cap", 1.05))
     _t2_level_ratio  = 1.0
     if _t2_norm_enabled:
         try:
@@ -6957,6 +7083,19 @@ def run_t2_pipeline(
             _t2_night_mean = float(np.mean(_t2_night[_t2_night > 0])) if (_t2_night > 0).any() else 0.0
             if _t2_night_mean > 100.0 and _t1_night_mean > 100.0:
                 raw_ratio = _t1_night_mean / _t2_night_mean
+
+                # Secondary midday calibration anchor (blocks 41-48, 10:15-12:00).
+                # Night-only normalisation fails for the midday ramp because T+2's
+                # similar-day pool may have a different load level than T+1 around noon.
+                _t1_mid = t1_forecast[40:48]
+                _t2_mid = t2_forecast[40:48]
+                _t1_mid_mean = float(np.mean(_t1_mid[_t1_mid > 0])) if (_t1_mid > 0).any() else 0.0
+                _t2_mid_mean = float(np.mean(_t2_mid[_t2_mid > 0])) if (_t2_mid > 0).any() else 0.0
+                if _t2_mid_mean > 500.0 and _t1_mid_mean > 500.0:
+                    mid_ratio = _t1_mid_mean / _t2_mid_mean
+                    # Blend night and midday ratios 70/30 to preserve night dominance
+                    raw_ratio = 0.70 * raw_ratio + 0.30 * mid_ratio
+
                 # Only scale up (fix under-forecast) — never scale down
                 if raw_ratio > 1.0:
                     capped_ratio = float(np.clip(raw_ratio, 1.0, _t2_norm_cap))
@@ -6965,7 +7104,7 @@ def run_t2_pipeline(
                     t2_forecast = (1.0 - _t2_norm_blend) * t2_forecast + _t2_norm_blend * t2_scaled
                     _avail_logger.info(
                         "[T+2] Level norm (up-only): T+1_night=%.0f T+2_night=%.0f "
-                        "ratio=%.3f blend=%.2f",
+                        "ratio=%.3f (incl midday blend) blend=%.2f",
                         _t1_night_mean, _t2_night_mean, capped_ratio, _t2_norm_blend,
                     )
         except Exception as _norm_err:
@@ -6980,7 +7119,7 @@ def run_t2_pipeline(
     ):
         try:
             t2_corr, t2_corr_meta = build_t2_bias_correction(
-                None,
+                df,
                 fallback_night_mw=float(accuracy_cfg.get("t2_fallback_night_mw", 250.0)),
                 min_samples=int(accuracy_cfg.get("t2_bias_min_samples", 7)),
             )
@@ -6995,11 +7134,29 @@ def run_t2_pipeline(
         except Exception as _t2_bias_err:
             t2_bias_meta = {"enabled": True, "applied": False, "reason": str(_t2_bias_err)}
 
-    # Use a weighted average of the last few T+1 blocks as the seam anchor
-    # to avoid propagating single-block noise into T+2.
+    # Seam anchor: prefer lag-7 actual tail over T+1 forecast tail.
+    # Using T+1 forecast (which may be 15% wrong) as the anchor propagates that error
+    # into the first few T+2 blocks via the cosine taper in _apply_seam_continuity.
+    # Using the real lag-7 load level breaks this chain.
     _seam_tail = int(np.clip(int(seam_cfg.get("anchor_tail_blocks", 4)), 1, min(12, _BLOCK_COUNT)))
-    _tail_slice = t1_forecast[-_seam_tail:]
-    _tail_weights = np.exp(np.linspace(0.0, 1.0, len(_tail_slice)))  # exponential recency weighting
+    _lag7_anchor_rows = _get_lag7_row(df, t1_date)
+    if _lag7_anchor_rows is not None:
+        try:
+            _lag7_tail = (
+                _lag7_anchor_rows.groupby("time_block")["total_drawal"]
+                .mean()
+                .reindex(range(1, 97))
+                .ffill().bfill()
+                .to_numpy(dtype=float)
+            )
+            # Blend 60% lag-7 real + 40% T+1 forecast to preserve intraday level shift
+            _anchor_vec = 0.60 * _lag7_tail + 0.40 * t1_forecast
+        except Exception:
+            _anchor_vec = t1_forecast
+    else:
+        _anchor_vec = t1_forecast
+    _tail_slice = _anchor_vec[-_seam_tail:]
+    _tail_weights = np.exp(np.linspace(0.0, 1.0, len(_tail_slice)))
     _tail_weights /= _tail_weights.sum()
     _seam_anchor = float(np.dot(_tail_weights, _tail_slice))
     t2_adjusted, seam_gap_before, seam_gap_after = _apply_seam_continuity(
@@ -7066,11 +7223,12 @@ def run_t2_pipeline(
                 _wdf["solar_radiation"] = _wdf["direct_radiation"]
             # Use T+1 rows as "normal" baseline for T+2 intraday comparison
             _t1_rows = df[df["date"].astype(str) == t1_date].copy()
-            _normal = (
-                _t1_rows.set_index("time_block").reindex(range(1, 97)).ffill().bfill()
-                if not _t1_rows.empty
-                else _wdf.copy()
-            )
+            if not _t1_rows.empty:
+                # Deduplicate time_block to avoid non-unique index error
+                _t1_rows = _t1_rows.sort_values("time_block").drop_duplicates("time_block", keep="last")
+                _normal = _t1_rows.set_index("time_block").reindex(range(1, 97)).ffill().bfill()
+            else:
+                _normal = _wdf.copy()
             _intra = {}
             for _col in ["temperature", "humidity", "precipitation", "cloud_cover",
                          "solar_radiation", "wind_speed"]:

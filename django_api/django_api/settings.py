@@ -7,6 +7,7 @@ Reads MySQL credentials from the root .env (same as config.py).
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load .env from the project root (one level above django_api/)

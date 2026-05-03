@@ -7,15 +7,13 @@ infrastructure is needed.  Override DB_URL via the AUTH_DB_URL env var
 to point at MySQL/PostgreSQL in production.
 """
 
-import os
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text, create_engine
-)
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 # ── DB connection ──────────────────────────────────────────────────────────

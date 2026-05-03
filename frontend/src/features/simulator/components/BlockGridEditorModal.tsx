@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { BlockGridEditor } from "./BlockGridEditor";
+import React, { useEffect } from 'react';
+import { BlockGridEditor } from './BlockGridEditor';
 
 type Props = {
   open: boolean;
@@ -11,10 +11,10 @@ export const BlockGridEditorModal: React.FC<Props> = ({ open, onClose, selection
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === 'Escape') onClose();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, onClose]);
 
   if (!open) return null;
@@ -25,7 +25,10 @@ export const BlockGridEditorModal: React.FC<Props> = ({ open, onClose, selection
         <div className="panel-header">
           <div>
             <h3>Block Grid Editor</h3>
-            <span>Directly tune block drivers while keeping residuals, exogenous weather, and confidence signals in view.</span>
+            <span>
+              Directly tune block drivers while keeping residuals, exogenous weather, and confidence
+              signals in view.
+            </span>
           </div>
           <div className="sim-panel-actions">
             {selectionLabel ? <span className="sim-hint-chip">{selectionLabel}</span> : null}

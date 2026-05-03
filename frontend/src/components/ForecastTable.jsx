@@ -12,29 +12,31 @@ const blockTime = (block) => {
 
 const COLS = [
   { key: 'block', label: 'Block', width: 52 },
-  { key: 'time',  label: 'Time',  width: 56 },
+  { key: 'time', label: 'Time', width: 56 },
   { key: 'forecast', label: 'Forecast', width: 80 },
-  { key: 'actual',   label: 'Actual',   width: 80 },
-  { key: 'deviation',label: 'Dev %',    width: 68 },
-  { key: 'p10',      label: 'P10',      width: 72 },
-  { key: 'p90',      label: 'P90',      width: 72 },
-  { key: 'confidence', label: 'Conf',   width: 58 },
+  { key: 'actual', label: 'Actual', width: 80 },
+  { key: 'deviation', label: 'Dev %', width: 68 },
+  { key: 'p10', label: 'P10', width: 72 },
+  { key: 'p90', label: 'P90', width: 72 },
+  { key: 'confidence', label: 'Conf', width: 58 },
 ];
 
-const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => {
+const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt, horizon = 't1' }) => {
+  const isT2 = horizon === 't2';
   const [filter, setFilter] = useState('all');
   const scrollRef = useRef(null);
 
   const rows = useMemo(() => {
     if (!liveData?.length) return [];
     return liveData.map((d, idx) => {
-      const block    = d.block_number;
-      const actual   = d.actual_mw;
+      const block = d.block_number;
+      const actual = d.actual_mw;
       const forecast = d.forecast_mw;
       const baseline = d.baseline_mw;
+      // deviation only meaningful when both actual and forecast are positive MW values
       const deviation =
-        actual != null && actual > 0 && forecast > 0
-          ? ((actual - forecast) / Math.max(forecast, 1)) * 100
+        actual != null && actual > 0 && forecast != null && forecast > 0
+          ? ((actual - forecast) / forecast) * 100
           : null;
       const unc = forecastUncertainty?.[idx];
       return {
@@ -54,8 +56,9 @@ const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => 
   }, [liveData, forecastUncertainty, actualBlocks]);
 
   const filtered = useMemo(() => {
-    if (filter === 'deviations') return rows.filter(r => r.deviation != null && Math.abs(r.deviation) > 3);
-    if (filter === 'upcoming')   return rows.filter(r => !r.isActual);
+    if (filter === 'deviations')
+      return rows.filter((r) => r.deviation != null && Math.abs(r.deviation) > 3);
+    if (filter === 'upcoming') return rows.filter((r) => !r.isActual);
     return rows;
   }, [rows, filter]);
 
@@ -73,9 +76,9 @@ const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => 
 
   return (
     <div className="forecast-table-wrap">
-      {/* Filter bar */}
+      {/* Filter bar — T+2 has no actuals so deviations/upcoming are meaningless */}
       <div className="ft-filters">
-        {['all', 'deviations', 'upcoming'].map(f => (
+        {(isT2 ? ['all'] : ['all', 'deviations', 'upcoming']).map((f) => (
           <button
             key={f}
             className={`ft-filter-btn ${filter === f ? 'active' : ''}`}
@@ -84,6 +87,7 @@ const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => 
             {f === 'all' ? 'All 96' : f === 'deviations' ? 'Deviations' : 'Upcoming'}
           </button>
         ))}
+        {isT2 && <span className="ft-badge">T+2 · Pure Forecast</span>}
         <span className="ft-count">{filtered.length} blocks</span>
       </div>
 
@@ -91,8 +95,10 @@ const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => 
       <div className="forecast-table">
         {/* Sticky header */}
         <div className="ft-head">
-          {COLS.map(c => (
-            <span key={c.key} style={{ width: c.width, flexShrink: 0 }}>{c.label}</span>
+          {COLS.map((c) => (
+            <span key={c.key} style={{ width: c.width, flexShrink: 0 }}>
+              {c.label}
+            </span>
           ))}
         </div>
 
@@ -104,13 +110,15 @@ const ForecastTable = ({ liveData, forecastUncertainty, actualBlocks, fmt }) => 
         >
           {/* Total spacer so scrollbar reflects full content */}
           <div style={{ height: totalHeight, width: '100%', position: 'relative' }}>
-            {virtualItems.map(vItem => {
+            {virtualItems.map((vItem) => {
               const r = filtered[vItem.index];
               const devClass =
                 r.deviation != null
-                  ? Math.abs(r.deviation) > 10 ? 'ft-critical'
-                  : Math.abs(r.deviation) > 5  ? 'ft-warning'
-                  : 'ft-ok'
+                  ? Math.abs(r.deviation) > 10
+                    ? 'ft-critical'
+                    : Math.abs(r.deviation) > 5
+                      ? 'ft-warning'
+                      : 'ft-ok'
                   : '';
               return (
                 <div

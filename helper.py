@@ -1,16 +1,13 @@
-import os
 import pickle
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras import layers as L
-from tensorflow.keras import callbacks as C
-from tensorflow.keras import Model, optimizers as O
-
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from tensorflow.keras import Model, callbacks as C, layers as L, optimizers as O
 
 warnings.filterwarnings("ignore")
 
@@ -410,43 +407,6 @@ def rot_block_from_index(idx: pd.DatetimeIndex, start_block:int=33) -> np.ndarra
     block = ((idx.hour*60 + idx.minute)//15 + 1).astype(int)
     return ((block - start_block) % 96) + 1
 
-def assign_rotated_date(index_like: pd.DatetimeIndex, start_block:int=33) -> pd.Series:
-    """rot_date is the calendar date of the 08:00 anchor of that rotated day."""
-    idx  = pd.DatetimeIndex(index_like)
-    blk  = ((idx.hour*60 + idx.minute)//15 + 1).astype(int)
-    base = idx.normalize()
-    shift = pd.to_timedelta((blk < start_block).astype(int), unit="D")
-    rot   = base - shift
-    return pd.Series(rot, index=idx)
-
-# ------------------
-# Time features (rotated block + calendar flags)
-# ------------------
-def add_time_features_rotated(index_like: pd.DatetimeIndex, start_block:int=33) -> pd.DataFrame:
-    idx = pd.DatetimeIndex(index_like)
-
-    # rotated block sin/cos
-    rblk = rot_block_from_index(idx, start_block=start_block)
-    theta_b = 2*np.pi*(rblk-1)/96.0
-
-    # calendar DOW/holiday/sunday/weekend based on TRUE timestamps
-    theta_d = 2*np.pi*(idx.dayofweek)/7.0
-    holidays = get_indian_holidays_set()
-    is_holiday = idx.normalize().isin(holidays).astype(int)
-    is_sunday  = (idx.dayofweek == 6).astype(int)
-    is_weekend = (idx.dayofweek >= 5).astype(int)
-
-    out = pd.DataFrame({
-        "rot_block_sin": np.sin(theta_b),
-        "rot_block_cos": np.cos(theta_b),
-        "dow_sin":   np.sin(theta_d),
-        "dow_cos":   np.cos(theta_d),
-        "is_holiday": is_holiday,
-        "is_sunday":  is_sunday,
-        "is_weekend": is_weekend,
-    }, index=idx)
-    return out
-
 # ------------------
 # Rotated causal baseline
 # ------------------
@@ -572,11 +532,9 @@ def baseline_for_future_rotated_day(df_hist_rot: pd.DataFrame, rot_day: pd.Times
     using the last K rotated days from df_hist_rot.
     """
     df = df_hist_rot.copy()
-    piv = (df.pivot_table(index='Date', columns='block', values='total_drawal_adj').sort_index())
 
     # Build rotated pivot from the *history* (same as builder above but in one shot)
     # Make Datetime index to compute rot mapping:
-    all_idx = pd.date_range(start=df['Date'].min(), end=df['Date'].max()+pd.Timedelta(hours=23, minutes=45), freq='15T')
     # However df may not have every timestamp → reconstruct by what exists:
     df['Datetime'] = df['Date'] + pd.to_timedelta((df['block']-1)*15, unit='m')
     ser = df.set_index('Datetime')['total_drawal_adj'].sort_index()
@@ -1234,9 +1192,10 @@ def adjust_forecast_multiday_rt(
     return pd.concat(out_list, ignore_index=True).sort_values([date_col, block_col])
 
 
-from scipy.signal import butter, filtfilt, medfilt
 import numpy as np
 import pandas as pd
+from scipy.signal import butter, filtfilt, medfilt
+
 
 def smooth_butter_per_day_rt(
     df,
@@ -1261,7 +1220,6 @@ def smooth_butter_per_day_rt(
     outs = []
     for d, g in df.groupby(df[date_col].dt.date):
         g = g.sort_values(block_col).copy()
-        blocks = g[block_col].to_numpy(int)
         y = g[val_col].to_numpy(float)
 
         # contiguous segment among available blocks
@@ -1274,7 +1232,6 @@ def smooth_butter_per_day_rt(
             continue
 
         y_in = y[present_mask]
-        bks  = blocks[present_mask]
 
         # median spike killer (only on present segment)
         if median_win and median_win > 1:

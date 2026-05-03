@@ -1,6 +1,5 @@
-import axios from "axios";
-import { getApiUrl } from "../../apiConfig";
-
+import axios from 'axios';
+import { getApiUrl } from '../../apiConfig';
 
 export type SimulatorBlockApi = {
   block_number: number;
@@ -22,16 +21,16 @@ export type SimulatorBlockApi = {
   weather_total_impact_pct?: number;
   weather_increase_delta_pct?: number | null;
   weather_reduction_delta_pct?: number | null;
-  weather_direction?: "increase" | "decrease" | "neutral";
+  weather_direction?: 'increase' | 'decrease' | 'neutral';
   actual_mw?: number | null;
   actual_delta_pct?: number | null;
   actual_increase_delta_pct?: number | null;
   actual_reduction_delta_pct?: number | null;
-  actual_direction?: "increase" | "decrease" | "neutral";
+  actual_direction?: 'increase' | 'decrease' | 'neutral';
   residual_delta_pct?: number | null;
-  residual_direction?: "increase" | "decrease" | "neutral";
+  residual_direction?: 'increase' | 'decrease' | 'neutral';
   residual_contributor?: string;
-  actual_vs_weather_alignment?: "aligned" | "opposite" | "weak_signal" | "na";
+  actual_vs_weather_alignment?: 'aligned' | 'opposite' | 'weak_signal' | 'na';
   actual_vs_weather_explanation?: string;
   season?: string;
   calendar_day_type?: string;
@@ -125,7 +124,7 @@ export type SimulatorBlocksRequestPayload = {
     manual: number;
   };
   selection?: {
-    scope: "all" | "range" | "single";
+    scope: 'all' | 'range' | 'single';
     start_block?: number;
     end_block?: number;
     block?: number;
@@ -177,7 +176,7 @@ export type SimulatorBlocksResponse = {
     manual: number;
   };
   selection?: {
-    scope: "all" | "range" | "single";
+    scope: 'all' | 'range' | 'single';
     start_block?: number;
     end_block?: number;
     block?: number;
@@ -208,15 +207,23 @@ export type SimulatorDateOptionsResponse = {
   default_date?: string | null;
 };
 
-export const loadSimulatorBlocksApi = async (date?: string, baselineDays = 7, payloadOverride?: Partial<SimulatorBlocksRequestPayload>) => {
-  const payload: SimulatorBlocksRequestPayload = { date, baseline_days: baselineDays, ...(payloadOverride || {}) };
-  const url = getApiUrl("/simulator/blocks");
+export const loadSimulatorBlocksApi = async (
+  date?: string,
+  baselineDays = 7,
+  payloadOverride?: Partial<SimulatorBlocksRequestPayload>
+) => {
+  const payload: SimulatorBlocksRequestPayload = {
+    date,
+    baseline_days: baselineDays,
+    ...(payloadOverride || {}),
+  };
+  const url = getApiUrl('/simulator/blocks');
   const res = await axios.post(url, payload);
   return res.data as SimulatorBlocksResponse;
 };
 
 export const loadSimulatorDateOptionsApi = async (): Promise<SimulatorDateOptionsResponse> => {
-  const url = getApiUrl("/v2/config");
+  const url = getApiUrl('/v2/config');
   const res = await axios.get(url);
   return res.data as SimulatorDateOptionsResponse;
 };

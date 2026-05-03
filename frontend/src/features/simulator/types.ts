@@ -1,4 +1,4 @@
-export type DriverType = "weather_pct" | "daytype_pct" | "holiday_pct" | "manual_pct";
+export type DriverType = 'weather_pct' | 'daytype_pct' | 'holiday_pct' | 'manual_pct';
 
 export type DriverLocks = {
   weather_pct: boolean;
@@ -26,15 +26,15 @@ export type BlockDriver = {
     weather_total_pct: number;
     weather_increase_delta_pct?: number | null;
     weather_reduction_delta_pct?: number | null;
-    direction: "increase" | "decrease" | "neutral";
+    direction: 'increase' | 'decrease' | 'neutral';
     actual_delta_pct?: number | null;
     actual_increase_delta_pct?: number | null;
     actual_reduction_delta_pct?: number | null;
-    actual_direction?: "increase" | "decrease" | "neutral";
+    actual_direction?: 'increase' | 'decrease' | 'neutral';
     residual_delta_pct?: number | null;
-    residual_direction?: "increase" | "decrease" | "neutral";
+    residual_direction?: 'increase' | 'decrease' | 'neutral';
     residual_contributor?: string;
-    actual_vs_weather_alignment?: "aligned" | "opposite" | "weak_signal" | "na";
+    actual_vs_weather_alignment?: 'aligned' | 'opposite' | 'weak_signal' | 'na';
     actual_vs_weather_explanation?: string;
     temperature_effective_coeff?: number | null;
     temperature_increase_coeff?: number | null;
@@ -79,14 +79,14 @@ export type ChartBlockPoint = {
   actualReductionDeltaPct: number | null;
   tempIncreaseCoeff: number | null;
   tempReductionCoeff: number | null;
-  weatherDirection: "increase" | "decrease" | "neutral";
-  dominantExog: "temperature" | "humidity" | "precipitation" | "wind" | "mixed";
+  weatherDirection: 'increase' | 'decrease' | 'neutral';
+  dominantExog: 'temperature' | 'humidity' | 'precipitation' | 'wind' | 'mixed';
   actualDeltaPct: number | null;
-  actualDirection: "increase" | "decrease" | "neutral";
+  actualDirection: 'increase' | 'decrease' | 'neutral';
   residualDeltaPct: number | null;
-  residualDirection: "increase" | "decrease" | "neutral";
+  residualDirection: 'increase' | 'decrease' | 'neutral';
   residualContributor: string;
-  actualWeatherAlignment: "aligned" | "opposite" | "weak_signal" | "na";
+  actualWeatherAlignment: 'aligned' | 'opposite' | 'weak_signal' | 'na';
   actualWeatherExplanation: string;
   weightConfidence: number | null;
   regimeConfidence: number | null;

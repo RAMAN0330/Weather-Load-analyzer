@@ -10,15 +10,21 @@ All endpoints require:  Authorization: Bearer <API_SECRET_KEY>
 """
 
 import math
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
 import pymysql
-from fastapi import FastAPI, Depends, HTTPException, Query, Body, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+
 from config import (
-    MYSQL_HOST, MYSQL_PORT, MYSQL_DB, MYSQL_USER, MYSQL_PASSWORD,
     API_SECRET_KEY,
+    MYSQL_DB,
+    MYSQL_HOST,
+    MYSQL_PASSWORD,
+    MYSQL_PORT,
+    MYSQL_USER,
 )
 
 app = FastAPI(

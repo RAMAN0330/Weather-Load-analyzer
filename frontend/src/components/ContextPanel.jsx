@@ -1,11 +1,5 @@
 import React, { useMemo } from 'react';
-import {
-  TrendingUp,
-  AlertCircle,
-  CheckCircle2,
-  X,
-  ChevronRight
-} from 'lucide-react';
+import { TrendingUp, AlertCircle, CheckCircle2, X, ChevronRight } from 'lucide-react';
 
 const ContextPanel = ({
   open,
@@ -16,7 +10,7 @@ const ContextPanel = ({
   forecastUncertainty,
   liveDecisionRows,
   liveSensitivityRows,
-  fmt
+  fmt,
 }) => {
   const insights = useMemo(() => {
     if (!liveMeta?.insights) return [];
@@ -24,13 +18,13 @@ const ContextPanel = ({
   }, [liveMeta]);
 
   const activeDrivers = useMemo(() => {
-    return (driverContributions || []).filter(d => Math.abs(d.mw) > 0.5);
+    return (driverContributions || []).filter((d) => Math.abs(d.mw) > 0.5);
   }, [driverContributions]);
 
   const signals = useMemo(() => {
     const rows = decisionSignals || [];
     return rows
-      .filter(s => s.risk_flag && s.risk_flag !== 'low')
+      .filter((s) => s.risk_flag && s.risk_flag !== 'low')
       .sort((a, b) => {
         const p = { high: 3, medium: 2, low: 1 };
         return (p[b.risk_flag] || 0) - (p[a.risk_flag] || 0);
@@ -43,17 +37,29 @@ const ContextPanel = ({
     const p50E = forecastUncertainty.reduce((s, r) => s + (r?.p50_mw || 0), 0) * 0.25;
     const p10E = forecastUncertainty.reduce((s, r) => s + (r?.p10_mw || 0), 0) * 0.25;
     const p90E = forecastUncertainty.reduce((s, r) => s + (r?.p90_mw || 0), 0) * 0.25;
-    const avgConf = forecastUncertainty.reduce((s, r) => s + (r?.forecast_confidence || 0), 0) / forecastUncertainty.length;
-    return { p50E, p10E, p90E, standby: Math.round(p90E - p50E), confidence: (avgConf * 100).toFixed(0) };
+    const avgConf =
+      forecastUncertainty.reduce((s, r) => s + (r?.forecast_confidence || 0), 0) /
+      forecastUncertainty.length;
+    return {
+      p50E,
+      p10E,
+      p90E,
+      standby: Math.round(p90E - p50E),
+      confidence: (avgConf * 100).toFixed(0),
+    };
   }, [forecastUncertainty]);
 
   if (!open) return null;
 
   return (
-    <aside className="context-panel">
+    <>
+      <div className="context-panel-backdrop" onClick={onClose} />
+    <aside className="context-panel context-panel--overlay">
       <div className="cp-header">
         <span className="cp-title">Intelligence</span>
-        <button className="cp-close" onClick={onClose}><X size={14} /></button>
+        <button className="cp-close" onClick={onClose}>
+          <X size={14} />
+        </button>
       </div>
 
       {/* Uncertainty Band */}
@@ -71,7 +77,9 @@ const ContextPanel = ({
             </div>
             <div className="cp-unc-item">
               <span className="cp-unc-label">Confidence</span>
-              <span className={`cp-unc-value ${Number(uncertainty.confidence) >= 80 ? 'good' : 'warn'}`}>
+              <span
+                className={`cp-unc-value ${Number(uncertainty.confidence) >= 80 ? 'good' : 'warn'}`}
+              >
                 {uncertainty.confidence}%
               </span>
             </div>
@@ -82,17 +90,21 @@ const ContextPanel = ({
       {/* Insights */}
       <div className="cp-section">
         <div className="cp-section-title">Live Insights</div>
-        {insights.length > 0 ? insights.map((insight, i) => (
-          <div key={i} className={`briefing ${insight.priority === 'high' ? 'high' : ''}`}>
-            <div className="briefing-head">
-              {insight.priority === 'high'
-                ? <AlertCircle size={13} className="text-danger" />
-                : <TrendingUp size={13} className="text-accent" />}
-              <span>{insight.title}</span>
+        {insights.length > 0 ? (
+          insights.map((insight, i) => (
+            <div key={i} className={`briefing ${insight.priority === 'high' ? 'high' : ''}`}>
+              <div className="briefing-head">
+                {insight.priority === 'high' ? (
+                  <AlertCircle size={13} className="text-danger" />
+                ) : (
+                  <TrendingUp size={13} className="text-accent" />
+                )}
+                <span>{insight.title}</span>
+              </div>
+              <p className="briefing-text">{insight.text}</p>
             </div>
-            <p className="briefing-text">{insight.text}</p>
-          </div>
-        )) : (
+          ))
+        ) : (
           <div className="cp-empty">No anomalies detected</div>
         )}
       </div>
@@ -101,20 +113,22 @@ const ContextPanel = ({
       <div className="cp-section">
         <div className="cp-section-title">Decision Signals</div>
         <div className="cp-signals-list">
-          {signals.length > 0 ? signals.map((sig, i) => {
-            const isHigh = sig.risk_flag === 'high';
-            return (
-              <div key={i} className={`signal-card ${isHigh ? 'high' : 'medium'}`}>
-                <div className="signal-head">
-                  <span className="signal-block">
-                    {isHigh ? '🔴' : '🟡'} Block {sig.block} • {sig.time}
-                  </span>
-                  <span className="signal-driver">{sig.primary_driver}</span>
+          {signals.length > 0 ? (
+            signals.map((sig, i) => {
+              const isHigh = sig.risk_flag === 'high';
+              return (
+                <div key={i} className={`signal-card ${isHigh ? 'high' : 'medium'}`}>
+                  <div className="signal-head">
+                    <span className="signal-block">
+                      {isHigh ? '🔴' : '🟡'} Block {sig.block} • {sig.time}
+                    </span>
+                    <span className="signal-driver">{sig.primary_driver}</span>
+                  </div>
+                  <p className="signal-action">{sig.recommended_action}</p>
                 </div>
-                <p className="signal-action">{sig.recommended_action}</p>
-              </div>
-            );
-          }) : (
+              );
+            })
+          ) : (
             <div className="cp-empty">All blocks within normal parameters</div>
           )}
         </div>
@@ -135,15 +149,14 @@ const ContextPanel = ({
                   className="cp-driver-bar-fill"
                   style={{
                     width: `${Math.min(Math.abs(driver.pct), 100)}%`,
-                    background: driver.color || (driver.mw >= 0 ? 'var(--success)' : 'var(--danger)'),
+                    background:
+                      driver.color || (driver.mw >= 0 ? 'var(--success)' : 'var(--danger)'),
                   }}
                 />
               </div>
             </div>
           ))}
-          {activeDrivers.length === 0 && (
-            <div className="cp-empty">No exogenous pressure</div>
-          )}
+          {activeDrivers.length === 0 && <div className="cp-empty">No exogenous pressure</div>}
         </div>
       </div>
 
@@ -185,6 +198,7 @@ const ContextPanel = ({
         </div>
       )}
     </aside>
+    </>
   );
 };
 

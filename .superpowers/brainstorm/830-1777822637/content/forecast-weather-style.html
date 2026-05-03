@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast Page — Weather Page Design Language</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0f0f12;
+  color: #ECEEF3;
+  font-family: 'IBM Plex Mono', 'Courier New', monospace;
+  padding: 0;
+}
+
+.page-label {
+  padding: 16px 24px 8px;
+  font-size: 11px;
+  color: #6B7186;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ── MetricCard (weather page style) ── */
+.metric-row {
+  display: flex;
+  gap: 12px;
+  padding: 12px 20px;
+  flex-wrap: wrap;
+}
+.metric-card {
+  flex: 1 1 180px;
+  min-width: 160px;
+  min-height: 118px;
+  padding: 16px 18px;
+  background: linear-gradient(180deg, rgba(32,31,37,0.96), rgba(26,25,30,0.98));
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.07);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mc-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #6B7186;
+}
+.mc-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ECEEF3;
+  line-height: 1.05;
+}
+.mc-unit {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.6;
+}
+.mc-delta {
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.mc-sub {
+  font-size: 10px;
+  color: #6B7186;
+  line-height: 1.45;
+}
+
+/* ── Section (collapsible, weather page style) ── */
+.section { margin-bottom: 6px; }
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: #1A191E;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  cursor: pointer;
+  user-select: none;
+}
+.section-arrow {
+  font-size: 10px;
+  opacity: 0.5;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+.section-arrow.open { transform: rotate(90deg); }
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #F07825;
+}
+.section-title.blue { color: #5B9FE4; }
+.section-title.green { color: #34D399; }
+.section-title.purple { color: #C084FC; }
+.section-body {
+  padding: 18px 20px;
+  background: #1A191E;
+}
+
+/* Chart placeholder */
+.chart-ph {
+  background: linear-gradient(135deg, #1A191E 0%, #201F25 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.chart-ph svg { width: 100%; height: 100%; position: absolute; top:0; left:0; }
+.chart-ph-label {
+  position: relative;
+  font-size: 10px;
+  color: #6B7186;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: rgba(15,15,18,0.7);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+/* Pills row for legend */
+.pill-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pill {
+  font-size: 9px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.5px;
+}
+.pill.accent { background: rgba(240,120,37,0.15); color: #F07825; border: 1px solid rgba(240,120,37,0.3); }
+.pill.blue { background: rgba(91,159,228,0.12); color: #5B9FE4; border: 1px solid rgba(91,159,228,0.25); }
+.pill.gray { background: rgba(107,113,134,0.12); color: #A0A5B8; border: 1px solid rgba(107,113,134,0.2); }
+
+/* Drivers section */
+.driver-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.driver-row:last-child { border-bottom: none; }
+.driver-name { font-size: 11px; color: #A0A5B8; width: 140px; flex-shrink: 0; }
+.driver-bar-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 3px;
+  position: relative;
+}
+.driver-bar-fill { height: 100%; border-radius: 3px; }
+.driver-mw { font-size: 11px; font-weight: 600; width: 70px; text-align: right; font-family: 'IBM Plex Mono', monospace; }
+
+/* Risk signal rows */
+.signal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  margin-bottom: 6px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.signal-badge {
+  font-size: 8px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.badge-high { background: rgba(248,113,113,0.18); color: #F87171; }
+.badge-medium { background: rgba(251,191,36,0.15); color: #FBBF24; }
+.badge-low { background: rgba(52,211,153,0.12); color: #34D399; }
+.signal-block { font-size: 10px; color: #A0A5B8; width: 60px; flex-shrink: 0; }
+.signal-driver { font-size: 10px; color: #ECEEF3; flex: 1; }
+.signal-action { font-size: 9px; color: #6B7186; }
+
+/* Arc gauge area */
+.gauges-row {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 10px 0;
+}
+.gauge-item { text-align: center; }
+.gauge-sub { font-size: 8px; color: #6B7186; letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 4px; }
+.gauge-strength { font-size: 9px; font-weight: 600; margin-top: 2px; }
+.gauge-lbl { font-size: 8px; color: #6B7186; margin-top: 1px; }
+
+/* Log list */
+.log-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 10px;
+  align-items: flex-start;
+}
+.log-num { color: #6B7186; width: 28px; flex-shrink: 0; }
+.log-text { color: #A0A5B8; line-height: 1.5; }
+
+/* Horizon toggle area */
+.horizon-floater {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px 0;
+}
+.h-btn {
+  font-size: 10px;
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: #A0A5B8;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.5px;
+}
+.h-btn.active {
+  background: rgba(240,120,37,0.15);
+  border-color: rgba(240,120,37,0.4);
+  color: #F07825;
+}
+
+/* Section badge counts */
+.sec-count {
+  margin-left: auto;
+  font-size: 9px;
+  color: #6B7186;
+  background: rgba(255,255,255,0.05);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+</style>
+</head>
+<body>
+
+<div class="page-label">VidyutPragya · Forecast · Haryana · 03-05-2026</div>
+
+<!-- Horizon toggle -->
+<div class="horizon-floater">
+  <button class="h-btn active">T+1 Live</button>
+  <button class="h-btn">T+2 · 4 May</button>
+</div>
+
+<!-- ── MetricCard row (weather page style) ── -->
+<div class="metric-row">
+
+  <div class="metric-card">
+    <div class="mc-label">Peak Load</div>
+    <div>
+      <div class="mc-value">9,440 <span class="mc-unit">MW</span></div>
+      <div class="mc-delta" style="color:#F07825">▲ at 00:15 · B2</div>
+    </div>
+    <div class="mc-sub">Forecast peak for the day</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="mc-label">Daily Energy</div>
+    <div>
+      <div class="mc-value">182,166 <span class="mc-unit">MWh</span></div>
+      <div class="mc-delta" style="color:#6B7186">96 blocks × 15 min</div>
+    </div>
+    <div class="mc-sub">Total forecast energy</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="mc-label">Actuals Coverage</div>
+    <div>
+      <div class="mc-value" style="color:#34D399">83 <span class="mc-unit">%</span></div>
+      <div class="mc-delta" style="color:#34D399">▲ 80 / 96 blocks settled</div>
+    </div>
+    <div class="mc-sub">151,372 MWh actual energy</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="mc-label">Forecast Health</div>
+    <div>
+      <div class="mc-value" style="color:#34D399">1.02 <span class="mc-unit">% MAPE</span></div>
+      <div class="mc-delta" style="color:#34D399">▲ Within tolerance</div>
+    </div>
+    <div class="mc-sub">Live settled blocks only</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="mc-label">Ramp Severity</div>
+    <div>
+      <div class="mc-value" style="color:#34D399">Clear</div>
+      <div class="mc-delta" style="color:#6B7186">54 MW / 15m · B85</div>
+    </div>
+    <div class="mc-sub">Stable upcoming load profile</div>
+  </div>
+
+  <div class="metric-card">
+    <div class="mc-label">Driver Pressure</div>
+    <div>
+      <div class="mc-value">858 <span class="mc-unit">MW Σ|</span></div>
+      <div class="mc-delta" style="color:#A0A5B8">3 active drivers</div>
+    </div>
+    <div class="mc-sub">Sum of |driver contributions|</div>
+  </div>
+
+</div>
+
+<!-- ── Section: Forecast Chart ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow open">▶</span>
+    <span class="section-title">Forecast Profile</span>
+    <div class="pill-row" style="margin:0 0 0 auto; flex-wrap:nowrap;">
+      <span class="pill accent">Forecast</span>
+      <span class="pill blue">Actual</span>
+      <span class="pill gray">Persistence</span>
+    </div>
+  </div>
+  <div class="section-body">
+    <div class="chart-ph">
+      <svg viewBox="0 0 800 220" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="fg1" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#F07825" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="#F07825" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="fg2" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#5B9FE4" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#5B9FE4" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <!-- grid lines -->
+        <line x1="0" y1="55" x2="800" y2="55" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="0" y1="110" x2="800" y2="110" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="0" y1="165" x2="800" y2="165" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <!-- forecast line -->
+        <path d="M0 80 C50 74,90 62,130 68 C170 74,210 96,260 108 C300 116,340 102,390 90 C440 78,500 84,560 86 C620 88,680 85,740 84 C770 83,785 83,800 83"
+              fill="none" stroke="#F07825" stroke-width="2.5"/>
+        <path d="M0 80 C50 74,90 62,130 68 C170 74,210 96,260 108 C300 116,340 102,390 90 C440 78,500 84,560 86 C620 88,680 85,740 84 C770 83,785 83,800 83 L800 220 L0 220Z"
+              fill="url(#fg1)"/>
+        <!-- actual (dashed, partial) -->
+        <path d="M0 78 C50 72,90 60,130 65 C170 70,210 93,260 105 C300 114,340 99,390 88 C440 77,480 82,510 83"
+              fill="none" stroke="#5B9FE4" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+        <!-- persistence -->
+        <path d="M0 82 C60 80,120 80,180 80 C240 80,300 80,360 80"
+              fill="none" stroke="#A0A5B8" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"/>
+        <!-- uncertainty band -->
+        <path d="M0 72 C50 66,90 54,130 60 C170 66,210 88,260 100 C300 108,340 94,390 82 C440 70,500 76,560 78 C620 80,680 77,800 75
+                 L800 91 C680 93,620 96,560 94 C500 92,440 86,390 98 C340 110,300 124,260 116 C210 104,170 82,130 76 C90 70,50 82,0 88Z"
+              fill="rgba(240,120,37,0.07)"/>
+      </svg>
+      <div class="chart-ph-label">Live ECharts Chart</div>
+    </div>
+    <div style="margin-top:10px; font-size:10px; color:#6B7186; display:flex; gap:20px;">
+      <span>Peak <strong style="color:#ECEEF3">00:15 · 9,440 MW</strong></span>
+      <span>Health <strong style="color:#34D399">1.02% MAPE</strong></span>
+      <span>Energy <strong style="color:#ECEEF3">182,166 MWh</strong></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section: Driver Contributions ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow open">▶</span>
+    <span class="section-title blue">Driver Contributions</span>
+    <span class="sec-count">3 active · 858 MW Σ</span>
+  </div>
+  <div class="section-body">
+    <div class="driver-row">
+      <div class="driver-name">Temperature</div>
+      <div class="driver-bar-track"><div class="driver-bar-fill" style="width:72%;background:#F07825"></div></div>
+      <div class="driver-mw" style="color:#F07825">+620 MW</div>
+    </div>
+    <div class="driver-row">
+      <div class="driver-name">Day of Week</div>
+      <div class="driver-bar-track"><div class="driver-bar-fill" style="width:40%;background:#5B9FE4"></div></div>
+      <div class="driver-mw" style="color:#5B9FE4">+180 MW</div>
+    </div>
+    <div class="driver-row">
+      <div class="driver-name">Holiday Effect</div>
+      <div class="driver-bar-track"><div class="driver-bar-fill" style="width:30%;background:#F87171"></div></div>
+      <div class="driver-mw" style="color:#F87171">−58 MW</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section: Risk Signals ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow open">▶</span>
+    <span class="section-title" style="color:#FBBF24">Risk Signals</span>
+    <span class="sec-count">96 signals · 3 high</span>
+  </div>
+  <div class="section-body">
+    <div class="signal-row">
+      <div class="signal-badge badge-high">High</div>
+      <div class="signal-block">B61 · 15:00</div>
+      <div class="signal-driver">Temperature spike — AC surge expected</div>
+      <div class="signal-action">Monitor closely</div>
+    </div>
+    <div class="signal-row">
+      <div class="signal-badge badge-medium">Medium</div>
+      <div class="signal-block">B72 · 17:45</div>
+      <div class="signal-driver">Ramp risk — evening load pickup</div>
+      <div class="signal-action">Ramp reserve ready</div>
+    </div>
+    <div class="signal-row">
+      <div class="signal-badge badge-low">Low</div>
+      <div class="signal-block">B85 · 21:00</div>
+      <div class="signal-driver">Uncertainty — post-sunset cooling</div>
+      <div class="signal-action">Normal operations</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section: Forecast Intelligence ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow open">▶</span>
+    <span class="section-title green">Forecast Intelligence</span>
+    <span class="sec-count">1 note</span>
+  </div>
+  <div class="section-body">
+    <div style="background:rgba(248,113,113,0.06); border:1px solid rgba(248,113,113,0.15); border-radius:10px; padding:14px 16px; margin-bottom:8px;">
+      <div style="font-size:10px; font-weight:700; color:#F87171; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px;">⚠ Attention Required</div>
+      <div style="font-size:11px; color:#A0A5B8; line-height:1.6;">Monsoon onset expected tomorrow. Load suppression likely in evening blocks (B64–B80) due to cloud cover and reduced cooling demand. Watch temperature delta closely.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section: Engine Logs ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow">▶</span>
+    <span class="section-title" style="color:#C084FC">Engine Logs</span>
+    <span class="sec-count">3 events</span>
+  </div>
+  <!-- collapsed by default -->
+</div>
+
+<!-- ── Section: Block Table ── -->
+<div class="section">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="section-arrow">▶</span>
+    <span class="section-title" style="color:#A0A5B8">Block Table · 96 Slots</span>
+    <span class="sec-count">80 settled · 16 forecast</span>
+  </div>
+  <!-- collapsed by default -->
+</div>
+
+<div style="height:20px;"></div>
+
+<script>
+function toggle(header) {
+  const arrow = header.querySelector('.section-arrow');
+  const body = header.nextElementSibling;
+  if (!body || !body.classList.contains('section-body')) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  arrow.classList.toggle('open', !isOpen);
+}
+// Start collapsed sections hidden
+document.querySelectorAll('.section-header').forEach(h => {
+  const arrow = h.querySelector('.section-arrow');
+  if (!arrow.classList.contains('open')) {
+    const body = h.nextElementSibling;
+    if (body && body.classList.contains('section-body')) body.style.display = 'none';
+  }
+});
+</script>
+</body>
+</html>

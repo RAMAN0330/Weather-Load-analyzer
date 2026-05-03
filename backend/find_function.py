@@ -1,5 +1,4 @@
 
-import re
 
 with open(r'c:\Users\RamanSharma\OneDrive - GNA-Energy\Desktop\RD\backend\main.py', 'r', encoding='utf-8') as f:
     lines = f.readlines()

@@ -1,5 +1,6 @@
-import pandas as pd
 import os
+
+import pandas as pd
 
 data_path = "../final_data.csv"
 if os.path.exists(data_path):

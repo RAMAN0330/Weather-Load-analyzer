@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast Page — Weather Page Layout</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #111318;
+  color: #ECEEF3;
+  font-family: 'IBM Plex Mono', monospace;
+  min-height: 100vh;
+}
+
+/* ── Top KPI strip (MetricCards) ── */
+.kpi-strip {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.kpi-card {
+  flex: 1;
+  padding: 18px 22px;
+  border-right: 1px solid rgba(255,255,255,0.07);
+  background: #181A20;
+  position: relative;
+}
+.kpi-card:last-child { border-right: none; }
+.kpi-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1.8px;
+  color: #6B7186;
+  margin-bottom: 10px;
+}
+.kpi-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.kpi-unit { font-size: 14px; font-weight: 500; opacity: 0.55; margin-left: 2px; }
+.kpi-delta {
+  font-size: 10px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.kpi-sub {
+  font-size: 9px;
+  color: #6B7186;
+  line-height: 1.5;
+}
+
+/* horizon pill top-right */
+.horizon-pill {
+  position: absolute;
+  top: 14px; right: 14px;
+  display: flex; gap: 4px;
+}
+.h-btn {
+  font-size: 9px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: #A0A5B8;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.h-btn.active {
+  background: #F07825;
+  border-color: #F07825;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ── Control strip ── */
+.ctrl-strip {
+  background: #181A20;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: nowrap;
+  min-height: 52px;
+}
+
+/* left: overlay toggles */
+.ctrl-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  padding-right: 18px;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  margin-right: 14px;
+}
+.ctrl-label { font-size: 9px; color: #6B7186; text-transform: uppercase; letter-spacing: 1.5px; }
+.toggle-row { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #A0A5B8; }
+.toggle {
+  width: 28px; height: 15px;
+  border-radius: 8px; position: relative; cursor: pointer; flex-shrink: 0;
+}
+.toggle.on { background: #F07825; }
+.toggle.off { background: #333; }
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+.toggle.on::after { left: 15px; }
+.toggle.off::after { left: 2px; }
+
+/* center: tabs */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+.tab {
+  font-size: 10px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: #A0A5B8;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.tab.active {
+  background: rgba(240,120,37,0.15);
+  color: #F07825;
+  border-color: rgba(240,120,37,0.3);
+}
+.tab:hover:not(.active) { color: #ECEEF3; background: rgba(255,255,255,0.04); }
+
+/* right: action panel buttons */
+.ctrl-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-left: 14px;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  margin-left: auto;
+}
+.panel-label { font-size: 9px; color: #6B7186; text-transform: uppercase; letter-spacing: 1.5px; white-space: nowrap; margin-right: 4px; }
+.panel-btn {
+  font-size: 9px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: #A0A5B8;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+  white-space: nowrap;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.panel-btn:hover { background: rgba(255,255,255,0.07); color: #ECEEF3; border-color: rgba(255,255,255,0.18); }
+.panel-btn .count {
+  font-size: 8px;
+  background: rgba(240,120,37,0.2);
+  color: #F07825;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+.panel-btn .count.green { background: rgba(52,211,153,0.15); color: #34D399; }
+.panel-btn .count.warn { background: rgba(251,191,36,0.15); color: #FBBF24; }
+
+/* ── Chart area ── */
+.chart-area {
+  background: #151720;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  padding: 0;
+  position: relative;
+}
+.chart-area svg { width: 100%; height: 420px; display: block; }
+
+/* chart labels */
+.chart-axis-label {
+  position: absolute;
+  font-size: 9px;
+  color: #6B7186;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ── Legend bar below chart ── */
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 22px;
+  background: #181A20;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  font-size: 10px;
+  color: #6B7186;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-line { width: 20px; height: 2px; border-radius: 1px; }
+.legend-line.dashed { background: repeating-linear-gradient(90deg, #A0A5B8 0, #A0A5B8 4px, transparent 4px, transparent 7px); }
+
+/* annotation overlay on chart */
+.chart-note {
+  position: absolute;
+  font-size: 9px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #6B7186;
+}
+</style>
+</head>
+<body>
+
+<!-- ── KPI MetricCards (weather page style) ── -->
+<div class="kpi-strip">
+
+  <div class="kpi-card">
+    <div class="kpi-label">Peak Load</div>
+    <div class="kpi-value" style="color:#F07825">9,440<span class="kpi-unit">MW</span></div>
+    <div class="kpi-delta" style="color:#F07825">▲ at 00:15 · B2</div>
+    <div class="kpi-sub">Forecast peak for the day</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-label">Daily Energy</div>
+    <div class="kpi-value" style="color:#C084FC">182,166<span class="kpi-unit">MWh</span></div>
+    <div class="kpi-delta" style="color:#6B7186">96 blocks × 15 min</div>
+    <div class="kpi-sub">Total forecast energy</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-label">Actuals Coverage</div>
+    <div class="kpi-value" style="color:#34D399">83<span class="kpi-unit">%</span></div>
+    <div class="kpi-delta" style="color:#34D399">▲ 80/96 · 151,372 MWh</div>
+    <div class="kpi-sub">Settled blocks vs total</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-label">Forecast Health</div>
+    <div class="kpi-value" style="color:#34D399">1.02<span class="kpi-unit">% MAPE</span></div>
+    <div class="kpi-delta" style="color:#34D399">▲ Within tolerance</div>
+    <div class="kpi-sub">Live settled blocks only</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-label">Ramp Severity</div>
+    <div class="kpi-value" style="color:#34D399">Clear</div>
+    <div class="kpi-delta" style="color:#6B7186">54 MW / 15m · B85</div>
+    <div class="kpi-sub">Stable upcoming profile</div>
+    <!-- Horizon toggle lives here like the weather page -->
+    <div class="horizon-pill">
+      <button class="h-btn active">T+1</button>
+      <button class="h-btn">T+2 · 4 May</button>
+    </div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-label">Driver Pressure</div>
+    <div class="kpi-value" style="color:#5B9FE4">858<span class="kpi-unit">MW Σ|</span></div>
+    <div class="kpi-delta" style="color:#A0A5B8">3 active drivers</div>
+    <div class="kpi-sub">Sum of |driver contributions|</div>
+  </div>
+
+</div>
+
+<!-- ── Control strip: toggles + tabs + panel buttons ── -->
+<div class="ctrl-strip">
+
+  <!-- Left: overlay toggles (like weather's Normal Overlay / Load Overlay) -->
+  <div class="ctrl-left">
+    <div class="toggle-row">
+      <div class="toggle on"></div>
+      <span>Actual</span>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle on"></div>
+      <span>Persistence</span>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle off"></div>
+      <span>Uncertainty Band</span>
+    </div>
+  </div>
+
+  <!-- Center: chart view tabs (like weather's Intraday Profile / Δ from Normal / etc.) -->
+  <div class="tabs">
+    <div class="tab active">Forecast Profile</div>
+    <div class="tab">Block Table</div>
+    <div class="tab">Δ vs Persistence</div>
+    <div class="tab">Error Analysis</div>
+  </div>
+
+  <!-- Right: action panel buttons (like weather's MW Attribution / Open Peak Stress / etc.) -->
+  <div class="ctrl-right">
+    <span class="panel-label">Detail Panels</span>
+    <button class="panel-btn">Drivers <span class="count">3</span></button>
+    <button class="panel-btn">Signals <span class="count warn">96</span></button>
+    <button class="panel-btn">Intelligence <span class="count green">1</span></button>
+    <button class="panel-btn">Similar Days <span class="count">0</span></button>
+    <button class="panel-btn">Engine Logs <span class="count">0</span></button>
+  </div>
+
+</div>
+
+<!-- ── Full-width chart (like weather page) ── -->
+<div class="chart-area">
+  <svg viewBox="0 0 1400 420" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#F07825" stop-opacity="0.35"/>
+        <stop offset="100%" stop-color="#F07825" stop-opacity="0.02"/>
+      </linearGradient>
+      <linearGradient id="ug" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#F07825" stop-opacity="0.1"/>
+        <stop offset="100%" stop-color="#F07825" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+
+    <!-- y-axis grid lines -->
+    <line x1="70" y1="60" x2="1380" y2="60" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    <line x1="70" y1="130" x2="1380" y2="130" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    <line x1="70" y1="200" x2="1380" y2="200" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    <line x1="70" y1="270" x2="1380" y2="270" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    <line x1="70" y1="340" x2="1380" y2="340" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+
+    <!-- y-axis labels -->
+    <text x="60" y="64" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">12,000</text>
+    <text x="60" y="134" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">10,000</text>
+    <text x="60" y="204" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">8,000</text>
+    <text x="60" y="274" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">6,000</text>
+    <text x="60" y="344" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">4,000</text>
+    <text x="60" y="390" text-anchor="end" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">MW</text>
+
+    <!-- x-axis labels -->
+    <text x="70" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">00:00</text>
+    <text x="210" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">03:00</text>
+    <text x="360" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">06:00</text>
+    <text x="510" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">09:00</text>
+    <text x="660" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">12:00</text>
+    <text x="810" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">15:00</text>
+    <text x="960" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">18:00</text>
+    <text x="1110" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">21:00</text>
+    <text x="1340" y="408" fill="#6B7186" font-size="10" font-family="IBM Plex Mono,monospace">24:00</text>
+
+    <!-- uncertainty band -->
+    <path d="M70 128 C130 122,190 108,260 110 C330 112,400 128,470 148 C540 168,610 160,680 150 C750 140,820 138,900 140 C980 142,1060 138,1140 136 C1220 134,1310 134,1380 134
+             L1380 158 C1310 158,1220 158,1140 158 C1060 162,980 166,900 164 C820 162,750 164,680 174 C610 184,540 192,470 172 C400 152,330 136,260 134 C190 132,130 146,70 152Z"
+          fill="url(#ug)"/>
+
+    <!-- forecast line + fill -->
+    <path d="M70 140 C130 134,190 120,260 122 C330 124,400 140,470 160 C540 180,610 172,680 162 C750 152,820 150,900 152 C980 154,1060 150,1140 148 C1220 146,1310 146,1380 146"
+          fill="none" stroke="#F07825" stroke-width="2.5"/>
+    <path d="M70 140 C130 134,190 120,260 122 C330 124,400 140,470 160 C540 180,610 172,680 162 C750 152,820 150,900 152 C980 154,1060 150,1140 148 C1220 146,1310 146,1380 146
+             L1380 420 L70 420Z"
+          fill="url(#fg)"/>
+
+    <!-- actual line (partial — settled blocks, dashed style) -->
+    <path d="M70 138 C130 132,190 118,260 120 C330 122,400 138,470 158 C540 178,610 170,680 158 C750 148,820 146,900 148 C950 150,980 150,1000 150"
+          fill="none" stroke="#5B9FE4" stroke-width="2" opacity="0.9"/>
+
+    <!-- persistence line -->
+    <path d="M70 142 C200 142,350 142,500 142 C600 142,700 142,800 142"
+          fill="none" stroke="#A0A5B8" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.45"/>
+
+    <!-- "Now" vertical marker -->
+    <line x1="1000" y1="50" x2="1000" y2="395" stroke="#5B9FE4" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
+    <text x="1005" y="68" fill="#5B9FE4" font-size="9" font-family="IBM Plex Mono,monospace">Now · B80</text>
+
+    <!-- legend inside chart -->
+    <g transform="translate(400, 28)">
+      <line x1="0" y1="6" x2="22" y2="6" stroke="#F07825" stroke-width="2.5"/>
+      <text x="26" y="10" fill="#A0A5B8" font-size="10" font-family="IBM Plex Mono,monospace">Forecast</text>
+      <line x1="110" y1="6" x2="132" y2="6" stroke="#5B9FE4" stroke-width="2"/>
+      <text x="136" y="10" fill="#A0A5B8" font-size="10" font-family="IBM Plex Mono,monospace">Actual</text>
+      <line x1="206" y1="6" x2="228" y2="6" stroke="#A0A5B8" stroke-width="1.5" stroke-dasharray="5,3"/>
+      <text x="232" y="10" fill="#A0A5B8" font-size="10" font-family="IBM Plex Mono,monospace">Persistence</text>
+    </g>
+  </svg>
+</div>
+
+<!-- Legend/summary bar -->
+<div class="chart-legend">
+  <span>Peak <strong style="color:#ECEEF3">00:15 · 9,440 MW</strong></span>
+  <span>Health <strong style="color:#34D399">1.02% MAPE</strong></span>
+  <span>Energy <strong style="color:#ECEEF3">182,166 MWh</strong></span>
+  <span style="margin-left:auto; font-size:9px;">03-05-2026 · Haryana</span>
+</div>
+
+</body>
+</html>

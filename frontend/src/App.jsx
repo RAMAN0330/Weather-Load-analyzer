@@ -4,6 +4,11 @@ import { API_BASE, TRAINING_API_BASE, getApiUrl, getTrainingApiUrl } from './api
 import { useSimulatorStore } from './features/simulator/store';
 
 import CommandStrip from './components/CommandStrip';
+import {
+  PageShell as VpPageShell,
+  PageHeader as VpPageHeader,
+  Pill as VpPill,
+} from './components/page/PagePrimitives.jsx';
 import PipelineProgress from './components/PipelineProgress';
 import AlertRibbon from './components/AlertRibbon';
 import WeatherStrip from './components/WeatherStrip';
@@ -17,7 +22,6 @@ import {
   Database,
   Download,
   Droplets,
-  Gauge,
   GitCompare,
   Layers,
   LayoutGrid,
@@ -29,7 +33,10 @@ import {
   Sun,
   Thermometer,
   TrendingUp,
-  Wind
+  Wind,
+  Zap,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 
 const ReactECharts = lazy(() => import('echarts-for-react'));
@@ -38,10 +45,11 @@ const ForecastPage = lazy(() => import('./features/forecast/ForecastPage'));
 const AnalysisPage = lazy(() => import('./features/analysis/AnalysisPage'));
 const WeatherDeepPage = lazy(() => import('./features/weather/WeatherDeepPage'));
 const LoadAnalysisPage = lazy(() => import('./features/load/LoadAnalysisPage'));
-const OptimizerPage = lazy(() => import('./features/optimizer/OptimizerPage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 const SimilarDaysPage = lazy(() => import('./features/pipeline/SimilarDaysPage'));
 const WeatherLocPage = lazy(() => import('./features/pipeline/WeatherLocPage'));
+const AccuracyMonitorPage = lazy(() => import('./features/monitor/AccuracyMonitorPage'));
+const BacktestPage = lazy(() => import('./features/backtest/BacktestPage'));
 
 // API URL builders moved to apiConfig.ts
 const API_URL = getApiUrl;
@@ -56,11 +64,11 @@ const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 const NAV_ITEMS = [
   { key: 'load_analysis', label: 'Load Analysis', icon: Activity },
   { key: 'weather_analysis', label: 'Weather Analysis', icon: Sun },
-  { key: 'optimizer', label: 'Optimizer', icon: Gauge },
   { key: 'simulator', label: 'Simulator', icon: Play },
   { key: 'analysis', label: 'Analysis', icon: BarChart3 },
   { key: 'forecast', label: 'Forecast', icon: LayoutGrid },
   { key: 'monitor', label: 'Monitor', icon: TrendingUp },
+  { key: 'backtest', label: 'Backtest', icon: BarChart3 },
   { key: 'similar_days', label: 'Similar Days', icon: Database },
   { key: 'weather_loc', label: 'Weather Locations', icon: MapPin },
 ];
@@ -526,6 +534,15 @@ const LoadChart = ({
     }
     : undefined;
 
+  // Compute y-axis bounds from actual data so the axis never starts at 0 when data is far above it
+  const _allVals = [...forecast, ...baseline, ...actual, ...(p10 || []), ...(p90 || [])]
+    .filter(v => v != null && Number.isFinite(v) && v > 0);
+  const _dataMin = _allVals.length ? Math.min(..._allVals) : 0;
+  const _dataMax = _allVals.length ? Math.max(..._allVals) : 12000;
+  const _pad = (_dataMax - _dataMin) * 0.06;
+  const _yMin = _dataMin > 500 ? Math.floor((_dataMin - _pad) / 500) * 500 : 0;
+  const _yMax = Math.ceil((_dataMax + _pad) / 500) * 500;
+
   const option = {
     backgroundColor: 'transparent',
     grid: { left: 40, right: 20, top: 30, bottom: 55, containLabel: true },
@@ -571,13 +588,16 @@ const LoadChart = ({
     },
     yAxis: {
       type: 'value',
+      min: _yMin,
+      max: _yMax,
       axisLine: { lineStyle: { color: '#262A35' } },
       axisTick: { show: false },
       splitLine: { lineStyle: { color: '#1C1F28', type: 'solid' } },
-      axisLabel: { color: '#565B6B', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }
+      axisLabel: { color: '#565B6B', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace',
+        formatter: (v) => Math.abs(v) >= 1000 ? `${(v/1000).toFixed(1)}k` : `${v}` }
     },
     series: [
-      // P10-P90 confidence band (stacked area technique)
+      // P10-P90 confidence band (stacked area — transparent floor + colored band)
       ...(showForecast && p10.length === blocks.length ? [
         {
           name: 'P10',
@@ -598,9 +618,7 @@ const LoadChart = ({
           symbol: 'none',
           lineStyle: { opacity: 0 },
           stack: 'confidence',
-          areaStyle: {
-            color: 'rgba(74, 144, 217, 0.06)',
-          },
+          areaStyle: { color: 'rgba(74, 144, 217, 0.08)' },
           z: 1
         }
       ] : []),
@@ -1120,7 +1138,7 @@ function DataViewerTable({ rows, keys, fmt }) {
 /* ═══════════════════════════════════════════════════════════════
    MONITOR PAGE  –  Similar Days & Statistics
    ═══════════════════════════════════════════════════════════════ */
-function MonitorPage({ live, dayAhead, effectiveDate }) {
+function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
   const [activeKpi, setActiveKpi] = React.useState(null);
   const [statTab, setStatTab] = React.useState('central');
   const [simSort, setSimSort] = React.useState({ col: 'rank', dir: 'asc' });
@@ -1251,10 +1269,9 @@ function MonitorPage({ live, dayAhead, effectiveDate }) {
   const sortIcon = (col) => simSort.col === col ? (simSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
 
   return (
-    <main style={{ fontFamily: "'IBM Plex Mono',monospace", color: '#ECEEF3', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '14px 16px 24px' }}>
-
+    <VpPageShell className="monitor-page">
       {/* ── HEADER ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+      <div style={{ display: 'none', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#F0F2F8' }}>Similar Days &amp; Statistics</div>
           <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 3 }}>Click any KPI card · Sort table columns · Filter by day type · Click a bin to narrow similar days</div>
@@ -1311,123 +1328,14 @@ function MonitorPage({ live, dayAhead, effectiveDate }) {
       {/* ── MAIN GRID ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 14, flex: 1, minHeight: 400 }}>
 
-        {/* LEFT: similar days */}
-        <div style={cardS}>
-          <div style={headS}>
-            <div>
-              <div style={titleS}>Similar Historical Days</div>
-              <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 2 }}>Click column headers to sort · Click a row to inspect · Use filters below</div>
-            </div>
-            <span style={badge('#5B9FE4')}>{rawSim.length ? `${rawSim.length} matches` : 'No data'}</span>
-          </div>
-
-          {/* filter + bin-clear row */}
-          <div style={{ display: 'flex', gap: 6, padding: '8px 12px', borderBottom: '1px solid #2A292F', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
-            {['all','working','sunday','holiday'].map(f => (
-              <button key={f} onClick={() => setSimFilter(f)} style={tabBtn(simFilter === f)}>{f}</button>
-            ))}
-          </div>
-
-          {rawSim.length === 0 ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4A4D5E', fontSize: 10, flexDirection: 'column', gap: 6, padding: 32 }}>
-              <div style={{ fontSize: 24, opacity: 0.3 }}>◈</div>
-              <div>Run a forecast to surface similar days</div>
-            </div>
-          ) : (
-            <div style={{ overflow: 'auto', flex: 1 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
-                <thead>
-                  <tr style={{ background: 'rgba(255,255,255,0.02)', position: 'sticky', top: 0, zIndex: 1 }}>
-                    <th style={sortTh('rank')} onClick={() => onSort('rank')}>Rank{sortIcon('rank')}</th>
-                    <th style={sortTh('date')} onClick={() => onSort('date')}>Date{sortIcon('date')}</th>
-                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Day</th>
-                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Type</th>
-                    <th style={sortTh('sim')} onClick={() => onSort('sim')}>Similarity{sortIcon('sim')}</th>
-                    <th style={sortTh('temp')} onClick={() => onSort('temp')}>Temp Δ °C{sortIcon('temp')}</th>
-                    <th style={sortTh('hum')} onClick={() => onSort('hum')}>Hum Δ %{sortIcon('hum')}</th>
-                    <th style={{ ...sortTh(''), cursor: 'default', color: '#4A4D5E' }}>Rain Match</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSim.map((d) => {
-                    const score = d.similarity_score != null ? d.similarity_score * 100 : d.score != null ? d.score * 100 : null;
-                    const sc = score != null ? simColor(score) : '#6B7186';
-                    const tempDiff = d.temp_diff ?? null;
-                    const humDiff  = d.hum_diff  ?? null;
-                    const rainMatch = d.rain_match;
-                    const isSelected = selectedSimRow === d.date;
-                    return (
-                      <React.Fragment key={d.date || d._rank}>
-                        <tr
-                          onClick={() => setSelectedSimRow(isSelected ? null : d.date)}
-                          style={{ borderBottom: '1px solid #2A292F18', background: isSelected ? 'rgba(91,159,228,0.07)' : d._rank === 0 ? 'rgba(240,120,37,0.04)' : 'transparent', cursor: 'pointer', transition: 'background 0.12s' }}>
-                          <td style={{ padding: '9px 10px', color: d._rank === 0 ? '#F07825' : '#6B7186', fontWeight: d._rank === 0 ? 700 : 400 }}>
-                            {d._rank === 0 ? '★' : `#${d._rank + 1}`}
-                          </td>
-                          <td style={{ padding: '9px 10px', fontWeight: 600, color: isSelected ? '#5B9FE4' : '#ECEEF3', whiteSpace: 'nowrap' }}>{d.date || '--'}</td>
-                          <td style={{ padding: '9px 10px', color: '#6B7186' }}>{d.date ? dayOfWeek(d.date) : '--'}</td>
-                          <td style={{ padding: '9px 10px' }}>
-                            <span style={{ ...badge(d.category==='holiday'?'#C084FC':d.category==='sunday'?'#5B9FE4':'#FBBF24') }}>
-                              {d.category || d.day_type || 'working'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '9px 10px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ width: 56, height: 4, borderRadius: 2, background: '#1E1D24', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', width: `${Math.min(100, score ?? 0)}%`, background: sc, borderRadius: 2 }} />
-                              </div>
-                              <span style={{ color: sc, fontWeight: 700 }}>{score != null ? `${score.toFixed(0)}%` : '--'}</span>
-                            </div>
-                          </td>
-                          <td style={{ padding: '9px 10px', color: tempDiff == null ? '#4A4D5E' : Math.abs(tempDiff) > 3 ? '#F87171' : '#34D399', fontWeight: 600 }}>
-                            {tempDiff != null ? `${tempDiff > 0 ? '+' : ''}${tempDiff.toFixed(1)}` : '--'}
-                          </td>
-                          <td style={{ padding: '9px 10px', color: humDiff == null ? '#4A4D5E' : Math.abs(humDiff) > 10 ? '#F87171' : '#34D399', fontWeight: 600 }}>
-                            {humDiff != null ? `${humDiff > 0 ? '+' : ''}${humDiff.toFixed(1)}` : '--'}
-                          </td>
-                          <td style={{ padding: '9px 10px' }}>
-                            {rainMatch == null
-                              ? <span style={{ color: '#4A4D5E' }}>--</span>
-                              : <span style={{ ...badge(rainMatch ? '#34D399' : '#F87171') }}>{rainMatch ? '✓ Yes' : '✗ No'}</span>
-                            }
-                          </td>
-                        </tr>
-                        {isSelected && (
-                          <tr style={{ background: 'rgba(91,159,228,0.04)' }}>
-                            <td colSpan={8} style={{ padding: '10px 16px', borderBottom: '1px solid #2A292F' }}>
-                              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                                <div>
-                                  <div style={{ fontSize: 11, color: '#8A90A6', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>Selected Day</div>
-                                  <div style={{ fontSize: 13, fontWeight: 700, color: '#5B9FE4' }}>{d.date}</div>
-                                  <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 2 }}>{dayOfWeek(d.date)} · {d.category || d.day_type || 'working'}</div>
-                                </div>
-                                {[
-                                  ['Similarity', score != null ? `${score.toFixed(1)}%` : '--', sc],
-                                  ['Temp Δ', tempDiff != null ? `${tempDiff > 0 ? '+' : ''}${tempDiff.toFixed(1)} °C` : '--', Math.abs(tempDiff??0) > 3 ? '#F87171' : '#34D399'],
-                                  ['Humidity Δ', humDiff != null ? `${humDiff > 0 ? '+' : ''}${humDiff.toFixed(1)}%` : '--', Math.abs(humDiff??0) > 10 ? '#F87171' : '#34D399'],
-                                  ['Rain Match', rainMatch == null ? '--' : rainMatch ? '✓ Yes' : '✗ No', rainMatch ? '#34D399' : '#F87171'],
-                                ].map(([l, v, c]) => (
-                                  <div key={l}>
-                                    <div style={{ fontSize: 11, color: '#8A90A6', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>{l}</div>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</div>
-                                  </div>
-                                ))}
-                                <button onClick={(e) => { e.stopPropagation(); setSelectedSimRow(null); }} style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '1px solid #2A292F', background: 'transparent', color: '#8A90A6', cursor: 'pointer', fontFamily: 'inherit', alignSelf: 'center' }}>Close</button>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                  {filteredSim.length === 0 && (
-                    <tr><td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#8A90A6', fontSize: 13 }}>No matches for current filter</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        {/* LEFT: accuracy monitor */}
+        <Suspense fallback={<ViewLoading label="Loading Accuracy Monitor..." />}>
+          <AccuracyMonitorPage
+            liveData={live}
+            selectedRegion={selectedRegion}
+            selectedDate={effectiveDate}
+          />
+        </Suspense>
 
         {/* RIGHT COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0 }}>
@@ -1551,11 +1459,11 @@ function MonitorPage({ live, dayAhead, effectiveDate }) {
         )}
       </div>
 
-    </main>
+    </VpPageShell>
   );
 }
 
-export default function App({ authUser, onLogout }) {
+export default function App({ authUser, onLogout, onHome }) {
   const weatherComponentSliders = useSimulatorStore((s) => s.weatherComponentSliders);
   const setWeatherComponentSlider = useSimulatorStore((s) => s.setWeatherComponentSlider);
   const loadFromFileData = useSimulatorStore((s) => s.loadFromFileData);
@@ -1580,6 +1488,14 @@ export default function App({ authUser, onLogout }) {
   };
 
   const [active, setActive] = useState('load_analysis');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('vp-sidebar-collapsed') === '1'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('vp-sidebar-collapsed', sidebarCollapsed ? '1' : '0'); }
+    catch { /* noop */ }
+  }, [sidebarCollapsed]);
   const [config, setConfig] = useState(null);
   const [settings, setSettings] = useState(null);
   const [date, setDate] = useState('');
@@ -1593,6 +1509,7 @@ export default function App({ authUser, onLogout }) {
   const [dayAheadT2, setDayAheadT2] = useState(null);
   const [live, setLive] = useState(null);
   const [liveT2, setLiveT2] = useState(null);
+  const [liveT2Loading, setLiveT2Loading] = useState(false);
   const [actualBlocks, setActualBlocks] = useState(0);
   const [analysis, setAnalysis] = useState(null);
 
@@ -1771,14 +1688,15 @@ export default function App({ authUser, onLogout }) {
 
       // ── Phase 2: Fast historical/analytical data (no T+2 here — it's slow) ─
       setInitPhase('data');
+      // momentum is slow — fire-and-forget so it never blocks init
+      axios.post(API_URL('/v2/load_change'), { date1: d, date2: prevDay, dates: [] }, { timeout: 60000 })
+        .then(r => setMomentumChange(r.data))
+        .catch(e => console.warn('momentum failed:', e?.message));
+
       await Promise.allSettled([
         axios.post(API_URL('/v2/load_benchmarks'), { date: d }, { timeout: 15000 })
           .then(r => setBenchmarkData(r.data))
           .catch(e => console.warn('benchmarks failed:', e?.message)),
-
-        axios.post(API_URL('/v2/load_change'), { date1: d, date2: prevDay, dates: [] }, { timeout: 15000 })
-          .then(r => setMomentumChange(r.data))
-          .catch(e => console.warn('momentum failed:', e?.message)),
 
         axios.post(API_URL('/v2/analysis'), { date: d, region: regionToUse }, { timeout: 15000 })
           .then(r => { if (r.data && !r.data.error) setAnalysis(r.data); })
@@ -1802,24 +1720,22 @@ export default function App({ authUser, onLogout }) {
       }
 
       // ── Phase 4 (background): T+2 forecast — fires after training is kicked ─
-      // Runs independently so it never blocks the PipelineProgress tooltip from
-      // appearing. Uses regionToUse captured in closure (not selectedRegion state).
+      // Runs independently so it never blocks the PipelineProgress tooltip.
+      // liveT2 already contains MySQL-fetched weather for T+2 date — no need
+      // to call /v2/dayahead again for a future date (returns zero deltas).
+      setLiveT2Loading(true);
       axios.post(TRAINING_API_URL('/v2/forecast/t2'), {
         date: d, region: regionToUse, baseline_days: bl,
-      }, { timeout: 180000 })
+      }, { timeout: 0 })
         .then(r => {
           setLiveT2(r.data);
-          const t2DateVal = r.data?.t2_date;
-          if (t2DateVal && regionToUse) {
-            axios.post(TRAINING_API_URL('/v2/dayahead'), {
-              date: t2DateVal, baseline_days: bl,
-              calendar_config: calendarConfig, region: regionToUse,
-            }, { timeout: FORECAST_REQUEST_TIMEOUT_MS })
-              .then(r2 => setDayAheadT2(r2.data))
-              .catch(() => {});
-          }
+          setDayAheadT2(r.data);
+          setLiveT2Loading(false);
         })
-        .catch(e => console.warn('T+2 background fetch failed:', e?.message));
+        .catch(e => {
+          console.warn('T+2 background fetch failed:', e?.message);
+          setLiveT2Loading(false);
+        });
 
     } catch (e) {
       console.error('Initialize failed:', e);
@@ -2001,14 +1917,8 @@ export default function App({ authUser, onLogout }) {
         actual_blocks: actualBlocks || (live?.metadata?.actual_blocks ?? undefined),
         region: selectedRegion,
       };
-      const t2Payload = {
-        date: liveEffectiveDate || undefined,
-        region: selectedRegion,
-        baseline_days: baselineDays || 7,
-      };
-      const [res, t2Res] = await Promise.allSettled([
+      const [res] = await Promise.allSettled([
         axios.post(TRAINING_API_URL('/v2/live'), payload, { timeout: 180000 }),
-        axios.post(TRAINING_API_URL('/v2/forecast/t2'), t2Payload, { timeout: 180000 }),
       ]);
       if (res.status === 'fulfilled') {
         setLive(res.value.data);
@@ -2017,23 +1927,6 @@ export default function App({ authUser, onLogout }) {
           setActualBlocks(availableBlocks);
         }
         pushToast('info', 'Short-term forecast refreshed');
-      }
-
-      if (t2Res.status === 'fulfilled') {
-        const t2Data = t2Res.value.data;
-        setLiveT2(t2Data);
-        // Fetch day-ahead analysis for the T+2 date so weather/analysis pages have full data
-        const t2DateVal = t2Data?.t2_date;
-        if (t2DateVal && selectedRegion) {
-          axios.post(TRAINING_API_URL('/v2/dayahead'), {
-            date: t2DateVal,
-            baseline_days: baselineDays,
-            calendar_config: calendarConfig,
-            region: selectedRegion,
-          }, { timeout: FORECAST_REQUEST_TIMEOUT_MS })
-            .then(r => setDayAheadT2(r.data))
-            .catch(e => console.warn('[T+2 dayahead] fetch failed:', e?.message));
-        }
       }
     } finally {
       setLoading(false);
@@ -2091,7 +1984,7 @@ export default function App({ authUser, onLogout }) {
     // Guard: never fire during initialization — initPhase must be in dep array so the
     // closure always reads the current value (prevents stale-closure double-submission).
     if (initPhase === 'config' || initPhase === 'data' || initPhase === 'training') return;
-    const isDayAheadActive = ['load_analysis', 'weather_analysis', 'optimizer', 'simulator', 'analysis'].includes(active);
+    const isDayAheadActive = ['load_analysis', 'weather_analysis', 'simulator', 'analysis'].includes(active);
     if (isDayAheadActive && date) {
       const alreadyLoaded = dayAhead && dayAhead.metadata?.effective_date === date;
       if (!alreadyLoaded) {
@@ -2233,24 +2126,35 @@ export default function App({ authUser, onLogout }) {
   }, [liveT2]);
 
   const forecastPageDate = activeHorizon === 't2' ? t2Date : (liveEffectiveDate || effectiveDate);
-  const forecastPageBlocks = activeLive?.series?.blocks || [];
-  const forecastPageBaseline = activeLive?.series?.hybrid_baseline || [];
+  // For T+2: prefer activeLive (liveT2) series; fall back to t2DataZipped if series.blocks missing
+  const forecastPageBlocks = (activeHorizon === 't2' && !activeLive?.series?.blocks?.length)
+    ? (t2DataZipped.length ? t2DataZipped.map(r => r.block_number) : [])
+    : (activeLive?.series?.blocks || []);
+  const forecastPageBaseline = (activeHorizon === 't2' && !activeLive?.series?.hybrid_baseline?.length)
+    ? (t2DataZipped.map(r => r.baseline_mw))
+    : (activeLive?.series?.hybrid_baseline || []);
   const forecastPageForecast = useMemo(() => {
     const raw = activeHorizon === 't1'
       ? (liveAdjustedForecast.length ? liveAdjustedForecast : (live?.series?.forecast || []))
-      : (activeLive?.series?.forecast || []);
+      : (activeLive?.series?.forecast?.length
+          ? activeLive.series.forecast
+          : t2DataZipped.map(r => r.forecast_mw));
     if (activeHorizon !== 't1') return raw;
     return applySettledT1ForecastFormula(raw, liveActual, forecastPageBlocks, forecastPageDate);
-  }, [activeHorizon, activeLive, forecastPageBlocks, forecastPageDate, live, liveActual, liveAdjustedForecast]);
+  }, [activeHorizon, activeLive, forecastPageBlocks, forecastPageDate, live, liveActual, liveAdjustedForecast, t2DataZipped]);
 
   const forecastPageRows = useMemo(() => {
+    // T+2 with no activeLive series: fall back to pre-computed t2DataZipped rows
+    if (activeHorizon === 't2' && !forecastPageBlocks.length && t2DataZipped.length) {
+      return t2DataZipped.map(r => ({ ...r, actual_mw: null }));
+    }
     return forecastPageBlocks.map((b, i) => ({
       block_number: b,
       actual_mw: activeHorizon === 't1' ? (liveActual[i] ?? null) : null,
       forecast_mw: forecastPageForecast?.[i] ?? 0,
       baseline_mw: forecastPageBaseline?.[i] ?? 0,
     }));
-  }, [activeHorizon, forecastPageBaseline, forecastPageBlocks, forecastPageForecast, liveActual]);
+  }, [activeHorizon, forecastPageBaseline, forecastPageBlocks, forecastPageForecast, liveActual, t2DataZipped]);
 
   const dayAheadSeries = useMemo(() => {
     // If we are in T2 mode, prioritize T2 data
@@ -2266,7 +2170,7 @@ export default function App({ authUser, onLogout }) {
           metadata: liveT2.metadata
         };
       }
-      return dayAheadT2?.series;
+      return undefined; // liveT2 branch above covers T+2; nothing else available
     }
 
     // Default T1 logic
@@ -2282,7 +2186,7 @@ export default function App({ authUser, onLogout }) {
       };
     }
     return dayAhead?.series;
-  }, [active, live, liveEffectiveDate, effectiveDate, dayAhead, liveActual, activeHorizon, liveT2, dayAheadT2]);
+  }, [active, live, liveEffectiveDate, effectiveDate, dayAhead, liveActual, activeHorizon, liveT2]);
 
   const dayAheadAdjustedBaseline = useMemo(() => {
     const base = dayAheadSeries?.baseline || [];
@@ -2932,7 +2836,7 @@ export default function App({ authUser, onLogout }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           date: exportDate,
-          region: selectedRegion || 'punjab',
+          region: selectedRegion || 'haryana',
           baseline_days: baselineDays || 7,
         }),
       });
@@ -3200,51 +3104,87 @@ export default function App({ authUser, onLogout }) {
         </div>
       )}
 
-      {/* Left Sidebar Navigation */}
-      <nav className="sidebar-nav">
-        <div className="sidebar-brand">GNA</div>
-        <div className="sidebar-links">
+      {/* Left Sidebar Navigation — redesigned, floating, collapsible */}
+      <nav className={`sidebar-nav sidebar-nav--v2 ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
+        <div className="sb-brand">
+          <div className="sb-brand-mark">
+            <Zap size={15} />
+          </div>
+          <div className="sb-brand-text">
+            <span className="sb-brand-title">VidyutPragya</span>
+            <span className="sb-brand-sub">Forecast OS</span>
+          </div>
+          <button
+            className="sb-collapse-btn"
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+          </button>
+        </div>
+
+        <div className="sb-section-label">Workspaces</div>
+        <div className="sb-links">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
+            const isActive = active === item.key;
             return (
               <button
                 key={item.key}
-                className={`sidebar-btn ${active === item.key ? 'active' : ''}`}
+                className={`sb-link ${isActive ? 'is-active' : ''}`}
                 onClick={() => setActive(item.key)}
-                data-tooltip={item.label}
                 title={item.label}
               >
-                <Icon size={18} />
+                <span className="sb-link-rail" />
+                <Icon size={15} className="sb-link-icon" />
+                <span className="sb-link-label">{item.label}</span>
               </button>
             );
           })}
         </div>
-        <div className="sidebar-bottom">
+
+        <div className="sb-bottom">
           {authUser && (
-            <div
-              className="sidebar-btn"
-              style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', cursor: 'default', lineHeight: 1.2, padding: '4px 2px' }}
-              title={authUser.email}
-            >
-              {authUser.username.slice(0, 6)}
+            <div className="sb-user" title={authUser.email}>
+              <div className="sb-user-avatar">
+                {(authUser.username || '?').slice(0, 1).toUpperCase()}
+              </div>
+              <div className="sb-user-meta">
+                <span className="sb-user-name">{authUser.username}</span>
+                <span className="sb-user-email">{authUser.email || 'signed in'}</span>
+              </div>
             </div>
           )}
           <button
-            className={`sidebar-btn ${active === 'settings' ? 'active' : ''}`}
+            className={`sb-link sb-link--small ${active === 'settings' ? 'is-active' : ''}`}
             onClick={() => setActive('settings')}
-            data-tooltip="Settings"
             title="Settings"
           >
-            <Settings size={18} />
+            <span className="sb-link-rail" />
+            <Settings size={14} className="sb-link-icon" />
+            <span className="sb-link-label">Settings</span>
           </button>
+          {onHome && (
+            <button
+              className="sb-link sb-link--small"
+              onClick={onHome}
+              title="Back to Home"
+              style={{ opacity: 0.7 }}
+            >
+              <span className="sb-link-rail" />
+              <LayoutGrid size={14} className="sb-link-icon" />
+              <span className="sb-link-label">Home</span>
+            </button>
+          )}
           <button
-            className="sidebar-btn"
+            className="sb-link sb-link--small sb-link--danger"
             onClick={onLogout}
-            data-tooltip="Sign Out"
             title={`Sign out (${authUser?.username || ''})`}
-            style={{ color: 'var(--muted)' }}
           >
-            <LogOut size={18} />
+            <span className="sb-link-rail" />
+            <LogOut size={14} className="sb-link-icon" />
+            <span className="sb-link-label">Sign out</span>
           </button>
         </div>
       </nav>
@@ -3404,22 +3344,6 @@ export default function App({ authUser, onLogout }) {
         )
       }
 
-      {active === 'optimizer' && (
-        <Suspense fallback={<ViewLoading label="Loading optimizer..." />}>
-          <OptimizerPage
-            dayAheadData={dayAhead}
-            dayAheadSeries={dayAheadSeries}
-            baselineWindowMapes={baselineWindowMapes}
-            baselineDays={baselineDays}
-            setBaselineDays={setBaselineDays}
-            availableActualBlocks={availableActualBlocks}
-            effectiveDate={effectiveDate}
-            horizon={activeHorizon}
-            setHorizon={setActiveHorizon}
-            t2Date={t2Date}
-          />
-        </Suspense>
-      )}
 
       {active === 'simulator' && (
         <Suspense fallback={<ViewLoading label="Loading simulator..." />}>
@@ -3459,6 +3383,8 @@ export default function App({ authUser, onLogout }) {
               horizon={activeHorizon}
               setHorizon={setActiveHorizon}
               t2Date={t2Date}
+              t2Loading={liveT2Loading}
+              forecastQuality={activeLive?.forecast_quality}
               chart={
                 <LoadChart
                   blocks={forecastPageBlocks}
@@ -3467,12 +3393,12 @@ export default function App({ authUser, onLogout }) {
                   actual={activeHorizon === 't1' ? liveActual : []}
                   p10={activeLive?.series?.p10 || []}
                   p90={activeLive?.series?.p90 || []}
-                  dateLabel={forecastPageDate || activeLive?.date || ''}
+                  dateLabel={forecastPageDate || (activeHorizon === 't2' ? (activeLive?.t2_date || '') : (activeLive?.date || ''))}
                 />
               }
               weatherStrip={
                 <WeatherStrip
-                  dayAhead={activeDayAhead || activeLive}
+                  dayAhead={activeHorizon === 't2' ? activeLive : (activeDayAhead || activeLive)}
                   live={activeLive}
                   fmt={fmt}
                 />
@@ -3481,8 +3407,9 @@ export default function App({ authUser, onLogout }) {
                 <ForecastTable
                   liveData={forecastPageRows}
                   forecastUncertainty={activeLive?.forecast_uncertainty}
-                  actualBlocks={activeLive?.metadata?.actual_blocks || actualBlocks}
+                  actualBlocks={activeHorizon === 't2' ? 0 : (activeLive?.metadata?.actual_blocks || actualBlocks)}
                   fmt={fmt}
+                  horizon={activeHorizon}
                 />
               }
             />
@@ -3492,7 +3419,13 @@ export default function App({ authUser, onLogout }) {
 
       {/* Simulator and Analysis handled above */}
 
-      {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} />}
+      {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} selectedRegion={selectedRegion} />}
+
+      {active === 'backtest' && (
+        <Suspense fallback={<ViewLoading label="Loading Backtest..." />}>
+          <BacktestPage selectedRegion={selectedRegion} />
+        </Suspense>
+      )}
 
       {active === 'similar_days' && (
         <Suspense fallback={<ViewLoading label="Loading Similar Days..." />}>

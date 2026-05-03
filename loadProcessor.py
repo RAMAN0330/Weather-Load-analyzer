@@ -1,9 +1,8 @@
-import os
-import warnings
-from typing import Optional, List, Tuple, Dict
 from datetime import date
+from typing import Tuple
+
 import pandas as pd
-from tabulate import tabulate
+
 
 class LoadDataProcessor:
     """Processes load demand data."""

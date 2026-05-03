@@ -7,9 +7,9 @@ Usage:
 On Linux/macOS you can also install uvloop (`pip install uvloop`) and it will
 be picked up automatically by uvicorn when loop="uvloop" is set.
 """
-import sys
-import os
 import asyncio
+import os
+import sys
 
 # On Windows, Python 3.8+ defaults to ProactorEventLoop which supports subprocesses
 # and overlapped I/O well. No change needed — just ensure it's set explicitly.

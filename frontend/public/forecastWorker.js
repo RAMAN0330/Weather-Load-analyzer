@@ -51,9 +51,7 @@ self.onmessage = function (e) {
         if (job.status === 'done') {
           clearInterval(_interval);
           _interval = null;
-          const resultRes = await fetch(
-            joinApi(apiBase, '/v2/forecast/job/' + jobId + '/result')
-          );
+          const resultRes = await fetch(joinApi(apiBase, '/v2/forecast/job/' + jobId + '/result'));
           if (!resultRes.ok) {
             self.postMessage({ type: 'error', message: 'Failed to fetch result' });
             return;

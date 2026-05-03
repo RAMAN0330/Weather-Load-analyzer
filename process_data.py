@@ -1,15 +1,15 @@
-import pandas as pd
-import numpy as np
-import os
-import holidays
-from datetime import date, datetime
 import warnings
-from typing import Tuple, List, Optional, Dict
+from datetime import date
+
+import holidays
+import numpy as np
+import pandas as pd
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 from weatherloadIntegrator import WeatherLoadIntegrator
+
 
 class LoadProcessor:
     """

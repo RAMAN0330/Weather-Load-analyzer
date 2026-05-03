@@ -8,13 +8,31 @@ import React from 'react';
  *   t2Date     : string like '2026-04-15' (disables T+2 button when absent)
  *   style      : optional container style overrides
  */
+const fmtT2Date = (iso) => {
+  if (!iso) return null;
+  try {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  } catch { return iso; }
+};
+
 export default function HorizonToggle({ horizon, setHorizon, t2Date, style }) {
   const t2Disabled = !t2Date;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 999, padding: '3px 4px', ...style }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 3,
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.10)',
+        borderRadius: 999,
+        padding: '3px 4px',
+        ...style,
+      }}
+    >
       {[
         { key: 't1', label: 'T+1' },
-        { key: 't2', label: t2Date ? `T+2 · ${t2Date}` : 'T+2' },
+        { key: 't2', label: t2Date ? `T+2 · ${fmtT2Date(t2Date)}` : 'T+2' },
       ].map(({ key, label }) => {
         const active = horizon === key;
         const disabled = key === 't2' && t2Disabled;

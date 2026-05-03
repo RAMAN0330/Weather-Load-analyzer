@@ -6,11 +6,11 @@ computes block-level MAPE, RMSE, peak-hour accuracy, and energy error.
 Results are stratified by season, day-type, weather regime, and time-of-day.
 """
 
+import logging
+from typing import Any, Dict, Optional
+
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Any
-from datetime import timedelta
-import logging
 
 logger = logging.getLogger(__name__)
 

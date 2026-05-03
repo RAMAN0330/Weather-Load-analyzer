@@ -1,21 +1,21 @@
-import logging
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import timedelta, datetime
 import json
-import plotly.utils
-from scipy import stats
-from scipy.signal import find_peaks
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import DBSCAN, KMeans
-from sklearn.linear_model import LinearRegression
-
+import logging
 import os
 import sys
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.utils
+from plotly.subplots import make_subplots
+from scipy import stats
+from scipy.signal import find_peaks
+from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 
 # ── Indian State → holidays library subdivision code ─────────────
 INDIAN_STATE_HOLIDAY_SUBDIV = {
@@ -166,31 +166,9 @@ class EDAEngine:
     def _load_data_static(data_path, region="haryana"):
         """Loads and preprocesses data with comprehensive feature engineering."""
         try:
-            def _read_csv_fast(path):
-                if _HAS_POLARS:
-                    try:
-                        df_pl = pl.read_csv(path, try_parse_dates=True)
-                        return df_pl.to_pandas()
-                    except Exception:
-                        pass
-                return pd.read_csv(path)
-
-            # Handle path resolution for different environments
-            if os.path.exists(data_path):
-                df = _read_csv_fast(data_path)
-            else:
-                # Fallback to local file
-                local_path = "final_data.csv"
-                if os.path.exists(local_path):
-                    df = _read_csv_fast(local_path)
-                elif os.path.exists(os.path.join("..", local_path)):
-                    df = _read_csv_fast(os.path.join("..", local_path))
-                elif sys.platform == "linux" and "C:" in data_path:
-                    # WSL path conversion
-                    wsl_path = data_path.replace("C:", "/mnt/c").replace("\\", "/")
-                    df = _read_csv_fast(wsl_path)
-                else:
-                    raise FileNotFoundError(f"Could not find file at {data_path}")
+            if not os.path.exists(data_path):
+                raise FileNotFoundError(f"Could not find file at {data_path}")
+            df = pd.read_csv(data_path)
             
             if "Datetime" in df.columns:
                 df['Datetime'] = pd.to_datetime(df['Datetime'])
@@ -1409,7 +1387,6 @@ class EDAEngine:
         kpis = {}
 
         # Common helpers
-        day_profile = df.groupby(['Date', 'time_block'])[feature].mean().reset_index()
         daily_avg = df.groupby('Date')[feature].mean()
         daily_max = df.groupby('Date')[feature].max()
         daily_min = df.groupby('Date')[feature].min()
@@ -1453,7 +1430,6 @@ class EDAEngine:
             daily_is_holiday = df.groupby('Date')['is_holiday'].max() if 'is_holiday' in df.columns else None
             daily_is_weekend = df.groupby('Date')['IsWeekend'].max()
             daily_days_to = df.groupby('Date')['days_to_holiday'].min() if 'days_to_holiday' in df.columns else None
-            daily_days_since = df.groupby('Date')['days_since_holiday'].min() if 'days_since_holiday' in df.columns else None
             daily_bridge = df.groupby('Date')['bridge_day_flag'].max() if 'bridge_day_flag' in df.columns else None
             daily_longwk = df.groupby('Date')['long_weekend_flag'].max() if 'long_weekend_flag' in df.columns else None
 
@@ -1463,7 +1439,6 @@ class EDAEngine:
             nonholiday_avg = daily[daily_is_holiday == 0].mean() if daily_is_holiday is not None else 0
 
             pre_holiday = daily[(daily_days_to == 1) & (daily_is_holiday == 0)].mean() if daily_days_to is not None else 0
-            post_holiday = daily[(daily_days_since >= 1) & (daily_days_since <= 3) & (daily_is_holiday == 0)].mean() if daily_days_since is not None else 0
             bridge = daily[daily_bridge == 1].mean() if daily_bridge is not None else 0
             long_wk = daily[daily_longwk == 1].mean() if daily_longwk is not None else 0
 
@@ -2214,8 +2189,6 @@ class EDAEngine:
         # --------------------------------------------------
         # Multi-variable regression: Load ~ Temperature + Humidity
         # We use residuals to isolate effects
-        metrics = {}
-        
         # Temperature & Humidity Elasticity
         if 'temperature' in df.columns and 'humidity' in df.columns:
             X = df[['temperature', 'humidity']].fillna(df[['temperature', 'humidity']].mean())
@@ -2387,14 +2360,6 @@ class EDAEngine:
                 })
 
         pdf = pd.DataFrame(pivot_data)
-        
-        # Color mapping for semantic bands
-        color_discrete_map = {
-            "Red": "#b35454",
-            "Orange": "#b97833",
-            "Amber": "#d4a373",
-            "Green": "#2f8f82"
-        }
 
         # Create Heatmap
         # We use a custom order for scenarios to ensure mental continuity
@@ -2452,7 +2417,6 @@ class EDAEngine:
             return {"error": "Load data required for deviation simulation."}
         
         base_load = df[feature].mean()
-        peak_load = df[feature].max()
 
         # 1. Calculate Driver Sensitivities
         # --------------------------------------------------
@@ -2497,7 +2461,6 @@ class EDAEngine:
             calendar_deviation += friday_surge_mw
 
         total_deviation_mw = weather_deviation + calendar_deviation
-        total_deviation_pct = (total_deviation_mw / base_load) * 100
 
         # 3. Peak Shift & Ramp Amplification
         # --------------------------------------------------
@@ -2820,7 +2783,6 @@ class EDAEngine:
     
     def export_chart_to_file(self, fig_json, filename="chart", format="png"):
         """Export chart to image file."""
-        import plotly.io as pio
         from plotly.graph_objects import Figure
         
         # Reconstruct figure from JSON

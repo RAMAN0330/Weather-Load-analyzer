@@ -18,7 +18,7 @@ const normalizeBase = (base: string, fallback = '/api', appendApi = true): strin
 export const API_BASE = normalizeBase(
   import.meta.env.VITE_DJANGO_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || '',
   '/api',
-  true,
+  true
 );
 
 /**

@@ -1,6 +1,8 @@
-import unittest
-from unittest.mock import patch
+import os
 import types
+import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -76,6 +78,70 @@ class TestShortTermFeatureEngineering(unittest.TestCase):
         self.assertTrue(required.issubset(set(prepared.columns)))
         latest_day = prepared[prepared["date"] == "2024-01-12"].sort_values("time_block").reset_index(drop=True)
         self.assertFalse(latest_day[list(required)].isna().any().any())
+
+    def test_prepare_training_can_apply_external_feature_module(self):
+        import backend.short_term_pipeline as stp
+
+        stub_path = str(Path(__file__).resolve().parent / "external_features_stub.py")
+        old_enabled = os.environ.get("SHORT_TERM_EXTERNAL_FEATURES_ENABLED")
+        old_path = os.environ.get("SHORT_TERM_EXTERNAL_FEATURES_PATH")
+        try:
+            os.environ["SHORT_TERM_EXTERNAL_FEATURES_ENABLED"] = "1"
+            os.environ["SHORT_TERM_EXTERNAL_FEATURES_PATH"] = stub_path
+
+            prepared = stp._prepare_training(_build_history())
+            self.assertIn("ext_temp2", prepared.columns)
+            self.assertIn("ext_heat_index_proxy", prepared.columns)
+
+            feats = stp._get_short_term_feature_columns(prepared)
+            self.assertIn("ext_temp2", feats)
+            self.assertIn("ext_heat_index_proxy", feats)
+
+            latest_day = prepared[prepared["date"] == "2024-01-12"].sort_values("time_block").reset_index(drop=True)
+            self.assertFalse(latest_day[["ext_temp2", "ext_heat_index_proxy"]].isna().any().any())
+        finally:
+            if old_enabled is None:
+                os.environ.pop("SHORT_TERM_EXTERNAL_FEATURES_ENABLED", None)
+            else:
+                os.environ["SHORT_TERM_EXTERNAL_FEATURES_ENABLED"] = old_enabled
+            if old_path is None:
+                os.environ.pop("SHORT_TERM_EXTERNAL_FEATURES_PATH", None)
+            else:
+                os.environ["SHORT_TERM_EXTERNAL_FEATURES_PATH"] = old_path
+
+    def test_run_short_term_pipeline_can_use_external_final_forecast(self):
+        from backend.short_term_pipeline import run_short_term_pipeline
+
+        stub_path = str(Path(__file__).resolve().parent / "external_final_forecast_stub.py")
+        old_enabled = os.environ.get("SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED")
+        old_path = os.environ.get("SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH")
+        try:
+            os.environ["SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED"] = "1"
+            os.environ["SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH"] = stub_path
+
+            df = _build_history(days=14)
+            result = run_short_term_pipeline(
+                df,
+                target_date="2024-01-14",
+                actual_blocks=0,
+                config={"weather_tune": False, "region": "punjab"},
+            )
+
+            forecast = np.asarray(result["series"]["forecast"], dtype=float)
+            self.assertEqual(forecast.size, 96)
+            self.assertAlmostEqual(float(forecast[0]), 2000.0, places=6)
+            self.assertAlmostEqual(float(forecast[-1]), 2095.0, places=6)
+            self.assertEqual(result["metadata"]["model_scope"], "external")
+            self.assertIn("external_final_forecast", result["metadata"])
+        finally:
+            if old_enabled is None:
+                os.environ.pop("SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED", None)
+            else:
+                os.environ["SHORT_TERM_EXTERNAL_FINAL_FORECAST_ENABLED"] = old_enabled
+            if old_path is None:
+                os.environ.pop("SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH", None)
+            else:
+                os.environ["SHORT_TERM_EXTERNAL_FINAL_FORECAST_PATH"] = old_path
 
     def test_prepare_inference_frame_uses_anchor_for_intraday_features(self):
         from backend.short_term_pipeline import _prepare_inference_frame
@@ -233,7 +299,7 @@ class TestEngineHolidayFeatures(unittest.TestCase):
 
 
 class TestT2Pipeline(unittest.TestCase):
-    def test_run_t2_pipeline_uses_t1_forecast_as_sequential_history(self):
+    def test_run_t2_pipeline_uses_lag7_actual_as_sequential_history(self):
         import backend.short_term_pipeline as stp
 
         df = _build_history(days=14)
@@ -289,7 +355,13 @@ class TestT2Pipeline(unittest.TestCase):
 
         self.assertEqual(len(seeded_t1), 96)
         self.assertEqual(len(seeded_t2), 96)
-        np.testing.assert_allclose(seeded_t1["total_drawal"].to_numpy(dtype=float), t1_forecast, atol=1e-6)
+        lag7_date = (pd.Timestamp(t1_date) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+        lag7_actual = (
+            df[df["date"].astype(str) == lag7_date]
+            .sort_values("time_block")["total_drawal"]
+            .to_numpy(dtype=float)
+        )
+        np.testing.assert_allclose(seeded_t1["total_drawal"].to_numpy(dtype=float), lag7_actual, atol=1e-6)
 
         tail_weights = np.exp(np.linspace(0.0, 1.0, 4))
         tail_weights /= tail_weights.sum()

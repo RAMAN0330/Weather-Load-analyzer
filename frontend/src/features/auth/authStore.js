@@ -13,7 +13,7 @@ const authUrl = (path) => `${DJANGO_BASE}/auth/${path}`;
 // Fires on any API 401 EXCEPT the auth/me validation call on boot
 // (that one handles its own 401 inside fetchMe).
 let _logoutFn = null;
-let _suppressInterceptor = false;   // true while fetchMe boot-check is running
+let _suppressInterceptor = false; // true while fetchMe boot-check is running
 
 axios.interceptors.response.use(
   (res) => res,
@@ -29,7 +29,7 @@ axios.interceptors.response.use(
 export const useAuthStore = create(
   persist(
     (set, get) => ({
-      user:  null,
+      user: null,
       token: null,
 
       isAuthenticated: () => !!get().token,
@@ -56,7 +56,9 @@ export const useAuthStore = create(
               {},
               { headers: { Authorization: `Bearer ${token}` }, timeout: 4000 }
             );
-          } catch (_) { /* ignore */ }
+          } catch (_) {
+            /* ignore */
+          }
         }
         delete axios.defaults.headers.common['Authorization'];
         set({ user: null, token: null });

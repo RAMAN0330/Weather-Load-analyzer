@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast Page — Layout Options</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0f1117; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px; }
+
+h1 { font-size: 18px; font-weight: 600; color: #f8fafc; margin-bottom: 6px; }
+.subtitle { font-size: 13px; color: #8A90A6; margin-bottom: 28px; }
+
+.options-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 32px; }
+
+.option-card {
+  border: 2px solid #1e2130;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #161a27;
+}
+.option-card:hover { border-color: #f97316; }
+.option-card.selected { border-color: #f97316; box-shadow: 0 0 0 3px rgba(249,115,22,0.2); }
+
+.option-label {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  background: #1a1f2e;
+  border-bottom: 1px solid #1e2130;
+}
+.option-badge {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: #f97316; color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; flex-shrink: 0;
+}
+.option-card.selected .option-badge { background: #f97316; }
+.option-name { font-size: 14px; font-weight: 600; color: #f8fafc; }
+.option-tag { font-size: 11px; color: #f97316; background: rgba(249,115,22,0.1); padding: 2px 8px; border-radius: 10px; margin-left: auto; }
+
+/* Mockup styles */
+.mock { padding: 12px; }
+
+/* KPI row */
+.kpi-row { display: flex; gap: 5px; margin-bottom: 8px; }
+.kpi-box {
+  flex: 1; background: #0f1117; border: 1px solid #1e2130;
+  border-radius: 6px; padding: 6px 8px;
+}
+.kpi-val { font-size: 13px; font-weight: 700; color: #f8fafc; }
+.kpi-lbl { font-size: 9px; color: #8A90A6; margin-top: 1px; }
+
+/* Chart */
+.chart-area {
+  background: #0f1117; border: 1px solid #1e2130;
+  border-radius: 6px; position: relative; overflow: hidden;
+}
+.chart-inner { padding: 8px; }
+.chart-label { font-size: 9px; color: #8A90A6; margin-bottom: 6px; display: flex; gap: 8px; }
+.chart-pill { background: rgba(249,115,22,0.15); color: #f97316; padding: 1px 6px; border-radius: 10px; font-size: 9px; }
+.chart-pill.blue { background: rgba(96,165,250,0.15); color: #60a5fa; }
+.chart-pill.gray { background: rgba(138,144,166,0.15); color: #8A90A6; }
+svg.chart-svg { width: 100%; height: 60px; }
+
+/* Option A: Inline panels */
+.panel-row { display: flex; gap: 5px; margin-top: 8px; }
+.panel-box {
+  flex: 1; background: #0f1117; border: 1px solid #1e2130;
+  border-radius: 6px; padding: 8px;
+}
+.panel-title { font-size: 9px; font-weight: 600; color: #f97316; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+.panel-item { font-size: 8px; color: #8A90A6; padding: 3px 0; border-bottom: 1px solid #1e2130; display: flex; justify-content: space-between; }
+.panel-item:last-child { border-bottom: none; }
+.panel-val { color: #22C55E; }
+.panel-val.warn { color: #F59E0B; }
+.panel-val.danger { color: #EF4444; }
+
+/* Option B: Right panel tabs */
+.b-layout { display: flex; gap: 8px; }
+.b-chart { flex: 1; }
+.b-panel { width: 110px; background: #0f1117; border: 1px solid #1e2130; border-radius: 6px; overflow: hidden; }
+.b-tabs { display: flex; flex-direction: column; }
+.b-tab { padding: 5px 8px; font-size: 8px; color: #8A90A6; border-bottom: 1px solid #1e2130; cursor: pointer; display: flex; justify-content: space-between; }
+.b-tab.active { background: rgba(249,115,22,0.1); color: #f97316; }
+.b-tab-count { background: #1a1f2e; border-radius: 10px; padding: 0 5px; font-size: 8px; }
+.b-content { padding: 8px; }
+.b-row { font-size: 8px; color: #8A90A6; padding: 3px 0; border-bottom: 1px solid #1e2130; display: flex; justify-content: space-between; }
+.b-row:last-child { border-bottom: none; }
+
+/* Option C: Operations dashboard */
+.c-top { display: flex; gap: 8px; margin-bottom: 8px; }
+.c-chart { flex: 1.6; }
+.c-side { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.c-widget {
+  flex: 1; background: #0f1117; border: 1px solid #1e2130;
+  border-radius: 6px; padding: 7px;
+}
+.c-widget-title { font-size: 8px; font-weight: 600; color: #f97316; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.c-driver-bar { height: 4px; background: #1e2130; border-radius: 2px; margin-bottom: 4px; position: relative; }
+.c-driver-bar-fill { height: 100%; border-radius: 2px; }
+.c-insight { font-size: 8px; color: #8A90A6; line-height: 1.4; }
+.c-bottom { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-top: 8px; }
+.c-mini { background: #0f1117; border: 1px solid #1e2130; border-radius: 6px; padding: 7px; }
+.c-mini-title { font-size: 8px; color: #8A90A6; margin-bottom: 3px; }
+.c-mini-val { font-size: 13px; font-weight: 700; color: #f8fafc; }
+.c-mini-sub { font-size: 8px; color: #8A90A6; margin-top: 1px; }
+
+.tag { font-size: 8px; padding: 1px 5px; border-radius: 8px; }
+.tag.green { background: rgba(34,197,94,0.15); color: #22C55E; }
+.tag.warn { background: rgba(245,158,11,0.15); color: #F59E0B; }
+
+.desc-box { padding: 12px 16px 14px; border-top: 1px solid #1e2130; background: #131624; }
+.desc-title { font-size: 12px; font-weight: 600; color: #f8fafc; margin-bottom: 6px; }
+.desc-text { font-size: 11px; color: #8A90A6; line-height: 1.6; }
+.desc-pros { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.pro { font-size: 10px; background: rgba(34,197,94,0.1); color: #22C55E; padding: 2px 8px; border-radius: 8px; }
+.con { font-size: 10px; background: rgba(239,68,68,0.1); color: #EF4444; padding: 2px 8px; border-radius: 8px; }
+
+.rec-badge {
+  display: inline-block; font-size: 10px; background: rgba(249,115,22,0.15);
+  color: #f97316; padding: 2px 8px; border-radius: 8px; margin-left: 8px;
+  font-weight: 600;
+}
+
+.footer { margin-top: 24px; padding: 16px; background: #161a27; border-radius: 10px; border: 1px solid #1e2130; }
+.footer p { font-size: 13px; color: #8A90A6; }
+.footer strong { color: #f8fafc; }
+</style>
+</head>
+<body>
+
+<h1>Forecast Page — Layout Redesign</h1>
+<p class="subtitle">Choose a layout direction. The current page has ~40% blank space below the chart. These options use it.</p>
+
+<div class="options-grid">
+
+  <!-- OPTION A -->
+  <div class="option-card" id="optA" onclick="select('optA')">
+    <div class="option-label">
+      <div class="option-badge">A</div>
+      <div class="option-name">Inline Preview Panels</div>
+    </div>
+    <div class="mock">
+      <!-- KPI row -->
+      <div class="kpi-row">
+        <div class="kpi-box"><div class="kpi-val">9,440</div><div class="kpi-lbl">Peak MW</div></div>
+        <div class="kpi-box"><div class="kpi-val">182K</div><div class="kpi-lbl">Energy MWh</div></div>
+        <div class="kpi-box"><div class="kpi-val">83%</div><div class="kpi-lbl">Coverage</div></div>
+        <div class="kpi-box"><div class="kpi-val" style="color:#22C55E">1.02%</div><div class="kpi-lbl">MAPE</div></div>
+        <div class="kpi-box"><div class="kpi-val">Clear</div><div class="kpi-lbl">Ramp</div></div>
+        <div class="kpi-box"><div class="kpi-val">858</div><div class="kpi-lbl">Driver Σ</div></div>
+      </div>
+      <!-- Full width chart -->
+      <div class="chart-area">
+        <div class="chart-inner">
+          <div class="chart-label">
+            <span class="chart-pill">Forecast</span>
+            <span class="chart-pill blue">Actual</span>
+            <span class="chart-pill gray">Persistence</span>
+          </div>
+          <svg class="chart-svg" viewBox="0 0 300 60">
+            <defs>
+              <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#f97316" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="#f97316" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path d="M0 30 C20 25,40 20,60 22 C80 24,100 35,120 38 C140 41,160 32,180 28 C200 24,220 26,240 27 C260 28,280 28,300 28" fill="none" stroke="#f97316" stroke-width="1.5"/>
+            <path d="M0 30 C20 25,40 20,60 22 C80 24,100 35,120 38 C140 41,160 32,180 28 C200 24,220 26,240 27 C260 28,280 28,300 28 L300 60 L0 60Z" fill="url(#gA)"/>
+            <path d="M0 28 C20 23,40 18,60 20 C80 22,100 33,120 36" fill="none" stroke="#60a5fa" stroke-width="1.2" stroke-dasharray="3,2"/>
+          </svg>
+        </div>
+      </div>
+      <!-- Inline panels below chart -->
+      <div class="panel-row">
+        <div class="panel-box">
+          <div class="panel-title">▲ Top Drivers</div>
+          <div class="panel-item"><span>Temperature</span><span class="panel-val">+312 MW</span></div>
+          <div class="panel-item"><span>Day-of-week</span><span class="panel-val">+180 MW</span></div>
+          <div class="panel-item"><span>Holiday</span><span class="panel-val warn">-240 MW</span></div>
+        </div>
+        <div class="panel-box">
+          <div class="panel-title">⚡ Risk Signals</div>
+          <div class="panel-item"><span>B61 — Ramp risk</span><span class="panel-val warn">Medium</span></div>
+          <div class="panel-item"><span>B72 — Uncertainty</span><span class="panel-val">Low</span></div>
+          <div class="panel-item"><span>B85 — Deviation</span><span class="panel-val danger">High</span></div>
+        </div>
+        <div class="panel-box">
+          <div class="panel-title">✦ Intelligence</div>
+          <div class="panel-item" style="flex-direction:column; gap:2px; border:none; padding:0;">
+            <span style="color:#f8fafc; font-size:8px;">Monsoon onset expected</span>
+            <span style="color:#8A90A6; font-size:8px; line-height:1.4;">Load suppression likely in evening blocks due to cloud cover.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="desc-box">
+      <div class="desc-title">Inline Preview Panels</div>
+      <div class="desc-text">Full-width chart stays the hero. Drivers, signals, and intelligence show live previews below it — click any panel to open the full overlay modal.</div>
+      <div class="desc-pros">
+        <span class="pro">No blank space</span>
+        <span class="pro">At-a-glance data</span>
+        <span class="pro">Minimal change to existing layout</span>
+        <span class="con">More vertical scroll</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPTION B -->
+  <div class="option-card" id="optB" onclick="select('optB')">
+    <div class="option-label">
+      <div class="option-badge">B</div>
+      <div class="option-name">Tabbed Side Panel <span class="option-tag">Recommended</span></div>
+    </div>
+    <div class="mock">
+      <div class="kpi-row">
+        <div class="kpi-box"><div class="kpi-val">9,440</div><div class="kpi-lbl">Peak MW</div></div>
+        <div class="kpi-box"><div class="kpi-val">182K</div><div class="kpi-lbl">Energy MWh</div></div>
+        <div class="kpi-box"><div class="kpi-val">83%</div><div class="kpi-lbl">Coverage</div></div>
+        <div class="kpi-box"><div class="kpi-val" style="color:#22C55E">1.02%</div><div class="kpi-lbl">MAPE</div></div>
+        <div class="kpi-box"><div class="kpi-val">Clear</div><div class="kpi-lbl">Ramp</div></div>
+        <div class="kpi-box"><div class="kpi-val">858</div><div class="kpi-lbl">Driver Σ</div></div>
+      </div>
+      <div class="b-layout">
+        <div class="b-chart">
+          <div class="chart-area" style="height:100%">
+            <div class="chart-inner">
+              <div class="chart-label">
+                <span class="chart-pill">Forecast</span>
+                <span class="chart-pill blue">Actual</span>
+                <span class="chart-pill gray">Persistence</span>
+              </div>
+              <svg class="chart-svg" viewBox="0 0 200 60" style="height:75px">
+                <defs>
+                  <linearGradient id="gB" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f97316" stop-opacity="0.3"/>
+                    <stop offset="100%" stop-color="#f97316" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 30 C15 25,30 20,45 22 C60 24,75 35,90 38 C105 41,120 32,135 28 C150 24,165 26,180 27 C190 28,195 28,200 28" fill="none" stroke="#f97316" stroke-width="1.5"/>
+                <path d="M0 30 C15 25,30 20,45 22 C60 24,75 35,90 38 C105 41,120 32,135 28 C150 24,165 26,180 27 C190 28,195 28,200 28 L200 60 L0 60Z" fill="url(#gB)"/>
+                <path d="M0 28 C15 23,30 18,45 20 C60 22,75 33,90 36" fill="none" stroke="#60a5fa" stroke-width="1.2" stroke-dasharray="3,2"/>
+              </svg>
+              <div style="font-size:9px; color:#8A90A6; margin-top:6px;">
+                Peak 00:15 · 9,440 MW &nbsp;|&nbsp; Health <span style="color:#22C55E">1.02% MAPE</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Tabbed panel replaces button column -->
+        <div class="b-panel">
+          <div class="b-tabs">
+            <div class="b-tab active">Drivers <span class="b-tab-count">3</span></div>
+            <div class="b-tab">Signals <span class="b-tab-count">96</span></div>
+            <div class="b-tab">Intelligence <span class="b-tab-count">1</span></div>
+            <div class="b-tab">Similar Days <span class="b-tab-count">0</span></div>
+            <div class="b-tab">Block Table <span class="b-tab-count">96</span></div>
+            <div class="b-tab">Context <span class="b-tab-count">83%</span></div>
+          </div>
+          <div class="b-content">
+            <div class="b-row"><span>Temperature</span><span style="color:#22C55E">+312</span></div>
+            <div class="b-row"><span>Day-of-week</span><span style="color:#22C55E">+180</span></div>
+            <div class="b-row"><span>Holiday</span><span style="color:#EF4444">-240</span></div>
+            <div style="margin-top:6px; font-size:8px; color:#8A90A6;">MW contribution</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="desc-box">
+      <div class="desc-title">Tabbed Side Panel <span class="rec-badge">Our Recommendation</span></div>
+      <div class="desc-text">Replaces the 7 floating icon buttons with a proper tabbed panel that shows content inline. The chart gets slightly narrower but the page becomes a proper operations dashboard — no overlays needed for quick checks.</div>
+      <div class="desc-pros">
+        <span class="pro">Operations dashboard feel</span>
+        <span class="pro">No blank space</span>
+        <span class="pro">Data always visible</span>
+        <span class="con">Chart slightly narrower</span>
+        <span class="con">More layout work</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPTION C -->
+  <div class="option-card" id="optC" onclick="select('optC')">
+    <div class="option-label">
+      <div class="option-badge">C</div>
+      <div class="option-name">Operations Command Centre</div>
+    </div>
+    <div class="mock">
+      <div class="kpi-row">
+        <div class="kpi-box"><div class="kpi-val">9,440</div><div class="kpi-lbl">Peak MW</div></div>
+        <div class="kpi-box"><div class="kpi-val">182K</div><div class="kpi-lbl">Energy MWh</div></div>
+        <div class="kpi-box"><div class="kpi-val">83%</div><div class="kpi-lbl">Coverage</div></div>
+        <div class="kpi-box"><div class="kpi-val" style="color:#22C55E">1.02%</div><div class="kpi-lbl">MAPE</div></div>
+        <div class="kpi-box"><div class="kpi-val">Clear</div><div class="kpi-lbl">Ramp</div></div>
+        <div class="kpi-box"><div class="kpi-val">858</div><div class="kpi-lbl">Driver Σ</div></div>
+      </div>
+      <!-- Chart + right widgets -->
+      <div class="c-top">
+        <div class="c-chart">
+          <div class="chart-area">
+            <div class="chart-inner">
+              <div class="chart-label">
+                <span class="chart-pill">Forecast</span>
+                <span class="chart-pill blue">Actual</span>
+              </div>
+              <svg class="chart-svg" viewBox="0 0 180 60">
+                <defs>
+                  <linearGradient id="gC" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#f97316" stop-opacity="0.3"/>
+                    <stop offset="100%" stop-color="#f97316" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 30 C12 25,25 20,38 22 C50 24,62 35,75 38 C88 41,100 32,112 28 C125 24,137 26,150 27 C162 28,170 28,180 28" fill="none" stroke="#f97316" stroke-width="1.5"/>
+                <path d="M0 30 C12 25,25 20,38 22 C50 24,62 35,75 38 C88 41,100 32,112 28 C125 24,137 26,150 27 C162 28,170 28,180 28 L180 60 L0 60Z" fill="url(#gC)"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <!-- Right column widgets -->
+        <div class="c-side">
+          <div class="c-widget">
+            <div class="c-widget-title">▲ Drivers</div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:#8A90A6;margin-bottom:3px;"><span>Temperature</span><span style="color:#22C55E">+312</span></div>
+            <div class="c-driver-bar"><div class="c-driver-bar-fill" style="width:70%;background:#22C55E"></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:#8A90A6;margin-bottom:3px;"><span>Day-of-week</span><span style="color:#22C55E">+180</span></div>
+            <div class="c-driver-bar"><div class="c-driver-bar-fill" style="width:42%;background:#22C55E"></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;color:#8A90A6;margin-bottom:3px;"><span>Holiday</span><span style="color:#EF4444">-240</span></div>
+            <div class="c-driver-bar"><div class="c-driver-bar-fill" style="width:55%;background:#EF4444"></div></div>
+          </div>
+          <div class="c-widget">
+            <div class="c-widget-title">✦ Intelligence</div>
+            <div class="c-insight">Monsoon onset expected. Load suppression in evening blocks. Temperature trending below seasonal norm.</div>
+          </div>
+        </div>
+      </div>
+      <!-- Bottom mini stat row -->
+      <div class="c-bottom">
+        <div class="c-mini">
+          <div class="c-mini-title">Risk Signals</div>
+          <div class="c-mini-val">96</div>
+          <div class="c-mini-sub"><span class="tag warn">3 High priority</span></div>
+        </div>
+        <div class="c-mini">
+          <div class="c-mini-title">Similar Days</div>
+          <div class="c-mini-val">0</div>
+          <div class="c-mini-sub"><span class="tag" style="background:rgba(138,144,166,0.1);color:#8A90A6">None matched</span></div>
+        </div>
+        <div class="c-mini">
+          <div class="c-mini-title">Engine Health</div>
+          <div class="c-mini-val" style="color:#22C55E">Good</div>
+          <div class="c-mini-sub"><span class="tag green">1.02% MAPE</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="desc-box">
+      <div class="desc-title">Operations Command Centre</div>
+      <div class="desc-text">Most ambitious redesign. Chart + live driver bars + intelligence note in the top row. A mini-stat strip at the bottom for signals, similar days, health. True command-centre feel.</div>
+      <div class="desc-pros">
+        <span class="pro">Most information-dense</span>
+        <span class="pro">Professional client feel</span>
+        <span class="con">Most dev work</span>
+        <span class="con">Chart gets smaller</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <p><strong>Note on backtest 404:</strong> This is a separate code-level bug (the API URL is being constructed as <code>/api/api/v2/backtest</code> instead of <code>/api/v2/backtest</code>). It's a one-line fix in <code>BacktestPage.jsx</code> and doesn't affect which layout you choose. We'll fix it regardless.</p>
+</div>
+
+<script>
+function select(id) {
+  document.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById(id).classList.add('selected');
+  const names = { optA: 'A - Inline Preview Panels', optB: 'B - Tabbed Side Panel', optC: 'C - Operations Command Centre' };
+  if (window.recordChoice) window.recordChoice(id.replace('opt','').toLowerCase(), names[id]);
+}
+</script>
+</body>
+</html>

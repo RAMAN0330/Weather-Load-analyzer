@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev default-libmysqlclient-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt gunicorn mysqlclient
+
+COPY django_api/ ./django_api/
+COPY backend/ ./backend/
+COPY config.py .
+
+ENV DJANGO_SETTINGS_MODULE=django_api.django_api.settings
+ENV PORT=8001
+EXPOSE 8001
+
+WORKDIR /app/django_api
+CMD ["gunicorn", "django_api.wsgi:application", "--bind", "0.0.0.0:8001", "--workers", "2", "--timeout", "120"]

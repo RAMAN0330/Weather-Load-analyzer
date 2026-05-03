@@ -1,0 +1,15 @@
+node_modules
+frontend/node_modules
+frontend/dist
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.git
+.env
+exports/
+reports/
+docs/
+*.xlsx
+*.csv
+backend/artifacts/

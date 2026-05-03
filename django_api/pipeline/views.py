@@ -14,17 +14,24 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
-from django.http import HttpResponse
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from django.http import HttpResponse, JsonResponse
+from django.views import View
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
-from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .db_utils import (
-    TABLE_MAP, fetch_rows, fetch_states, fetch_table_counts,
-    fetch_count, fetch_date_range, upsert_rows, raw_query,
+    TABLE_MAP,
+    fetch_count,
+    fetch_date_range,
+    fetch_rows,
+    fetch_states,
+    fetch_table_counts,
+    raw_query,
+    upsert_rows,
 )
-
 
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
@@ -218,8 +225,14 @@ class BulkUpsertView(APIView):
 
 # ── FastAPI compatibility gateway for unported compute-only tools ────────────
 
-class FastApiProxyView(APIView):
-    """Route legacy simulator/compute endpoints through Django without moving ML training."""
+@method_decorator(csrf_exempt, name="dispatch")
+class FastApiProxyView(View):
+    """Route legacy simulator/compute endpoints through Django without moving ML training.
+
+    Uses plain Django View (not DRF APIView) because the response is already
+    pre-rendered by FastAPI — we just stream bytes through, so DRF's renderer
+    negotiation would mis-fire with 'accepted_renderer not set'.
+    """
 
     def dispatch(self, request, *args, **kwargs):
         prefix = (kwargs.get("prefix") or "").strip("/")
@@ -241,17 +254,19 @@ class FastApiProxyView(APIView):
                 params=request.GET,
                 data=request.body if request.method not in ("GET", "HEAD") else None,
                 headers=headers,
-                timeout=180,
+                timeout=600,
             )
         except requests.RequestException as exc:
-            return Response({"detail": f"FastAPI compatibility route failed: {exc}"}, status=502)
+            return JsonResponse(
+                {"detail": f"FastAPI compatibility route failed: {exc}"},
+                status=502,
+            )
 
-        response = HttpResponse(
+        return HttpResponse(
             upstream.content,
             status=upstream.status_code,
             content_type=upstream.headers.get("Content-Type", "application/json"),
         )
-        return response
 
 
 # ── Django app API (fast, no model training) ─────────────────────────────────
@@ -551,9 +566,12 @@ class PipelineWeatherCompatView(APIView):
     table_key = "weather_mean"
 
     def get(self, request, state):
-        days = int(request.query_params.get("days", 60))
-        from_date = _from_date_for_days(state.upper(), self.table_key, days)
-        rows = fetch_rows(self.table_key, state.upper(), from_date=from_date, limit=200_000)
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+        if not from_date:
+            days = int(request.query_params.get("days", 60))
+            from_date = _from_date_for_days(state.upper(), self.table_key, days)
+        rows = fetch_rows(self.table_key, state.upper(), from_date=from_date, to_date=to_date, limit=200_000)
         return Response(_clean_json(rows))
 
 
@@ -561,12 +579,34 @@ class PipelineWeatherLocCompatView(PipelineWeatherCompatView):
     table_key = "weather_loc"
 
 
+class PipelineCircleImpactCompatView(APIView):
+    """Circle-impact analytics stub.
+
+    The full feature derives per-circle load sensitivity from SLDC feeder data.
+    Until that pipeline is wired up, this returns an empty-but-valid shape so
+    the frontend renders 'no data yet' instead of a 404 error.
+    """
+
+    def get(self, request, state):
+        return Response({
+            "state": state.upper(),
+            "days": int(request.query_params.get("days", 365)),
+            "circles": [],
+            "impact": [],
+            "available": False,
+            "message": "Circle impact analytics not yet configured for this state.",
+        })
+
+
 class PipelineLoadCompatView(APIView):
     def get(self, request, state):
-        days = int(request.query_params.get("days", 60))
         state = state.upper()
-        from_date = _from_date_for_days(state, "load", days)
-        rows = fetch_rows("load", state, from_date=from_date, limit=200_000)
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+        if not from_date:
+            days = int(request.query_params.get("days", 60))
+            from_date = _from_date_for_days(state, "load", days)
+        rows = fetch_rows("load", state, from_date=from_date, to_date=to_date, limit=200_000)
         out = []
         for row in rows:
             out.append({
@@ -579,16 +619,57 @@ class PipelineLoadCompatView(APIView):
 
 class PipelineForecastCompatView(APIView):
     def get(self, request, state):
-        days = int(request.query_params.get("days", 60))
         state = state.upper()
-        from_date = _from_date_for_days(state, "forecast", days)
-        rows = fetch_rows("forecast", state, from_date=from_date, limit=200_000, order_by="date, block")
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+        if not from_date:
+            days = int(request.query_params.get("days", 60))
+            from_date = _from_date_for_days(state, "forecast", days)
+        rows = fetch_rows("forecast", state, from_date=from_date, to_date=to_date, limit=200_000, order_by="date, block")
         out = []
         for row in rows:
             out.append({
                 "date": _date_str(row.get("date")),
                 "time_block": _block_no(row),
                 "forecasted": _first_value(row, FORECAST_ALIASES),
+            })
+        return Response(_clean_json(out))
+
+
+class PipelineSldcCompatView(APIView):
+    def get(self, request, state):
+        state = state.upper()
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+        if not from_date:
+            days = int(request.query_params.get("days", 60))
+            from_date = _from_date_for_days(state, "sldc", days)
+        rows = fetch_rows("sldc", state, from_date=from_date, to_date=to_date, limit=200_000)
+        out = []
+        for row in rows:
+            out.append({
+                "date": _date_str(row.get("date")),
+                "time_block": _block_no(row),
+                "actual": _first_value(row, LOAD_ALIASES),
+            })
+        return Response(_clean_json(out))
+
+
+class PipelineSldcForecastCompatView(APIView):
+    def get(self, request, state):
+        state = state.upper()
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+        if not from_date:
+            days = int(request.query_params.get("days", 60))
+            from_date = _from_date_for_days(state, "sldc_forecast", days)
+        rows = fetch_rows("sldc_forecast", state, from_date=from_date, to_date=to_date, limit=200_000)
+        out = []
+        for row in rows:
+            out.append({
+                "date": _date_str(row.get("date")),
+                "time_block": _block_no(row),
+                "forecast": _first_value(row, FORECAST_ALIASES),
             })
         return Response(_clean_json(out))
 

@@ -2,17 +2,43 @@ import React, { useMemo, useState } from 'react';
 import {
     Activity,
     AlertCircle,
-    BarChart3,
     CalendarDays,
-    Download,
+    Layers,
+    Sparkles,
     Table2,
     TrendingUp,
     Wind,
     X,
-    Zap
+    Zap,
 } from 'lucide-react';
-import HorizonToggle from "../../components/HorizonToggle";
+import HorizonToggle from '../../components/HorizonToggle';
+import { EmptyState, StatList } from '../../components/page/PagePrimitives.jsx';
 
+/* ── colour tokens (mirrors WeatherDeepPage C object) ─────────────────────── */
+const C = {
+    bg:       'var(--bg)',
+    card:     'var(--bg-elevated)',
+    surface:  'var(--bg-surface)',
+    border:   'var(--outline)',
+    accent:   'var(--accent)',
+    accent2:  'var(--accent2)',
+    text:     'var(--text)',
+    sub:      'var(--text-secondary)',
+    muted:    'var(--text-muted)',
+    green:    'var(--success)',
+    red:      'var(--danger)',
+    warn:     'var(--warning)',
+    _accent:  '#F07825',
+    _accent2: '#5B9FE4',
+    _text:    '#ECEEF3',
+    _sub:     '#A0A5B8',
+    _muted:   '#6B7186',
+    _border:  '#2A292F',
+    _card:    '#1A191E',
+    _green:   '#34D399',
+    _red:     '#F87171',
+    _warn:    '#FBBF24',
+};
 
 interface ForecastPageProps {
     liveData: any;
@@ -29,539 +55,590 @@ interface ForecastPageProps {
     horizon: 't1' | 't2';
     setHorizon: (h: 't1' | 't2') => void;
     t2Date?: string;
+    t2Loading?: boolean;
     weatherStrip?: React.ReactNode;
     forecastTable?: React.ReactNode;
+    forecastQuality?: { engine?: string; degraded?: boolean; bias_correction_applied?: boolean | null; calibration_applied?: boolean | null; spline_applied?: boolean | null; similar_day_baseline_valid?: boolean } | null;
 }
 
-type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | 'preview' | 'similar_days' | null;
+type OverlayKey = 'intelligence' | 'drivers' | 'signals' | 'logs' | 'weather' | 'table' | 'similar_days' | 'context' | null;
 
 const blockTime = (block: number) => {
-    const minutes = Math.max(0, block - 1) * 15;
-    const h = String(Math.floor(minutes / 60)).padStart(2, '0');
-    const m = String(minutes % 60).padStart(2, '0');
-    return `${h}:${m}`;
+    const m = Math.max(0, block - 1) * 15;
+    return `${String(Math.floor(m / 60)).padStart(2,'0')}:${String(m % 60).padStart(2,'0')}`;
 };
 
-const titleCase = (value: string) =>
-    String(value || '')
-        .replace(/[_-]+/g, ' ')
-        .replace(/\b\w/g, (m) => m.toUpperCase());
+const titleCase = (v: string) =>
+    String(v || '').replace(/[_-]+/g,' ').replace(/\b\w/g, m => m.toUpperCase());
 
-const tone = (value: string) => {
-    if (['high', 'warning', 'critical'].includes(value)) return 'high';
-    if (value === 'medium') return 'medium';
+const tone = (v: string) => {
+    if (['high','warning','critical'].includes(v)) return 'high';
+    if (v === 'medium') return 'medium';
     return 'low';
 };
 
-const DetailOverlay = ({
-    open,
-    title,
-    subtitle,
-    onClose,
-    children
-}: {
-    open: boolean;
-    title: string;
-    subtitle?: string;
-    onClose: () => void;
-    children: React.ReactNode;
-}) => {
+/* ── Metric Card — exact same style as WeatherDeepPage ──────────────────── */
+function MetricCard({ label, value, unit, delta, deltaColor, sub, color, extra }: {
+    label: string; value: any; unit?: string; delta?: any;
+    deltaColor?: string; sub?: string; color?: string; extra?: React.ReactNode;
+}) {
+    const dColor = deltaColor || C._muted;
+    return (
+        <div style={{
+            minHeight: 110,
+            padding: '16px 18px',
+            background: 'linear-gradient(180deg, rgba(32,31,37,0.96), rgba(26,25,30,0.98))',
+            borderRadius: 14,
+            border: `1px solid ${C._border}`,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            gap: 8,
+        }}>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.5, color: C._muted }}>
+                {label}
+            </div>
+            <div>
+                <div style={{ fontSize: 26, fontWeight: 700, color: color || C._text, lineHeight: 1.05 }}>
+                    {value}
+                    {unit && <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.6, marginLeft: 3 }}>{unit}</span>}
+                </div>
+                {delta != null && (
+                    <div style={{ fontSize: 10, color: dColor, marginTop: 5, fontWeight: 600 }}>
+                        {delta}
+                    </div>
+                )}
+            </div>
+            {(sub || extra) && (
+                <div>
+                    {sub && <div style={{ fontSize: 10, color: C._muted, lineHeight: 1.45 }}>{sub}</div>}
+                    {extra}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* ── Modal overlay ───────────────────────────────────────────────────────── */
+function Overlay({ open, title, subtitle, onClose, children }: {
+    open: boolean; title: string; subtitle?: string; onClose: () => void; children: React.ReactNode;
+}) {
     if (!open) return null;
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content fp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-content fp-modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <div>
                         <h3>{title}</h3>
                         {subtitle && <p className="fp-modal-subtitle">{subtitle}</p>}
                     </div>
-                    <button type="button" aria-label="Close overlay" onClick={onClose}>
-                        <X size={18} />
-                    </button>
+                    <button type="button" aria-label="Close" onClick={onClose}><X size={18} /></button>
                 </div>
                 <div className="modal-body">{children}</div>
             </div>
         </div>
     );
-};
+}
 
-const KpiCard = ({
-    eyebrow,
-    title,
-    value,
-    unit,
-    tone = '#ECEEF3',
-    detail,
-    footer,
-    icon
-}: {
-    eyebrow: string;
-    title: string;
-    value: string;
-    unit?: string;
-    tone?: string;
-    detail?: string;
-    footer?: string;
-    icon?: React.ReactNode;
-}) => (
-    <div
-        className="fp-kpi-card"
-        style={{
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            padding: '16px 18px',
-            gap: '8px',
-            minHeight: '132px',
-            background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
-            borderRadius: '14px',
-            border: '1px solid #2A292F',
-            boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
-            position: 'relative'
-        }}
-    >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontSize: '11px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{eyebrow}</div>
-            {icon && <div style={{ opacity: 0.7, color: 'var(--text-secondary)' }}>{icon}</div>}
-        </div>
-        <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>{title}</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '30px', lineHeight: 1, fontWeight: 700, color: tone }}>{value}</span>
-                {unit ? <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{unit}</span> : null}
-            </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {detail ? <div style={{ fontSize: '12px', color: 'var(--text)' }}>{detail}</div> : null}
-            {footer ? <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{footer}</div> : null}
-        </div>
-    </div>
-);
+/* ── Tab pill button (matches weather page pill style) ───────────────────── */
+function TabPill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button
+            onClick={onClick}
+            style={{
+                flex: '0 0 auto',
+                padding: '7px 14px',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                borderRadius: 999,
+                background: active ? `${C._accent}18` : 'transparent',
+                color: active ? C._accent : C._muted,
+                transition: 'all 0.15s',
+            }}
+        >
+            {children}
+        </button>
+    );
+}
 
+/* ── Panel button (matches weather page "Open X" buttons) ────────────────── */
+function PanelBtn({ onClick, children, count, countColor }: {
+    onClick: () => void; children: React.ReactNode; count?: any; countColor?: string;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '6px 11px',
+                background: 'transparent',
+                border: `1px solid ${C._border}`,
+                borderRadius: 8,
+                color: C._sub,
+                fontSize: 10,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = C._accent; (e.currentTarget as HTMLElement).style.color = C._text; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = C._border; (e.currentTarget as HTMLElement).style.color = C._sub; }}
+        >
+            {children}
+            {count != null && (
+                <span style={{
+                    fontSize: 9, fontWeight: 700,
+                    padding: '1px 5px', borderRadius: 8,
+                    background: countColor ? `${countColor}20` : 'rgba(255,255,255,0.08)',
+                    color: countColor || C._muted,
+                }}>
+                    {count}
+                </span>
+            )}
+        </button>
+    );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+   ═══════════════════════════════════════════════════════════════════════════ */
 export default function ForecastPage({
-    liveData,
-    liveMeta,
-    driverContributions,
-    decisionSignals = [],
-    effectiveDate,
-    selectedRegion,
-    onRefresh,
-    onDownload,
-    canDownload = true,
-    fmt,
-    chart,
-    horizon,
-    setHorizon,
-    t2Date,
-    weatherStrip,
-    forecastTable
+    liveData, liveMeta, driverContributions, decisionSignals = [],
+    effectiveDate, selectedRegion, onRefresh, onDownload, canDownload = true,
+    fmt, chart, horizon, setHorizon, t2Date, t2Loading = false,
+    weatherStrip, forecastTable, forecastQuality,
 }: ForecastPageProps) {
-    const [activeOverlay, setActiveOverlay] = useState<OverlayKey>(null);
-    const forecastHorizon = horizon;
+    const [overlay, setOverlay] = useState<OverlayKey>(null);
     const rows = useMemo(() => (Array.isArray(liveData) ? liveData : []), [liveData]);
 
+    /* ─── Derived ─────────────────────────────────────────────────────────── */
     const summary = useMemo(() => {
         if (!rows.length) return null;
         const actuals = rows.filter((d: any) => d.actual_mw != null && d.actual_mw > 0);
-        const lastActualRow = actuals[actuals.length - 1];
-        const peakRow = rows.reduce(
-            (best: any, row: any) => ((row?.forecast_mw || 0) > (best?.forecast_mw || 0) ? row : best),
-            rows[0]
-        );
-        const energy = rows.reduce((acc: number, d: any) => acc + Number(d?.forecast_mw || 0), 0) * 0.25;
+        const last = actuals[actuals.length - 1];
+        const peak = rows.reduce((b: any, r: any) => (r?.forecast_mw||0) > (b?.forecast_mw||0) ? r : b, rows[0]);
+        const energy = rows.reduce((s: number, d: any) => s + Number(d?.forecast_mw||0), 0) * 0.25;
         return {
-            lastActual: Number(lastActualRow?.actual_mw || 0),
-            lastBlock: Number(lastActualRow?.block_number || 0),
-            peak: Number(peakRow?.forecast_mw || 0),
-            peakBlock: Number(peakRow?.block_number || 1),
-            peakTime: peakRow?.time || blockTime(Number(peakRow?.block_number || 1)),
+            peak: Number(peak?.forecast_mw||0),
+            peakBlock: Number(peak?.block_number||1),
+            peakTime: peak?.time || blockTime(Number(peak?.block_number||1)),
             energy,
-            actualCoverage: Math.round((Number(lastActualRow?.block_number || 0) / 96) * 100)
+            actualCoverage: Math.round((Number(last?.block_number||0)/96)*100),
         };
     }, [rows]);
 
-    const activeSummary = summary;
-
-    // Ramp Risk: flag if max forecast ramp in next 6 blocks exceeds 150 MW (state ramp limit proxy)
     const rampRisk = useMemo(() => {
-        if (!rows.length) return { level: 'none', maxRamp: 0, atBlock: null };
-        const nowBlock = rows.findIndex((r: any) => r.actual_mw == null || r.actual_mw <= 0);
-        const lookAhead = rows.slice(Math.max(0, nowBlock), nowBlock + 6);
-        if (lookAhead.length < 2) return { level: 'none', maxRamp: 0, atBlock: null };
-        let maxRamp = 0;
-        let atBlock: number | null = null;
-        for (let i = 1; i < lookAhead.length; i++) {
-            const ramp = Math.abs((lookAhead[i].forecast_mw || 0) - (lookAhead[i - 1].forecast_mw || 0));
-            if (ramp > maxRamp) { maxRamp = ramp; atBlock = lookAhead[i].block_number; }
+        if (!rows.length) return { level: 'none', maxRamp: 0, atBlock: null as number|null };
+        const start = rows.findIndex((r: any) => r.actual_mw == null || r.actual_mw <= 0);
+        const slice = rows.slice(start === -1 ? rows.length : start, (start === -1 ? rows.length : start) + 6);
+        if (slice.length < 2) return { level: 'none', maxRamp: 0, atBlock: null };
+        let max = 0, atBlock: number|null = null;
+        for (let i = 1; i < slice.length; i++) {
+            const r = Math.abs((slice[i].forecast_mw||0)-(slice[i-1].forecast_mw||0));
+            if (r > max) { max = r; atBlock = slice[i].block_number; }
         }
-        const level = maxRamp > 200 ? 'alert' : maxRamp > 150 ? 'caution' : 'none';
-        return { level, maxRamp: Math.round(maxRamp), atBlock };
+        return { level: max>200?'alert':max>150?'caution':'none', maxRamp: Math.round(max), atBlock };
     }, [rows]);
 
-    // Actuals coverage: elapsed blocks with actual readings
-    const actualsCoverage = useMemo(() => {
-        if (!rows.length) return { elapsed: 0, total: 96, pct: 0, energyMWh: 0 };
-        const withActuals = rows.filter((r: any) => r.actual_mw != null && r.actual_mw > 0);
-        const elapsed = withActuals.length;
-        const energyMWh = withActuals.reduce((acc: number, r: any) => acc + Number(r.actual_mw || 0) * 0.25, 0);
-        return { elapsed, total: 96, pct: Math.round((elapsed / 96) * 100), energyMWh };
+    const coverage = useMemo(() => {
+        const w = rows.filter((r: any) => r.actual_mw != null && r.actual_mw > 0);
+        return { elapsed: w.length, pct: Math.round((w.length/96)*100), energyMWh: w.reduce((s:number,r:any)=>s+Number(r.actual_mw||0)*0.25,0) };
     }, [rows]);
+
+    const health = useMemo(() => {
+        const a = rows.filter((d:any)=>d.actual_mw!=null&&d.actual_mw>0&&d.forecast_mw!=null&&d.forecast_mw>0);
+        if (a.length < 4) return { mape:0, status:'insufficient', color:C._muted, consecutiveHigh:0 };
+        const apes = a.map((d:any)=>Math.abs(d.actual_mw-d.forecast_mw)/Math.max(d.actual_mw,1)*100);
+        const mape = apes.reduce((s:number,v:number)=>s+v,0)/apes.length;
+        let cons=0, maxCons=0;
+        for (const v of [...apes].reverse()) { if(v>5){cons++;maxCons=Math.max(maxCons,cons);}else{cons=0;} }
+        if (mape>5) return { mape:Math.round(mape*100)/100, status:'critical', color:C._red, consecutiveHigh:maxCons };
+        if (mape>2) return { mape:Math.round(mape*100)/100, status:'warning', color:C._warn, consecutiveHigh:maxCons };
+        return { mape:Math.round(mape*100)/100, status:'good', color:C._green, consecutiveHigh:maxCons };
+    }, [rows]);
+
+    const drivers = useMemo(() =>
+        [...(driverContributions||[])].filter((d:any)=>Math.abs(Number(d?.mw||0))>5)
+            .sort((a:any,b:any)=>Math.abs(Number(b?.mw||0))-Math.abs(Number(a?.mw||0))),
+    [driverContributions]);
+
+    const signals = useMemo(() => {
+        const p: Record<string,number> = {high:3,medium:2,low:1};
+        return [...decisionSignals].filter((s:any)=>s?.risk_flag)
+            .sort((a:any,b:any)=>(p[String(b?.risk_flag||'low')]||0)-(p[String(a?.risk_flag||'low')]||0));
+    }, [decisionSignals]);
 
     const insights = useMemo(() => {
         const raw = !liveMeta?.insights ? [] : Array.isArray(liveMeta.insights) ? liveMeta.insights : [liveMeta.insights];
-        return raw
-            .map((item: any, index: number) => ({
-                id: `${index}-${item?.title || item?.text || 'insight'}`,
-                title: item?.title || (tone(String(item?.priority || item?.type || 'low').toLowerCase()) === 'high' ? 'Attention Required' : 'Operational Insight'),
-                text: item?.text || item?.message || String(item || ''),
-                priority: tone(String(item?.priority || item?.type || 'low').toLowerCase())
-            }))
-            .filter((item: any) => item.text);
+        return raw.map((item:any,i:number)=>({
+            id:`${i}-${item?.title||'insight'}`,
+            title: item?.title||(tone(String(item?.priority||'low').toLowerCase())==='high'?'Attention Required':'Operational Insight'),
+            text: item?.text||item?.message||String(item||''),
+            priority: tone(String(item?.priority||item?.type||'low').toLowerCase()),
+        })).filter((x:any)=>x.text);
     }, [liveMeta]);
 
-    const drivers = useMemo(() => {
-        return [...(driverContributions || [])]
-            .filter((d: any) => Math.abs(Number(d?.mw || 0)) > 5)  // threshold raised from 0.5 to 5 MW to remove noise
-            .sort((a: any, b: any) => Math.abs(Number(b?.mw || 0)) - Math.abs(Number(a?.mw || 0)));
-    }, [driverContributions]);
+    const maxDriverPct = drivers.length ? Math.max(...drivers.map((d:any)=>Math.abs(Number(d?.pct||0)))) : 0;
+    const driverPressure = drivers.reduce((s:number,d:any)=>s+Math.abs(Number(d?.mw||0)),0);
+    const similarDaysCount = Array.isArray(liveMeta?.similar_days) ? liveMeta.similar_days.length : 0;
+    const totalLogs = Array.isArray(liveMeta?.logs) ? liveMeta.logs.length : 0;
 
-    const signals = useMemo(() => {
-        const priority: Record<string, number> = { high: 3, medium: 2, low: 1 };
-        return [...decisionSignals]
-            .filter((signal: any) => signal?.risk_flag)
-            .sort((a: any, b: any) => {
-                const diff = (priority[String(b?.risk_flag || 'low')] || 0) - (priority[String(a?.risk_flag || 'low')] || 0);
-                if (diff !== 0) return diff;
-                return Number(b?.uncertainty_pct || 0) - Number(a?.uncertainty_pct || 0);
-            });
-    }, [decisionSignals]);
+    const rampColor = rampRisk.level==='alert' ? C._red : rampRisk.level==='caution' ? C._warn : C._green;
+    const healthColor = health.color;
 
-    const health = useMemo(() => {
-        if (!rows.length) return { mape: 0, status: 'unknown', color: 'var(--muted)', consecutiveHigh: 0, needsReforecast: false };
-        const actuals = rows.filter((d: any) => d.actual_mw != null && d.actual_mw > 0 && d.forecast_mw != null && d.forecast_mw > 0);
-        if (actuals.length < 4) return { mape: 0, status: 'insufficient', color: 'var(--muted)', consecutiveHigh: 0, needsReforecast: false };
-        const apes = actuals.map((d: any) => Math.abs(d.actual_mw - d.forecast_mw) / Math.max(d.actual_mw, 1) * 100);
-        const mape = apes.reduce((a: number, b: number) => a + b, 0) / apes.length;
-        let consecutive = 0;
-        let maxConsecutive = 0;
-        for (const ape of [...apes].reverse()) {
-            if (ape > 5) {
-                consecutive += 1;
-                maxConsecutive = Math.max(maxConsecutive, consecutive);
-            } else {
-                consecutive = 0;
-            }
-        }
-        if (mape > 5) return { mape: Math.round(mape * 100) / 100, status: 'critical', color: 'var(--danger)', consecutiveHigh: maxConsecutive, needsReforecast: maxConsecutive >= 8 };
-        if (mape > 2) return { mape: Math.round(mape * 100) / 100, status: 'warning', color: 'var(--warning)', consecutiveHigh: maxConsecutive, needsReforecast: maxConsecutive >= 8 };
-        return { mape: Math.round(mape * 100) / 100, status: 'good', color: 'var(--success)', consecutiveHigh: maxConsecutive, needsReforecast: maxConsecutive >= 8 };
-    }, [rows]);
-
-    const signalCount = signals.filter((signal: any) => signal.risk_flag !== 'low').length;
-    const previewSignals = signals.filter((signal: any) => signal.risk_flag !== 'low').slice(0, 2);
-    const previewDrivers = drivers.slice(0, 2);
-    const previewLogs = Array.isArray(liveMeta?.logs) ? liveMeta.logs.slice(-2).reverse() : [];
-    const maxDriverPct = Math.max(...drivers.map((driver: any) => Math.abs(Number(driver?.pct || 0))), 1);
-    const driverPressure = drivers.reduce((acc: number, driver: any) => acc + Math.abs(Number(driver?.mw || 0)), 0);
-
+    /* ─── Render ──────────────────────────────────────────────────────────── */
     return (
-        <main className="forecast-page">
-            {health.needsReforecast && (
-                <div className="fp-alert-bar">
-                    <div>
-                        <span className="fp-alert-bar__title">Auto-Reforecast Recommended</span>
-                        <p className="fp-alert-bar__text">
-                            Forecast drift stayed above 5% for {health.consecutiveHigh} consecutive settled blocks.
-                        </p>
-                    </div>
-                    <button className="fp-action-btn fp-action-btn--primary" onClick={onRefresh}>
-                        <Zap size={14} />
-                        Reforecast
-                    </button>
+        <div className="forecast-page">
+
+            {/* ── Reforecast alert ─────────────────────────────────────────── */}
+            {health.consecutiveHigh >= 8 && (
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, padding:'8px 18px', background:'rgba(248,113,113,0.08)', borderBottom:`1px solid rgba(248,113,113,0.3)`, flexShrink:0 }}>
+                    <span style={{ fontSize:12, color:C._red }}>⚠ Forecast drift above 5% for {health.consecutiveHigh} consecutive blocks — reforecast recommended.</span>
+                    <button className="primary-btn" onClick={onRefresh} style={{ flexShrink:0 }}><Zap size={13}/> Reforecast</button>
                 </div>
             )}
 
-            <div className="fp-shell fp-shell--single-screen">
-                <section className="fp-kpi-grid" style={{ 
-                    display: 'grid', 
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-                    gap: '12px', 
-                    marginBottom: '20px' 
-                }}>
-                    <KpiCard 
-                        eyebrow="Peak posture"
-                        title="Peak Load" 
-                        value={activeSummary ? fmt(activeSummary.peak) : '--'} 
-                        unit="MW"
-                        tone="#F07825"
-                        detail={activeSummary ? `Expected at ${activeSummary.peakTime}` : 'No peak data'}
-                        footer={activeSummary ? `±1 blk · Block ${activeSummary.peakBlock}` : '--'}
-                        icon={<TrendingUp size={15} />} 
+            {/* ── MetricCard grid — matches weather page top section ───────── */}
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+                gap: 10,
+                padding: '12px 16px',
+                flexShrink: 0,
+            }}>
+                <MetricCard
+                    label="Peak Load"
+                    value={summary ? fmt(summary.peak) : '--'}
+                    unit="MW"
+                    color={C._accent}
+                    delta={summary ? `▲ at ${summary.peakTime} · B${summary.peakBlock}` : 'Awaiting data'}
+                    deltaColor={C._accent}
+                    sub="Forecast peak for the day"
+                />
+                <MetricCard
+                    label="Daily Energy"
+                    value={summary ? fmt(summary.energy) : '--'}
+                    unit="MWh"
+                    color={C._accent2}
+                    delta={horizon==='t1' ? '96 blocks × 15 min' : 'T+2 pure forecast'}
+                    sub="Total forecast energy"
+                />
+                <MetricCard
+                    label="Actuals Coverage"
+                    value={horizon==='t1' ? `${coverage.pct}` : '—'}
+                    unit={horizon==='t1' ? '%' : ''}
+                    color={horizon==='t1'&&coverage.pct>30 ? C._green : C._muted}
+                    delta={horizon==='t1' ? `▲ ${coverage.elapsed}/96 · ${fmt(coverage.energyMWh)} MWh` : 'Pure forecast — no actuals'}
+                    deltaColor={horizon==='t1'&&coverage.pct>30 ? C._green : C._muted}
+                    sub="Settled blocks vs total"
+                />
+                {horizon==='t1' ? (
+                    <MetricCard
+                        label="Forecast Health"
+                        value={health.status==='insufficient'||health.status==='unknown' ? '—' : fmt(liveMeta?.mape_live??health.mape)}
+                        unit={health.status==='insufficient'||health.status==='unknown' ? '' : '% MAPE'}
+                        color={healthColor}
+                        delta={health.consecutiveHigh>0 ? `${health.consecutiveHigh} consec. high-error blocks` : '▲ Within tolerance'}
+                        deltaColor={health.consecutiveHigh>0 ? C._warn : healthColor}
+                        sub="Live settled blocks only"
                     />
-                    <KpiCard 
-                        eyebrow="Energy balance"
-                        title="Daily Energy" 
-                        value={activeSummary ? fmt(activeSummary.energy) : '--'} 
-                        unit="MWh"
-                        tone="#ECEEF3"
-                        detail={forecastHorizon === 't1' ? 'Σ 96 blocks × 15min' : 'T+2 pure forecast'}
-                        footer="Total daily throughput" 
-                        icon={<BarChart3 size={15} />} 
+                ) : (
+                    <MetricCard
+                        label="Confidence"
+                        value={liveMeta?.model_confidence!=null ? `${Math.round(Number(liveMeta.model_confidence)*100)}` : '—'}
+                        unit={liveMeta?.model_confidence!=null ? '%' : ''}
+                        color={C._green}
+                        delta="Pure forecast · no actuals"
+                        sub="Model confidence band"
                     />
-                    <KpiCard
-                        eyebrow="Live tracker"
-                        title="Actuals Coverage"
-                        value={forecastHorizon === 't1' ? `${actualsCoverage.pct}%` : 'N/A'}
-                        tone="#34D399"
-                        detail={forecastHorizon === 't1' ? `${fmt(actualsCoverage.energyMWh)} MWh accumulated` : 'T+2 has no actuals'}
-                        footer={forecastHorizon === 't1' ? `${actualsCoverage.elapsed}/96 blocks covered` : 'Pure forecast mode'}
-                        icon={<Activity size={15} />}
+                )}
+                {horizon==='t1' ? (
+                    <MetricCard
+                        label="Ramp Severity"
+                        value={rampRisk.level==='alert'?'Alert':rampRisk.level==='caution'?'Caution':'Clear'}
+                        color={rampColor}
+                        delta={rampRisk.maxRamp>0 ? `${rampRisk.maxRamp} MW / 15m${rampRisk.atBlock?` · B${rampRisk.atBlock}`:''}` : 'Stable load profile'}
+                        sub="Upcoming load ramp risk"
+                        extra={<div style={{marginTop:6,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date}/>{t2Loading&&<span style={{fontSize:9,color:C._muted}}>Loading…</span>}</div>}
                     />
-                    <KpiCard
-                        eyebrow="Operational risk"
-                        title="Ramp Severity"
-                        value={rampRisk.level === 'alert' ? 'Alert' : rampRisk.level === 'caution' ? 'Caution' : 'Clear'}
-                        tone={rampRisk.level === 'alert' ? '#F87171' : rampRisk.level === 'caution' ? '#FBBF24' : '#34D399'}
-                        detail={rampRisk.maxRamp > 0 ? `${rampRisk.maxRamp} MW/15m swing` : 'Stable load profile'}
-                        footer={rampRisk.atBlock ? `Critical window at B${rampRisk.atBlock}` : 'No immediate risks'}
-                        icon={<AlertCircle size={15} />}
+                ) : (
+                    <MetricCard
+                        label="Horizon"
+                        value={t2Date||'—'}
+                        color={C._text}
+                        delta="T+2 target date"
+                        sub="Pure forecast mode"
+                        extra={<div style={{marginTop:6}}><HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date}/></div>}
                     />
-                </section>
-
-                <section style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <div className="fp-meta-pill"><CalendarDays size={14} /><span>{effectiveDate}</span></div>
-                        <div className="fp-meta-pill"><Activity size={14} /><span>{titleCase(selectedRegion || 'all regions')}</span></div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="fp-action-btn" onClick={() => setActiveOverlay('weather')}><Wind size={14} />Weather</button>
-                        <button className="fp-action-btn" onClick={() => setActiveOverlay('table')}><Table2 size={14} />Table</button>
-                        <button className="fp-action-btn" onClick={onRefresh}><Zap size={14} />Refresh</button>
-                        {onDownload && <button className="fp-action-btn" onClick={onDownload} disabled={!canDownload}><Download size={14} />Export</button>}
-                    </div>
-                </section>
-
-                <section className="fp-single-layout">
-                    <section className="fp-chart-panel fp-chart-panel--single">
-                        <div className="fp-chart-header">
-                            <div>
-                                <h3>Forecast Curve</h3>
-                                <span>
-                                    {forecastHorizon === 't1'
-                                        ? 'Actual, forecast, and persistence over the full day.'
-                                        : 'T+2 pure forecast — no actuals available.'}
-                                </span>
-                            </div>
-                            <div className="chip-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <HorizonToggle 
-                                    horizon={forecastHorizon} 
-                                    setHorizon={setHorizon}
-                                    t2Date={t2Date}
-                                    style={{ marginRight: '16px' }}
-                                />
-
-                                {forecastHorizon === 't1' && (
-                                    <>
-                                        <span className="chip actual">Actual</span>
-                                        <span className="chip forecast">Forecast</span>
-                                        <span className="chip baseline">Persistence</span>
-                                    </>
-                                )}
-                                {forecastHorizon === 't2' && (
-                                    <>
-                                        <span className="chip forecast">T+2 Forecast</span>
-                                        <span className="chip baseline">Baseline</span>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                        <div className="fp-chart-body fp-chart-body--single">
-                            {rows.length ? chart : <div className="chart-empty">No data available for {effectiveDate}</div>}
-                        </div>
-                        <div className="fp-chart-footer">
-                            <span>Peak {activeSummary ? `${activeSummary.peakTime} • ${fmt(activeSummary.peak)} MW` : '--'}</span>
-                            {forecastHorizon === 't1'
-                                ? <span>Health <strong style={{ color: health.color }}>{health.status === 'insufficient' ? 'settling' : `${fmt(liveMeta?.mape_live ?? health.mape)}%`}</strong></span>
-                                : <span>Horizon <strong style={{ color: 'var(--accent)' }}>T+2 · No actuals</strong></span>
-                            }
-                        </div>
-                    </section>
-
-                    <aside className="fp-command-rail" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        <article className="fp-side-card fp-side-card--compact">
-                            <div className="fp-card-label">Context</div>
-                            <div className="fp-stat-list">
-                                <div className="fp-stat-row"><span>Date</span><strong>{effectiveDate}</strong></div>
-                                <div className="fp-stat-row"><span>Region</span><strong>{titleCase(selectedRegion || 'all regions')}</strong></div>
-                                <div className="fp-stat-row"><span>Horizon</span><strong className="fp-status-live">{forecastHorizon === 't1' ? 'T+1 Live' : 'T+2 Pure'}</strong></div>
-                                <div className="fp-stat-row"><span>Coverage</span><strong>{forecastHorizon === 't1' ? (summary ? `${summary.actualCoverage}%` : '--') : 'N/A (T+2)'}</strong></div>
-                            </div>
-                        </article>
-
-                        <article className="fp-side-card fp-side-card--compact">
-                            <div className="fp-card-label">Watchlist</div>
-                            <div className="fp-watch-grid fp-watch-grid--compact">
-                                <div><span>Peak</span><strong>{summary ? `${summary.peakTime} • B${summary.peakBlock}` : '--'}</strong></div>
-                                <div><span>Drivers</span><strong>{fmt(driverPressure)} MW</strong></div>
-                                <div><span>Risk</span><strong style={{ color: health.color }}>{titleCase(health.status)}</strong></div>
-                                <div><span>Reforecast</span><strong>{health.needsReforecast ? 'Ready' : 'Stable'}</strong></div>
-                            </div>
-                        </article>
-
-                        <article className="fp-side-card fp-side-card--compact">
-                            <div className="fp-card-label">Quick Access</div>
-                            <div className="fp-launchpad-grid fp-launchpad-grid--compact">
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('intelligence')}><span>Intel</span><strong>{insights.length}</strong></button>
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('drivers')}><span>Drivers</span><strong>{drivers.length}</strong></button>
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('signals')}><span>Signals</span><strong>{signals.length}</strong></button>
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('logs')}><span>Logs</span><strong>{Array.isArray(liveMeta?.logs) ? liveMeta.logs.length : 0}</strong></button>
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('preview')}><span>Preview</span><strong>{previewSignals.length + previewDrivers.length}</strong></button>
-                                <button className="fp-detail-btn" onClick={() => setActiveOverlay('similar_days')}><span>Sim Days</span><strong>{Array.isArray(liveMeta?.similar_days) ? liveMeta.similar_days.length : 0}</strong></button>
-                            </div>
-                        </article>
-
-                        <article className="fp-side-card fp-side-card--compact" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                            <div className="fp-side-card__head">
-                                <div className="fp-card-label">Engine Log</div>
-                                {previewLogs.length > 0 && <button className="fp-inline-link" onClick={() => setActiveOverlay('logs')}>Open</button>}
-                            </div>
-                            <div className="fp-log-preview" style={{ flexGrow: 1 }}>
-                                {previewLogs.length ? previewLogs.map((log: string, index: number) => (
-                                    <div key={`${index}-${log}`} className="fp-log-line"><span>#{String(index + 1).padStart(2, '0')}</span><p>{log}</p></div>
-                                )) : <div className="fp-empty-state">Awaiting telemetry events.</div>}
-                            </div>
-                        </article>
-                    </aside>
-                </section>
+                )}
+                <MetricCard
+                    label="Driver Pressure"
+                    value={fmt(driverPressure)}
+                    unit="MW Σ|"
+                    color={C._accent2}
+                    delta={`${drivers.length} active driver${drivers.length===1?'':'s'}`}
+                    deltaColor={C._sub}
+                    sub="Sum of |driver contributions|"
+                />
             </div>
 
-            <DetailOverlay open={activeOverlay === 'preview'} title="Preview" subtitle="Top signals and driver contributions" onClose={() => setActiveOverlay(null)}>
-                <div className="fp-preview-dual">
-                    <div className="fp-preview-block">
-                        <span className="fp-preview-block__label">Signals</span>
-                        {previewSignals.length ? previewSignals.map((signal: any) => (
-                            <div key={`${signal.block}-${signal.primary_driver}`} className={`fp-signal-card fp-signal-card--${signal.risk_flag}`}>
-                                <div className="fp-signal-card__head"><span>B{signal.block}</span><strong>{signal.time || blockTime(Number(signal.block || 1))}</strong></div>
-                                <p>{signal.primary_driver || 'Structural load shift'}</p>
+            {/* ── Quality banners ───────────────────────────────────────────── */}
+            {forecastQuality?.degraded && (
+                <div style={{ padding:'5px 18px', background:'rgba(251,191,36,0.07)', borderBottom:`1px solid rgba(251,191,36,0.2)`, fontSize:11, color:C._warn, flexShrink:0, fontFamily:"'IBM Plex Mono',monospace" }}>
+                    ⚠ Statistical baseline only — AI engine unavailable
+                </div>
+            )}
+
+            {/* ── Main chart card (matches weather page big card) ───────────── */}
+            <div style={{
+                flex: 1,
+                minHeight: 0,
+                margin: '0 16px 12px',
+                background: C._card,
+                borderRadius: 18,
+                border: `1px solid ${C._border}`,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+            }}>
+
+                {/* Control strip — two rows matching weather page exactly */}
+                <div style={{ display:'flex', flexDirection:'column', gap:0, borderBottom:`1px solid ${C._border}`, flexShrink:0 }}>
+
+                    {/* Row 1: legend dots (left) + date/region (right) */}
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 16px 0', gap:12 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:16 }}>
+                            {[
+                                { label:'Actual',      color:C._accent2 },
+                                { label:'Persistence', color:C._muted   },
+                                { label:'Forecast',    color:C._accent  },
+                            ].map(({ label, color }) => (
+                                <span key={label} style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:C._muted, fontFamily:"'IBM Plex Mono',monospace" }}>
+                                    <span style={{ width:7, height:7, borderRadius:'50%', background:color, display:'inline-block', flexShrink:0 }}/>
+                                    {label}
+                                </span>
+                            ))}
+                        </div>
+                        <span style={{ fontSize:10, color:C._muted, fontFamily:"'IBM Plex Mono',monospace" }}>
+                            {effectiveDate} · {titleCase(selectedRegion||'all')}
+                        </span>
+                    </div>
+
+                    {/* Row 2: tab pills (left) + DETAIL PANELS buttons (right) */}
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 16px 10px', gap:14 }}>
+
+                        {/* Tab pill container — same as weather page */}
+                        <div style={{ display:'inline-flex', gap:2, padding:4, background:'#1A191E', border:'1px solid #2A292F', borderRadius:999 }}>
+                            {[
+                                { label:'Live',        active:true,  action:onRefresh },
+                                { label:'Weather',     active:false, action:()=>setOverlay('weather') },
+                                { label:'Block Table', active:false, action:()=>setOverlay('table') },
+                                ...(onDownload ? [{ label:'Export', active:false, action:onDownload }] : []),
+                            ].map(({ label, active, action }) => (
+                                <button
+                                    key={label}
+                                    onClick={action}
+                                    style={{
+                                        padding:'5px 13px',
+                                        border:'none',
+                                        cursor:'pointer',
+                                        fontFamily:"'IBM Plex Mono',monospace",
+                                        fontSize:10,
+                                        fontWeight:600,
+                                        letterSpacing:0.4,
+                                        borderRadius:999,
+                                        background: active ? `${C._accent}18` : 'transparent',
+                                        color: active ? C._accent : C._muted,
+                                        transition:'all 0.15s',
+                                        whiteSpace:'nowrap',
+                                    }}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* DETAIL PANELS — label + buttons */}
+                        <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                            <span style={{ fontSize:9, textTransform:'uppercase', letterSpacing:1.5, color:C._muted, fontFamily:"'IBM Plex Mono',monospace", marginRight:2 }}>
+                                Detail Panels
+                            </span>
+                            {[
+                                { label:'Drivers',     count:drivers.length,       color:drivers.length>0?C._accent:undefined,  action:()=>setOverlay('drivers') },
+                                { label:'Signals',     count:signals.length,       color:signals.length>0?C._warn:undefined,    action:()=>setOverlay('signals') },
+                                { label:'Intelligence',count:insights.length,      color:insights.length>0?C._green:undefined,  action:()=>setOverlay('intelligence') },
+                                { label:'Similar Days',count:similarDaysCount,     color:undefined,                             action:()=>setOverlay('similar_days') },
+                                { label:'Engine Logs', count:totalLogs,            color:undefined,                             action:()=>setOverlay('logs') },
+                                { label:'Context',     count:horizon==='t1'?`${summary?.actualCoverage??0}%`:'T+2', color:undefined, action:()=>setOverlay('context') },
+                            ].map(({ label, count, color, action }) => (
+                                <button
+                                    key={label}
+                                    onClick={action}
+                                    style={{
+                                        display:'inline-flex', alignItems:'center', gap:5,
+                                        padding:'5px 10px',
+                                        background:'transparent',
+                                        border:`1px solid ${C._border}`,
+                                        borderRadius:7,
+                                        color:C._sub,
+                                        fontSize:10,
+                                        fontWeight:600,
+                                        fontFamily:"'IBM Plex Mono',monospace",
+                                        cursor:'pointer',
+                                        whiteSpace:'nowrap',
+                                    }}
+                                >
+                                    {label}
+                                    <span style={{
+                                        fontSize:9, fontWeight:700,
+                                        padding:'1px 5px', borderRadius:6,
+                                        background: color ? `${color}20` : 'rgba(255,255,255,0.07)',
+                                        color: color || C._muted,
+                                    }}>
+                                        {count}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Chart body — fills remaining height */}
+                <div style={{ flex:1, minHeight:0, overflow:'hidden' }}>
+                    {rows.length ? chart : (
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:C._muted, fontSize:13 }}>
+                            No data available for {effectiveDate}
+                        </div>
+                    )}
+                </div>
+
+                {/* Legend bar */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 20,
+                    padding: '8px 18px',
+                    borderTop: `1px solid ${C._border}`,
+                    fontSize: 11,
+                    color: C._muted,
+                    fontFamily: "'IBM Plex Mono',monospace",
+                    flexShrink: 0,
+                }}>
+                    <span>Peak <strong style={{color:C._text}}>{summary?`${summary.peakTime} · ${fmt(summary.peak)} MW`:'—'}</strong></span>
+                    {horizon==='t1' ? (
+                        <span>Health <strong style={{color:healthColor}}>{health.status==='insufficient'?'settling':`${fmt(liveMeta?.mape_live??health.mape)}% MAPE`}</strong></span>
+                    ) : (
+                        <span>Horizon <strong style={{color:C._accent}}>T+2 · No actuals</strong></span>
+                    )}
+                    {summary && <span>Energy <strong style={{color:C._text}}>{fmt(summary.energy)} MWh</strong></span>}
+                </div>
+            </div>
+
+            {/* ── Overlays ─────────────────────────────────────────────────── */}
+            <Overlay open={overlay==='intelligence'} title="Forecast Intelligence" subtitle={`${insights.length} note${insights.length===1?'':'s'}`} onClose={()=>setOverlay(null)}>
+                <div className="fp-modal-stack">
+                    {insights.length ? insights.map((ins:any)=>(
+                        <article key={ins.id} className={`fp-modal-note fp-modal-note--${ins.priority}`}>
+                            <div className="fp-modal-note__title">
+                                {ins.priority==='high'?<AlertCircle size={14}/>:<TrendingUp size={14}/>}
+                                <span>{ins.title}</span>
                             </div>
-                        )) : <div className="fp-empty-state">No active risk windows.</div>}
-                    </div>
-                    <div className="fp-preview-block">
-                        <span className="fp-preview-block__label">Drivers</span>
-                        {previewDrivers.length ? previewDrivers.map((driver: any) => {
-                            const color = driver.color || (Number(driver.mw || 0) >= 0 ? 'var(--success)' : 'var(--danger)');
-                            return (
-                                <div key={driver.factor} className="fp-driver-item">
-                                    <div className="fp-driver-item__head">
-                                        <span>{driver.factor}</span>
-                                        <strong style={{ color }}>{Number(driver.mw || 0) > 0 ? '+' : ''}{fmt(driver.mw)}</strong>
-                                    </div>
-                                    <div className="fp-driver-item__bar"><div style={{ width: `${Math.min((Math.abs(Number(driver.pct || 0)) / maxDriverPct) * 100, 100)}%`, background: color }} /></div>
-                                </div>
-                            );
-                        }) : <div className="fp-empty-state">No material driver pressure.</div>}
-                    </div>
-                </div>
-            </DetailOverlay>
-
-            <DetailOverlay open={activeOverlay === 'intelligence'} title="Forecast Intelligence" subtitle={`${insights.length} note${insights.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
-                <div className="fp-modal-stack">
-                    {insights.length ? insights.map((insight: any) => (
-                        <article key={insight.id} className={`fp-modal-note fp-modal-note--${insight.priority}`}>
-                            <div className="fp-modal-note__title">{insight.priority === 'high' ? <AlertCircle size={14} /> : <TrendingUp size={14} />}<span>{insight.title}</span></div>
-                            <p>{insight.text}</p>
+                            <p>{ins.text}</p>
                         </article>
-                    )) : <div className="fp-empty-state">No live intelligence notes are available for this run.</div>}
+                    )) : <EmptyState icon={Sparkles} title="No notes" description="No intelligence notes for this run."/>}
                 </div>
-            </DetailOverlay>
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'drivers'} title="Driver Contribution Detail" subtitle={`${drivers.length} active driver${drivers.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
+            <Overlay open={overlay==='drivers'} title="Driver Contribution Detail" subtitle={`${drivers.length} active`} onClose={()=>setOverlay(null)}>
                 <div className="fp-modal-stack">
-                    {drivers.length ? drivers.map((driver: any) => {
-                        const mwVal = Number(driver.mw || 0);
-                        const isPositive = mwVal >= 0;
-                        const color = driver.color || (isPositive ? 'var(--success)' : 'var(--accent)');
-                        const dirLabel = isPositive ? '▲ Load-adding' : '▼ Load-suppressing';
+                    {drivers.length ? drivers.map((d:any)=>{
+                        const mv=Number(d.mw||0), pos=mv>=0;
+                        const col=d.color||(pos?'var(--success)':'var(--accent)');
                         return (
-                            <article key={driver.factor} className="fp-modal-driver">
+                            <article key={d.factor} className="fp-modal-driver">
                                 <div className="fp-modal-driver__head">
-                                    <div>
-                                        <strong>{driver.factor}</strong>
-                                        <span>{fmt(driver.pct)}% share</span>
-                                        <span style={{ fontSize: '11px', color, marginLeft: '6px' }}>{dirLabel}</span>
-                                    </div>
-                                    <div style={{ color, fontWeight: 600 }}>{mwVal > 0 ? '+' : ''}{fmt(mwVal)} MW</div>
+                                    <div><strong>{d.factor}</strong><span style={{marginLeft:8}}>{fmt(d.pct)}% share</span><span style={{fontSize:11,color:col,marginLeft:8}}>{pos?'▲ Load-adding':'▼ Load-suppressing'}</span></div>
+                                    <div style={{color:col,fontWeight:700}}>{pos?'+':''}{fmt(mv)} MW</div>
                                 </div>
-                                <div className="fp-modal-driver__bar"><div style={{ width: `${Math.min((Math.abs(Number(driver.pct || 0)) / maxDriverPct) * 100, 100)}%`, background: color }} /></div>
+                                <div className="fp-modal-driver__bar">
+                                    <div style={{width:`${Math.min((Math.abs(Number(d.pct||0))/maxDriverPct)*100,100)}%`,background:col}}/>
+                                </div>
                             </article>
                         );
-                    }) : <div className="fp-empty-state">No active drivers above the 5 MW display threshold.</div>}
+                    }) : <EmptyState icon={Layers} title="No active drivers" description="Driver pressure below 5 MW threshold."/>}
                 </div>
-            </DetailOverlay>
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'signals'} title="Slot-Level Risk Signals" subtitle={`${signals.length} signal${signals.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
+            <Overlay open={overlay==='signals'} title="Slot-Level Risk Signals" subtitle={`${signals.length} signals`} onClose={()=>setOverlay(null)}>
                 <div className="table-wrap">
                     <table className="data-table">
-                        <thead>
-                            <tr><th>Block</th><th>Time</th><th>Risk</th><th>Primary Driver</th><th>Action</th><th>Uncertainty</th><th>Confidence</th></tr>
-                        </thead>
+                        <thead><tr><th>Block</th><th>Time</th><th>Risk</th><th>Primary Driver</th><th>Action</th><th>Uncertainty</th><th>Confidence</th></tr></thead>
                         <tbody>
-                            {signals.length ? signals.map((signal: any, index: number) => (
-                                <tr key={`${signal.block}-${signal.primary_driver}-${index}`}>
-                                    <td>{signal.block}</td>
-                                    <td>{signal.time || blockTime(Number(signal.block || 1))}</td>
-                                    <td>{titleCase(signal.risk_flag || 'low')}</td>
-                                    <td>{signal.primary_driver || signal.dominant_family || '—'}</td>
-                                    <td>{signal.recommended_action || 'Monitor'}</td>
-                                    <td>{fmt(signal.uncertainty_pct || 0)}%</td>
-                                    <td>{fmt(signal.confidence || 0)}%</td>
+                            {signals.length ? signals.map((s:any,i:number)=>(
+                                <tr key={`${s.block}-${i}`}>
+                                    <td>{s.block}</td><td>{s.time||blockTime(Number(s.block||1))}</td>
+                                    <td>{titleCase(s.risk_flag||'low')}</td>
+                                    <td>{s.primary_driver||s.dominant_family||'—'}</td>
+                                    <td>{s.recommended_action||'Monitor'}</td>
+                                    <td>{fmt(s.uncertainty_pct||0)}%</td>
+                                    <td>{fmt(s.confidence||0)}%</td>
                                 </tr>
-                            )) : <tr><td colSpan={7}><div className="fp-empty-state">No decision signals were produced for the current run.</div></td></tr>}
+                            )) : <tr><td colSpan={7}><EmptyState icon={AlertCircle} title="All clear" description="No risk signals for this run."/></td></tr>}
                         </tbody>
                     </table>
                 </div>
-            </DetailOverlay>
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'logs'} title="Engine Logs" subtitle={`${Array.isArray(liveMeta?.logs) ? liveMeta.logs.length : 0} event${Array.isArray(liveMeta?.logs) && liveMeta.logs.length === 1 ? '' : 's'}`} onClose={() => setActiveOverlay(null)}>
+            <Overlay open={overlay==='logs'} title="Engine Logs" subtitle={`${totalLogs} events`} onClose={()=>setOverlay(null)}>
                 <div className="fp-modal-stack">
-                    {Array.isArray(liveMeta?.logs) && liveMeta.logs.length ? liveMeta.logs.map((log: string, index: number) => (
-                        <div key={`${index}-${log}`} className="fp-modal-log"><span>Event {String(index + 1).padStart(2, '0')}</span><p>{log}</p></div>
-                    )) : <div className="fp-empty-state">No engine log lines are available yet.</div>}
+                    {Array.isArray(liveMeta?.logs)&&liveMeta.logs.length ? liveMeta.logs.map((log:string,i:number)=>(
+                        <div key={i} className="fp-modal-log"><span>Event {String(i+1).padStart(2,'0')}</span><p>{log}</p></div>
+                    )) : <EmptyState icon={Activity} title="No logs" description="No engine log lines available."/>}
                 </div>
-            </DetailOverlay>
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'weather'} title="Condition Snapshot" subtitle="Moved off the main canvas to preserve a single-screen layout" onClose={() => setActiveOverlay(null)}>
-                {weatherStrip ? weatherStrip : <div className="fp-empty-state">No weather strip is available.</div>}
-            </DetailOverlay>
+            <Overlay open={overlay==='context'} title="Context" subtitle="Run metadata" onClose={()=>setOverlay(null)}>
+                <StatList items={[
+                    {label:'Date',value:effectiveDate},{label:'Region',value:titleCase(selectedRegion||'all')},
+                    {label:'Horizon',value:horizon==='t1'?'T+1 Live':'T+2 Pure'},{label:'Coverage',value:horizon==='t1'?`${summary?.actualCoverage??0}%`:'N/A'},
+                    {label:'Drivers',value:drivers.length},{label:'Similar days',value:similarDaysCount},
+                    {label:'Risk signals',value:signals.length},{label:'Intelligence',value:insights.length},{label:'Engine logs',value:totalLogs},
+                ]}/>
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'table'} title="Block-Level Forecast Table" subtitle="Detailed values, uncertainty bands, and settled actuals" onClose={() => setActiveOverlay(null)}>
-                {forecastTable ? forecastTable : <div className="fp-empty-state">No forecast table is available.</div>}
-            </DetailOverlay>
+            <Overlay open={overlay==='weather'} title="Weather Snapshot" subtitle="Conditions driving the forecast" onClose={()=>setOverlay(null)}>
+                {weatherStrip||<EmptyState icon={Wind} title="No weather data"/>}
+            </Overlay>
 
-            <DetailOverlay open={activeOverlay === 'similar_days'} title="Similar Days" subtitle={`Top historical matches used for baseline — ${forecastHorizon === 't2' ? 'T+2 run' : 'T+1 run'}`} onClose={() => setActiveOverlay(null)}>
+            <Overlay open={overlay==='table'} title="Block-Level Forecast Table" subtitle="Uncertainty bands, settled actuals" onClose={()=>setOverlay(null)}>
+                {forecastTable||<EmptyState icon={Table2} title="No forecast table"/>}
+            </Overlay>
+
+            <Overlay open={overlay==='similar_days'} title="Similar Days" subtitle={`${horizon==='t2'?'T+2':'T+1'} run`} onClose={()=>setOverlay(null)}>
                 <div className="table-wrap">
-                    {Array.isArray(liveMeta?.similar_days) && liveMeta.similar_days.length ? (
+                    {Array.isArray(liveMeta?.similar_days)&&liveMeta.similar_days.length ? (
                         <table className="data-table">
-                            <thead>
-                                <tr><th>Date</th><th>Similarity</th><th>Temp Δ °C</th><th>Humidity Δ %</th><th>Rain Match</th></tr>
-                            </thead>
-                            <tbody>
-                                {liveMeta.similar_days.map((d: any, i: number) => (
-                                    <tr key={`${d.date}-${i}`}>
-                                        <td>{d.date}</td>
-                                        <td>{typeof d.similarity_score === 'number' ? d.similarity_score.toFixed(3) : '—'}</td>
-                                        <td>{typeof d.temp_diff === 'number' ? d.temp_diff.toFixed(1) : '—'}</td>
-                                        <td>{typeof d.hum_diff === 'number' ? d.hum_diff.toFixed(1) : '—'}</td>
-                                        <td style={{ color: d.rain_match ? 'var(--success)' : 'var(--danger)' }}>{d.rain_match ? '✓' : '✗'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
+                            <thead><tr><th>Date</th><th>Similarity</th><th>Temp Δ °C</th><th>Humidity Δ %</th><th>Rain Match</th></tr></thead>
+                            <tbody>{liveMeta.similar_days.map((d:any,i:number)=>(
+                                <tr key={`${d.date}-${i}`}>
+                                    <td>{d.date}</td>
+                                    <td>{typeof d.similarity_score==='number'?d.similarity_score.toFixed(3):'—'}</td>
+                                    <td>{typeof d.temp_diff==='number'?d.temp_diff.toFixed(1):'—'}</td>
+                                    <td>{typeof d.hum_diff==='number'?d.hum_diff.toFixed(1):'—'}</td>
+                                    <td style={{color:d.rain_match?'var(--success)':'var(--danger)'}}>{d.rain_match?'✓':'✗'}</td>
+                                </tr>
+                            ))}</tbody>
                         </table>
-                    ) : (
-                        <div className="fp-empty-state">No similar days data available for this run.</div>
-                    )}
+                    ) : <EmptyState icon={CalendarDays} title="No similar days" description="No similar days data for this run."/>}
                 </div>
-            </DetailOverlay>
-        </main>
+            </Overlay>
+        </div>
     );
-};
+}

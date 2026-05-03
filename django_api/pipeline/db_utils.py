@@ -7,8 +7,8 @@ involve composite primary keys Django ORM can't express natively.
 """
 
 import math
-from django.db import connection
 
+from django.db import connection
 
 # ── Table registry ────────────────────────────────────────────────────────────
 

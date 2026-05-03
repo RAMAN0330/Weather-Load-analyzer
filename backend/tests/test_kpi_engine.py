@@ -8,7 +8,7 @@ import pandas as pd
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from gridintel_engine import KPIEngine, FeatureEngineering  # noqa: E402
+from gridintel_engine import FeatureEngineering, KPIEngine  # noqa: E402
 
 
 def _build_sample_df():

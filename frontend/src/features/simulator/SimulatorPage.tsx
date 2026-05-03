@@ -6,6 +6,11 @@ import { BlockGridEditorModal } from "./components/BlockGridEditorModal";
 import { useSimulatorStore } from "./store";
 import { loadSimulatorDateOptionsApi } from "./simulatorDataService";
 import HorizonToggle from "../../components/HorizonToggle";
+import {
+  PageShell as VpPageShell,
+  PageHeader as VpPageHeader,
+  Pill as VpPill,
+} from "../../components/page/PagePrimitives.jsx";
 
 
 type Props = {
@@ -403,11 +408,13 @@ export const SimulatorPage: React.FC<Props> = ({
     ? netSummary.peakFinal.block - netSummary.peakBaseline.block
     : 0;
 
-  // Reserve Margin Impact: remaining reserve % after scenario peak vs installed capacity
-  const INSTALLED_CAPACITY_MW = 6500; // default; ideally from region settings
+  // Reserve Margin Impact: remaining reserve % after scenario peak vs installed capacity.
+  // Capacity comes from block metadata when available; otherwise shown as N/A.
+  const installedCapacityMw: number | null =
+    (blocks[0] as any)?.region_capacity_mw ?? null;
   const scenarioPeak = netSummary.peakFinal.value || 0;
-  const reserveMarginPct = scenarioPeak > 0
-    ? Math.round(((INSTALLED_CAPACITY_MW - scenarioPeak) / INSTALLED_CAPACITY_MW) * 100)
+  const reserveMarginPct = installedCapacityMw && scenarioPeak > 0
+    ? Math.round(((installedCapacityMw - scenarioPeak) / installedCapacityMw) * 100)
     : null;
   const reserveBreach = reserveMarginPct != null && reserveMarginPct < 15;
 
@@ -439,13 +446,9 @@ export const SimulatorPage: React.FC<Props> = ({
 
   return (
     <>
-      <main style={S.page}>
-        {/* ─── HORIZON TOGGLE ─── */}
+      <VpPageShell className="simulator-page">
         {setHorizon && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', flexShrink: 0 }}>
-            <span style={{ fontSize: 10, color: '#6B7186', letterSpacing: 1, textTransform: "uppercase" }}>
-              Viewing: <strong style={{ color: '#ECEEF3' }}>{horizon === 't2' ? `T+2 · ${t2Date}` : `T+1 · ${requestedDate || dataDate}`}</strong>
-            </span>
+          <div className="vp-horizon-floater">
             <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
           </div>
         )}
@@ -635,7 +638,7 @@ export const SimulatorPage: React.FC<Props> = ({
             </div>
           </div>
         </div>
-      </main>
+      </VpPageShell>
       <ScenarioCompareModal open={Boolean(comparePayload)} payload={comparePayload} onClose={closeCompare} />
       <BlockGridEditorModal open={gridOpen} onClose={() => setGridOpen(false)} selectionLabel={selectionLabel} />
 

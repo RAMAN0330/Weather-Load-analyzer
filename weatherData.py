@@ -1,6 +1,7 @@
-from typing import Optional, List, Tuple, Dict
-from datetime import date
+from typing import List, Optional, Tuple
+
 import pandas as pd
+
 
 class WeatherDataProcessor:
     """Processes weather data with interpolation and quartile distribution."""

@@ -5,9 +5,8 @@ const WeatherStrip = ({ dayAhead, live, fmt }) => {
   const coefs = dayAhead?.metadata?.weather_coefs || {};
   const deltas = dayAhead?.series?.weather_feature_deltas || {};
   const temps = deltas.temperature || [];
-  const maxTempDelta = temps.length > 0
-    ? Math.max(...temps.map(Number).filter(Number.isFinite))
-    : 0;
+  const maxTempDelta =
+    temps.length > 0 ? Math.max(...temps.map(Number).filter(Number.isFinite)) : 0;
   const precip = deltas.precipitation || [];
   const totalRain = precip.reduce((s, v) => s + Math.max(0, Number(v) || 0), 0);
 
@@ -22,12 +21,13 @@ const WeatherStrip = ({ dayAhead, live, fmt }) => {
       <div className="ws-item">
         <Thermometer size={13} />
         <span className="ws-label">Temp ?</span>
-        <span className={`ws-value ${maxTempDelta > 3 ? 'ws-danger' : maxTempDelta > 1.5 ? 'ws-warn' : ''}`}>
-          {maxTempDelta > 0 ? '+' : ''}{maxTempDelta.toFixed(1)}°C
+        <span
+          className={`ws-value ${maxTempDelta > 3 ? 'ws-danger' : maxTempDelta > 1.5 ? 'ws-warn' : ''}`}
+        >
+          {maxTempDelta > 0 ? '+' : ''}
+          {maxTempDelta.toFixed(1)}°C
         </span>
-        {tempCoef ? (
-          <span className="ws-sub">{Math.abs(tempCoef).toFixed(0)} MW/°C</span>
-        ) : null}
+        {tempCoef ? <span className="ws-sub">{Math.abs(tempCoef).toFixed(0)} MW/°C</span> : null}
       </div>
 
       <div className="ws-item">
@@ -39,7 +39,9 @@ const WeatherStrip = ({ dayAhead, live, fmt }) => {
       <div className="ws-item">
         <CloudRain size={13} />
         <span className="ws-label">Rain</span>
-        <span className={`ws-value ${totalRain > 30 ? 'ws-danger' : totalRain > 10 ? 'ws-warn' : ''}`}>
+        <span
+          className={`ws-value ${totalRain > 30 ? 'ws-danger' : totalRain > 10 ? 'ws-warn' : ''}`}
+        >
           {totalRain.toFixed(0)}mm
         </span>
       </div>

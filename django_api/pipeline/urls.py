@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 
 urlpatterns = [
@@ -18,9 +19,12 @@ urlpatterns = [
     path("api/pipeline/states",             views.PipelineStatesCompatView.as_view(),     name="pipeline-states"),
     path("api/pipeline/weather/<str:state>", views.PipelineWeatherCompatView.as_view(),    name="pipeline-weather"),
     path("api/pipeline/weather-loc/<str:state>", views.PipelineWeatherLocCompatView.as_view(), name="pipeline-weather-loc"),
+    path("api/pipeline/circle-impact/<str:state>", views.PipelineCircleImpactCompatView.as_view(), name="pipeline-circle-impact"),
     path("api/pipeline/load/<str:state>",    views.PipelineLoadCompatView.as_view(),       name="pipeline-load"),
     path("api/pipeline/forecast/<str:state>", views.PipelineForecastCompatView.as_view(),  name="pipeline-forecast"),
     path("api/pipeline/similarity/<str:state>", views.PipelineSimilarityCompatView.as_view(), name="pipeline-similarity"),
+    path("api/pipeline/sldc/<str:state>", views.PipelineSldcCompatView.as_view(), name="pipeline-sldc"),
+    path("api/pipeline/sldc-forecast/<str:state>", views.PipelineSldcForecastCompatView.as_view(), name="pipeline-sldc-forecast"),
 
     # Legacy simulator/compute tools still implemented in FastAPI, routed via Django.
     path("api/simulator/<path:path>", views.FastApiProxyView.as_view(), {"prefix": "simulator"}, name="fastapi-simulator-proxy"),

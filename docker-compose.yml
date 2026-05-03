@@ -1,0 +1,45 @@
+version: "3.9"
+
+# Copy .env.example → .env and fill in real values before running
+# docker-compose up --build
+
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    env_file: .env
+    environment:
+      PORT: "8000"
+    volumes:
+      - ./backend/artifacts:/app/backend/artifacts
+      - ./exports:/app/exports
+    restart: unless-stopped
+
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    env_file: .env
+    environment:
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,frontend"
+    volumes:
+      - django_db:/app/django_api
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_DJANGO_API_BASE_URL: /api
+        VITE_FASTAPI_API_BASE_URL: /ml-api
+    ports:
+      - "80:80"
+    depends_on:
+      - fastapi
+      - django
+    restart: unless-stopped
+
+volumes:
+  django_db:

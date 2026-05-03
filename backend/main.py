@@ -1,17 +1,18 @@
-from pydantic import BaseModel
-import os
+import asyncio
+import copy
 import json
+import logging
+import os
 import re
 import uuid
-import logging
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import copy
 from functools import lru_cache
-from typing import List, Optional, Literal, Tuple, Dict, Any
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,17 +20,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-# Ensure pipeline and ML modules log at INFO so training steps appear in terminal
 logging.getLogger("backend.short_term_pipeline").setLevel(logging.INFO)
-logging.getLogger("backend.ml_baseline").setLevel(logging.INFO)
 logging.getLogger("short_term_pipeline").setLevel(logging.INFO)
-logging.getLogger("ml_baseline").setLevel(logging.INFO)
 
-# Dedicated executor for CPU-bound ML tasks (XGBoost/LightGBM release the GIL).
-# Kept separate from uvicorn's default thread pool so ML never starves fast endpoints.
-# Single worker: CPU-bound ML runs are faster serial than parallel on one machine.
-# Deduplication (below) ensures only one run per unique (date, region) at a time.
-_ML_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ml_worker")
+_ML_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline_worker")
 
 
 def _format_exception(exc: Exception) -> str:
@@ -48,35 +42,47 @@ _TEMP_BASE_CLIP: float = 0.12
 _HIGH_VOLATILITY_MW: float = 150.0
 
 # --- Imports ---
+import io
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import io
+
 try:
+    from .accuracy import validate_sldc_schedule
+    from .backtester import run_backtest
     from .engine import EDAEngine, FeatureRegistry
     from .gridintel_engine import GridIntelControlDesk
     from .short_term_pipeline import (
-        run_short_term_pipeline,
-        run_t2_pipeline,
-        run_block_driver_weight_delta_engine,
-        compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
         SHORT_TERM_MODEL_FEATURES,
+        REGION_ACCURACY_CONFIG,
+        compute_block_driver_weights,
+        intraday_recalibrate,
+        run_block_driver_weight_delta_engine,
+        run_short_term_pipeline,
+        run_t2_pipeline,
+        run_weather_impact_elastic_net_engine,
+        t2_night_anchor,
     )
-    from .backtester import run_backtest
 except ImportError:
     # Support running as a script without package context
+    from accuracy import validate_sldc_schedule
+    from backtester import run_backtest
     from engine import EDAEngine, FeatureRegistry
     from gridintel_engine import GridIntelControlDesk
     from short_term_pipeline import (
-        run_short_term_pipeline,
-        run_t2_pipeline,
-        run_block_driver_weight_delta_engine,
-        compute_block_driver_weights,
         INDIAN_STATE_REGIONS,
         SHORT_TERM_MODEL_FEATURES,
+        REGION_ACCURACY_CONFIG,
+        compute_block_driver_weights,
+        intraday_recalibrate,
+        run_block_driver_weight_delta_engine,
+        run_short_term_pipeline,
+        run_t2_pipeline,
+        run_weather_impact_elastic_net_engine,
+        t2_night_anchor,
     )
-    from backtester import run_backtest
 
 try:
     from .pipeline_router import router as pipeline_router
@@ -103,66 +109,71 @@ app.include_router(pipeline_router)
 
 # ── Data loading helpers ───────────────────────────────────────────────────
 
-def _load_df_from_pipeline_db(region: str, from_date: str = None, to_date: str = None) -> "pd.DataFrame | None":
-    """Load engine-compatible DataFrame for the given region.
+class DataUnavailable(Exception):
+    """Raised when MySQL data is unavailable."""
+    pass
 
-    Priority order:
-      1. MySQL pipeline API  (build_final_data.build_final_data)  — live, freshest data
-      2. SQLite pipeline.db  (pipeline_router)                    — local cache
-      3. Returns None → caller falls back to final_data.csv
 
-    The MySQL API path is skipped if PIPELINE_API_BASE_URL / PIPELINE_API_TOKEN are
-    not set, or if the API is unreachable within a short timeout.
+def _load_df_from_pipeline_db(
+    region: str,
+    from_date: str = None,
+    to_date: str = None,
+    days: int | None = None,
+) -> "pd.DataFrame | None":
+    """Load engine-compatible DataFrame for the given region from MySQL only.
+
+    MySQL (via build_final_data API) is the ONLY source.  Raises DataUnavailable
+    if MySQL is unreachable or returns no data.  Callers must surface the error.
     """
     import pandas as _pd
 
     state = region.upper().replace(" ", "_").replace("-", "_")
 
-    # ── 1. Try MySQL API via build_final_data ──────────────────────────────
+    import os as _os
+    import sys as _sys
+    _rd_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _rd_root not in _sys.path:
+        _sys.path.insert(0, _rd_root)
+    from build_final_data import _date_range_to_days, build_final_data as _build
+    logger.info("[switch-region] Loading %s from MySQL (from=%s to=%s) ...", state, from_date, to_date)
+    full_days = int(days) if days is not None else int(os.getenv("FULL_HISTORY_DAYS", "730"))
+    eff_days = _date_range_to_days(from_date, to_date, default=full_days)
+
     try:
-        import sys as _sys, os as _os
-        _rd_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-        if _rd_root not in _sys.path:
-            _sys.path.insert(0, _rd_root)
-        from build_final_data import build_final_data as _build, _date_range_to_days
-        logger.info("[switch-region] Loading %s from MySQL pipeline API (from=%s to=%s) ...", state, from_date, to_date)
-        days = _date_range_to_days(from_date, to_date)
-        df = _build(state=state, days=days, from_date=from_date, to_date=to_date)
-        if df is not None and not df.empty:
-            if 'Datetime' in df.columns:
-                df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
-            logger.info("[switch-region] MySQL API: %d rows for %s", len(df), state)
-            return df
+        df = _build(state=state, days=eff_days, from_date=from_date, to_date=to_date)
     except Exception as _e:
-        logger.warning("[switch-region] MySQL API failed for %s: %s — trying pipeline.db", state, _e)
+        raise DataUnavailable(
+            f"MySQL API error loading {state}: {_e}"
+        ) from _e
 
-    # ── 2. Fallback: SQLite pipeline.db ───────────────────────────────────
-    try:
-        from pipeline_router import get_all_tables, pipeline_get_engine_data
-        tables = get_all_tables()
-        tables_lower = [t.lower() for t in tables]
-        load_candidates = [f"{state}_load", f"{state}_sldc"]
-        if not any(c.lower() in tables_lower for c in load_candidates):
-            logger.warning("[switch-region] pipeline.db has no tables for %s", state)
-            return None
-        records = pipeline_get_engine_data(state)
-        if not records:
-            return None
-        df = _pd.DataFrame(records)
-        if 'Datetime' in df.columns:
-            df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
-        logger.info("[switch-region] pipeline.db: %d rows for %s", len(df), state)
-        return df
-    except Exception as _e2:
-        logger.warning("[switch-region] pipeline.db also failed for %s: %s", state, _e2)
-        return None
+    if df is None or df.empty:
+        raise DataUnavailable(
+            f"No data in MySQL for {state} (range={from_date}..{to_date}, days={eff_days})"
+        )
+
+    if 'Datetime' in df.columns:
+        df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
+    logger.info("[switch-region] MySQL: %d rows for %s", len(df), state)
+    return df
 
 
-# Initialize Engine
-DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "final_data.csv")
-engine = EDAEngine(DATA_PATH)
-gridintel = GridIntelControlDesk(DATA_PATH)
-_CURRENT_REGION = None  # None = CSV fallback; set to region name after first switch-region call
+# Initialize Engine — data is loaded from MySQL at startup and on switch-region.
+# EDAEngine needs a valid path to its constructor; we pass a non-existent sentinel
+# so it initialises with an empty _df, which on_startup immediately replaces.
+_SENTINEL_PATH = os.path.join(os.path.dirname(__file__), "_no_csv_sentinel")
+engine = EDAEngine(_SENTINEL_PATH)
+gridintel = GridIntelControlDesk(_SENTINEL_PATH)
+_CURRENT_REGION = None
+_CURRENT_TRAIN_RANGE: Dict[str, str] | None = None
+
+
+def _inject_train_range(config: dict) -> dict:
+    """Add train_from_date/train_to_date from the selected UI date range into pipeline config."""
+    if _CURRENT_TRAIN_RANGE:
+        config.setdefault("train_from_date", _CURRENT_TRAIN_RANGE.get("from"))
+        config.setdefault("train_to_date", _CURRENT_TRAIN_RANGE.get("to"))
+    return config
+
 
 _BASELINE_WINDOW_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _HISTORY_METRICS_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
@@ -175,6 +186,12 @@ _DAYAHEAD_SERIES_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 _ML_INFLIGHT: Dict[Tuple, "asyncio.Future"] = {}
 
 import threading as _threading
+
+# T+2 deduplication: same pattern for the synchronous T+2 pipeline.
+# Key = (t1_date, region). Lock held while pipeline runs; waiters get cached result.
+_T2_INFLIGHT: Dict[Tuple, "_threading.Lock"] = {}
+_T2_INFLIGHT_MUTEX = _threading.Lock()
+_T2_RESULT_CACHE: Dict[Tuple, Any] = {}
 
 # Per-key threading.Lock: guarantees only ONE synchronous pipeline run per
 # (date, region, baseline_days) at a time, even when called from sync routes.
@@ -321,23 +338,76 @@ def _clear_runtime_caches() -> None:
     _ML_INFLIGHT.clear()
     with _COMPUTE_KEY_LOCKS_MUTEX:
         _COMPUTE_KEY_LOCKS.clear()
+    with _T2_INFLIGHT_MUTEX:
+        _T2_INFLIGHT.clear()
+        _T2_RESULT_CACHE.clear()
     _simulator_date_context.cache_clear()
 
 
 @app.on_event("startup")
 async def on_startup():
-    pass  # No warmup — it competes with the first real request and wastes an executor slot.
+    """Load MySQL data at startup so engine._df is never empty on first request."""
+    global engine, gridintel, _CURRENT_REGION
+    startup_region = os.environ.get("STARTUP_REGION", "haryana").lower().strip()
+    try:
+        db_df = await asyncio.to_thread(_load_df_from_pipeline_db, startup_region)
+        import tempfile as _tmp, os as _os2
+        tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
+        db_df.to_csv(tmp, index=False)
+        tmp.close()
+        try:
+            engine   = EDAEngine(tmp.name, region=startup_region)
+            gridintel = GridIntelControlDesk(tmp.name)
+        finally:
+            _os2.unlink(tmp.name)
+        _CURRENT_REGION = startup_region
+        logger.info("[startup] MySQL data loaded for region=%s (%d rows)", startup_region, len(db_df))
+    except Exception as _e:
+        logger.warning("[startup] Could not load MySQL data for %s: %s — engine will be empty until switch-region is called", startup_region, _e)
 
 # --- Lightweight V2 helpers for the new UI ---
 def _get_df(copy=True):
     """Get the engine DataFrame. Use copy=False for read-only operations."""
-    if hasattr(engine, "_df"):
+    if hasattr(engine, "_df") and not engine._df.empty:
         df = engine._df.copy() if copy else engine._df
     else:
-        df = pd.read_csv(DATA_PATH)
+        raise DataUnavailable(
+            "No data loaded. Call /api/v2/switch-region first or check MySQL connectivity."
+        )
     if "date" in df.columns:
         df["date"] = df["date"].astype(str)
+    # Normalize 0-based time blocks (0–95) to 1-based (1–96) expected by V2 + pipelines.
+    if "time_block" in df.columns:
+        tb = pd.to_numeric(df["time_block"], errors="coerce")
+        if tb.notna().any():
+            has_zero = bool((tb == 0).any())
+            max_tb = int(tb.max())
+            has_96 = bool((tb == 96).any())
+            if has_zero and max_tb == 95 and not has_96:
+                df["time_block"] = (tb + 1).astype(int)
+            else:
+                df["time_block"] = tb.astype(int)
     return df
+
+def _filter_df_by_region(df: pd.DataFrame, region: str) -> pd.DataFrame:
+    """Return df rows matching region/state. Falls back to full df if no match."""
+    if not region:
+        return df
+    region_lower = region.lower().strip()
+    for col in ("state", "region"):
+        if col in df.columns:
+            mask = df[col].astype(str).str.lower().str.strip() == region_lower
+            if mask.any():
+                return df[mask].copy()
+    return df
+
+
+def _request_region(payload: Optional[dict] = None, default: str = "haryana") -> str:
+    """Resolve request region without falling back to old Punjab defaults."""
+    payload = payload or {}
+    region = payload.get("region") or _CURRENT_REGION or os.environ.get("STARTUP_REGION") or default
+    return str(region).lower().strip()
+
 
 def _get_valid_dates(df):
     if "date" not in df.columns or "time_block" not in df.columns:
@@ -2758,9 +2828,6 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
 
     momentum_lambda = float(np.clip(float(req.momentum_lambda if req.momentum_lambda is not None else 0.45), 0.3, 0.6))
     
-    # Extract weather components if available from pipeline (skipping legacy engine call)
-    weather_engine_weights = weights_df if not weights_df.empty else None
-    
     # Map pipeline weights to coefficients for response
     # Default zero vectors
     temp_effective_coeff = np.zeros(96, dtype=float)
@@ -3232,36 +3299,55 @@ def reload_data():
 @app.post("/api/switch-region")
 def switch_region(body: dict):
     """Switch the active region: reload engine + gridintel from pipeline DB for that state."""
-    global engine, gridintel, _CURRENT_REGION
+    global engine, gridintel, _CURRENT_REGION, _CURRENT_TRAIN_RANGE
     region = (body.get("region") or "haryana").lower().strip()
     from_date = body.get("from_date") or None
     to_date   = body.get("to_date")   or None
-    # Never short-circuit on "unchanged" — the startup engine is loaded from final_data.csv
-    # (wrong state), so always reload from DB when a region is explicitly selected.
+    # Always reload from MySQL when region is explicitly selected.
+    try:
+        db_df = _load_df_from_pipeline_db(region, from_date=None, to_date=None)
+    except DataUnavailable as exc:
+        logger.warning("[switch-region] %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "data_unavailable",
+                "source": "mysql",
+                "region": region,
+                "message": str(exc),
+                "retryable": True,
+            },
+        )
 
-    db_df = _load_df_from_pipeline_db(region, from_date=from_date, to_date=to_date)
-    if db_df is not None and not db_df.empty:
-        import tempfile, os as _os
-        tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode='w', newline='')
-        db_df.to_csv(tmp, index=False)
-        tmp.close()
-        try:
-            new_engine = EDAEngine(tmp.name, region=region)
-            new_gridintel = GridIntelControlDesk(tmp.name)
-        finally:
-            _os.unlink(tmp.name)
-        source = "pipeline_db"
-    else:
-        # Fallback to original CSV
-        new_engine = EDAEngine(DATA_PATH, region=region)
-        new_gridintel = GridIntelControlDesk(DATA_PATH)
-        source = "csv_fallback"
+    import os as _os
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode='w', newline='')
+    db_df.to_csv(tmp, index=False)
+    tmp.close()
+    try:
+        new_engine = EDAEngine(tmp.name, region=region)
+        new_gridintel = GridIntelControlDesk(tmp.name)
+    finally:
+        _os.unlink(tmp.name)
+    source = "mysql"
 
     engine = new_engine
     gridintel = new_gridintel
     _CURRENT_REGION = region
+    _CURRENT_TRAIN_RANGE = {"from": str(from_date)[:10], "to": str(to_date)[:10]} if from_date and to_date else None
+    # Expose training range to the forecast layer
+    try:
+        setattr(gridintel, "train_range", _CURRENT_TRAIN_RANGE)
+    except Exception:
+        pass
     _clear_runtime_caches()
-    return {"status": "ok", "region": region, "rows": int(len(engine._df)), "source": source}
+    return {
+        "status": "ok",
+        "region": region,
+        "rows": int(len(engine._df)),
+        "source": source,
+        "train_range": _CURRENT_TRAIN_RANGE,
+    }
 
 @app.post("/analytics/temporal")
 def get_temporal_analysis(req: AnalyticsRequest):
@@ -3683,22 +3769,38 @@ async def v2_config():
 
 @app.post("/api/v2/reload")
 async def v2_reload():
-    def _work():
-        engine._df = engine._load_data_static(DATA_PATH)
+    global engine, gridintel, _CURRENT_REGION
+    region = _CURRENT_REGION or os.environ.get("STARTUP_REGION", "haryana")
+    async def _work():
+        global engine, gridintel, _CURRENT_REGION
+        db_df = await asyncio.to_thread(_load_df_from_pipeline_db, region)
+        import tempfile as _tmp, os as _os2
+        tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
+        db_df.to_csv(tmp, index=False)
+        tmp.close()
+        try:
+            new_engine    = EDAEngine(tmp.name, region=region)
+            new_gridintel = GridIntelControlDesk(tmp.name)
+        finally:
+            _os2.unlink(tmp.name)
+        engine    = new_engine
+        gridintel = new_gridintel
+        _CURRENT_REGION = region
+        _clear_runtime_caches()
         df = engine._df
         if "date" in df.columns:
             df["date"] = df["date"].astype(str)
-        _clear_runtime_caches()
-        dates_all = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
         dates_valid = _get_valid_dates(df)
+        dates_all   = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
         return _json_safe({
             "status": "ok",
             "rows": int(len(df)),
             "latest_date": dates_valid[-1] if dates_valid else None,
-            "partial_latest_date": dates_all[-1] if dates_all else None
+            "partial_latest_date": dates_all[-1] if dates_all else None,
+            "region": region,
         })
     try:
-        return await asyncio.to_thread(_work)
+        return await _work()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Reload failed: {exc}")
 
@@ -3712,7 +3814,7 @@ async def v2_dayahead_endpoint(payload: dict):
     payload = payload or {}
     requested    = payload.get("date")
     baseline_days = payload.get("baseline_days", 7)
-    region       = payload.get("region", "punjab")
+    region       = _request_region(payload)
 
     # Resolve date (fast, pandas)
     df = _get_df()
@@ -3770,7 +3872,7 @@ def _build_dayahead_response(
     weather_sensitivity = _compute_weather_sensitivity(baseline_df)
     peak_time_accuracy = _compute_peak_time_accuracy(actual, forecast)
     if include_heavy_metrics:
-        dr_accuracy = _compute_dr_accuracy(df, _get_dates(df))
+        dr_accuracy = _compute_dr_accuracy(df, _get_valid_dates(df))
     else:
         dr_accuracy = _DR_ACCURACY_CACHE.get(("dr_accuracy",) + _df_signature(df), {"dr_accuracy_pct": kpis_full.get("dr_accuracy_pct")})
     interactions = _compute_interactions(actual_df)
@@ -3814,9 +3916,16 @@ def _build_dayahead_response(
     # --- New Weather Analysis Logic ---
     try:
         w_cols = ["temperature", "humidity", "precipitation", "wind_speed",
-                  "cloud_cover", "direct_radiation", "sunshine_duration"]
+                  "cloud_cover", "direct_radiation", "sunshine_duration", "solar_radiation"]
         actual_df = actual_df.copy()
         baseline_df = baseline_df.copy()
+
+        # Alias wind_speed_10m → wind_speed and direct_radiation → solar_radiation if needed
+        for df_ref in [actual_df, baseline_df]:
+            if "wind_speed" not in df_ref.columns and "wind_speed_10m" in df_ref.columns:
+                df_ref["wind_speed"] = df_ref["wind_speed_10m"]
+            if "solar_radiation" not in df_ref.columns and "direct_radiation" in df_ref.columns:
+                df_ref["solar_radiation"] = df_ref["direct_radiation"]
 
         for c in w_cols:
             if c not in actual_df.columns:
@@ -3832,6 +3941,10 @@ def _build_dayahead_response(
         
         if not y_df_raw.empty:
              y_df_working = y_df_raw.copy()
+             if "wind_speed" not in y_df_working.columns and "wind_speed_10m" in y_df_working.columns:
+                 y_df_working["wind_speed"] = y_df_working["wind_speed_10m"]
+             if "solar_radiation" not in y_df_working.columns and "direct_radiation" in y_df_working.columns:
+                 y_df_working["solar_radiation"] = y_df_working["direct_radiation"]
              for c in w_cols:
                  if c not in y_df_working.columns:
                      y_df_working[c] = 0.0
@@ -4029,6 +4142,14 @@ def _build_dayahead_response(
         "slot_sensitivity_profile": dayahead_result.get("slot_sensitivity_profile", []),
         "similar_days": dayahead_result.get("similar_days", []),
         "explanation": dayahead_result.get("explanation") or response_metadata.get("hybrid_ai_explanation"),
+        "forecast_quality": {
+            "engine": dayahead_result.get("engine_used", "statistical_baseline"),
+            "degraded": bool(dayahead_result.get("degraded_mode", False)),
+            "bias_correction_applied": dayahead_result.get("bias_correction_applied"),
+            "calibration_applied": dayahead_result.get("calibration_applied"),
+            "spline_applied": (dayahead_result.get("spline_residual_meta") or {}).get("applied"),
+            "similar_day_baseline_valid": dayahead_result.get("similar_day_baseline_valid", True),
+        },
     }
     # ensure JSON-serializable
     return _json_safe(response)
@@ -4039,7 +4160,7 @@ def _v2_dayahead_sync(payload: dict):
     requested = payload.get("date")
     baseline_days = payload.get("baseline_days", 7)
     calendar_config = payload.get("calendar_config")
-    region = payload.get("region", "punjab")
+    region = _request_region(payload)
     include_heavy_metrics = bool(payload.get("include_heavy_metrics", False))
     resolved, exact, _ = _resolve_date(df, requested)
     if not resolved:
@@ -4058,7 +4179,7 @@ def _v2_dayahead_postprocess(df, payload: dict, resolved: str, exact: bool, daya
     return _build_dayahead_response(
         df, resolved, exact,
         payload.get("baseline_days", 7),
-        payload.get("region", "punjab"),
+        _request_region(payload),
         payload.get("calendar_config"),
         False,
         dayahead_result,
@@ -4067,13 +4188,57 @@ def _v2_dayahead_postprocess(df, payload: dict, resolved: str, exact: bool, daya
 
 
 @app.post("/api/v2/forecast/t2")
-def v2_forecast_t2(payload: dict):
+async def v2_forecast_t2(payload: dict):
+    return await asyncio.to_thread(_v2_forecast_t2_sync_deduped, payload)
+
+
+def _v2_forecast_t2_sync_deduped(payload: dict):
+    """Deduplication wrapper: only one T+2 pipeline per (date, region) at a time.
+
+    Uses double-checked locking: fast cache check → per-key lock → second cache
+    check → run pipeline.  Concurrent callers wait on the lock then get the
+    cached result; they never start a second pipeline run.
+    """
+    payload = payload or {}
+    region = _request_region(payload)
+    requested = payload.get("date", "")
+    cache_key = (str(requested), str(region))
+
+    # Fast path — result already cached
+    with _T2_INFLIGHT_MUTEX:
+        if cache_key in _T2_RESULT_CACHE:
+            logger.info("[T+2 dedup] cache hit for %s / %s", requested, region)
+            return _T2_RESULT_CACHE[cache_key]
+        # Create per-key lock lazily; do NOT acquire it here
+        if cache_key not in _T2_INFLIGHT:
+            _T2_INFLIGHT[cache_key] = _threading.Lock()
+        lock = _T2_INFLIGHT[cache_key]
+
+    # Only one thread runs the pipeline; all others block until it finishes
+    with lock:
+        # Double-check under lock — another thread may have just finished
+        with _T2_INFLIGHT_MUTEX:
+            if cache_key in _T2_RESULT_CACHE:
+                logger.info("[T+2 dedup] secondary cache hit for %s / %s", requested, region)
+                return _T2_RESULT_CACHE[cache_key]
+
+        logger.info("[T+2 dedup] running pipeline for %s / %s", requested, region)
+        result = _v2_forecast_t2_sync(payload)
+
+        with _T2_INFLIGHT_MUTEX:
+            _T2_RESULT_CACHE[cache_key] = result
+            _T2_INFLIGHT.pop(cache_key, None)
+
+    return result
+
+
+def _v2_forecast_t2_sync(payload: dict):
     """
     T+2 (day-after-tomorrow) forecast.
 
     Request body:
-      { "date": "YYYY-MM-DD",  // T+1 date (today's forecast reference)
-        "region": "punjab",
+      { "date": "YYYY-MM-DD",  // Base/reference date (typically latest actual date)
+        "region": "haryana",
         "baseline_days": 7 }
 
     Returns the same structure as /api/v2/dayahead with an added
@@ -4085,11 +4250,45 @@ def v2_forecast_t2(payload: dict):
         raise HTTPException(status_code=404, detail="No data available")
 
     requested = payload.get("date")
-    region = payload.get("region", "punjab")
+    region = _request_region(payload)
     baseline_days = int(payload.get("baseline_days", 7))
-    resolved, _, _ = _resolve_date(df, requested)
-    if not resolved:
-        raise HTTPException(status_code=404, detail="No data available")
+
+    # T+2 base date = latest date in df that has actual data.  If the caller
+    # provides a future date (e.g. today's calendar date when the DB only has
+    # data up to a few days ago), auto-clamp to the latest valid df date so
+    # we don't fail the pipeline on a trivially-fixable input.
+    df_dates = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
+    latest_df_date = df_dates[-1] if df_dates else None
+
+    if requested:
+        base_dt = pd.to_datetime(requested, errors="coerce")
+        if pd.notna(base_dt):
+            # If the requested date is beyond latest df date, clamp to latest
+            if latest_df_date and requested > latest_df_date:
+                logger.info(
+                    "[T+2] requested %s beyond latest df date %s — clamping",
+                    requested, latest_df_date,
+                )
+                base_date = latest_df_date
+                base_dt = pd.to_datetime(base_date, errors="coerce")
+            else:
+                base_date = requested
+        else:
+            base_date, _, _ = _resolve_date(df, None)
+            if not base_date:
+                raise HTTPException(status_code=404, detail="No data available")
+            base_dt = pd.to_datetime(base_date, errors="coerce")
+    else:
+        base_date, _, _ = _resolve_date(df, None)
+        if not base_date:
+            raise HTTPException(status_code=404, detail="No data available")
+        base_dt = pd.to_datetime(base_date, errors="coerce")
+
+    if pd.isna(base_dt):
+        raise HTTPException(status_code=400, detail=f"Invalid date: {base_date!r}")
+    # `date` param matches /v2/live semantics: it IS the T+1 target date.
+    # T+2 is exactly one day later, not two.
+    t1_date = base_dt.strftime("%Y-%m-%d")
 
     # candidate_lookback_days drives how far back the similar-day baseline searches.
     # Use the user's baseline_days request param; minimum 45 days so there's enough
@@ -4097,12 +4296,29 @@ def v2_forecast_t2(payload: dict):
     config = {
         "region": region,
         "candidate_lookback_days": max(45, baseline_days * 7),
+        "forecast_horizon": "t2",
+        "t2_level_norm": {"enabled": True, "blend": 0.45, "ratio_cap": 1.12},
+        "horizon_calibration": {
+            "enabled": True,
+            "t2_blend": 0.72,
+            "t2_segment_blend": 0.45,
+            "t2_ratio_cap": 0.12,
+        },
     }
+    df = _filter_df_by_region(df, region)
     try:
-        result = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
+        result = run_t2_pipeline(df=df, t1_date=t1_date, config=config, region=region)
+    except ValueError as exc:
+        # Known data-availability errors — return 422 with a clear message
+        logger.warning("[T+2] data error: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
+        import traceback as _tb
+        logger.error("[T+2] pipeline error:\n%s", _tb.format_exc())
         raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
 
+    if isinstance(result, dict):
+        result["base_date"] = base_date
     return _json_safe(result)
 
 
@@ -4113,7 +4329,7 @@ def v2_forecast_export(payload: dict = None):
 
     Request body:
       { "date": "YYYY-MM-DD",   // T+1 reference date (defaults to latest)
-        "region": "punjab",
+        "region": "haryana",
         "baseline_days": 7 }
 
     Returns an .xlsx file with sheets:
@@ -4125,7 +4341,7 @@ def v2_forecast_export(payload: dict = None):
     if "date" not in df.columns:
         raise HTTPException(status_code=404, detail="No data available")
 
-    region = payload.get("region", "punjab")
+    region = _request_region(payload)
     baseline_days = int(payload.get("baseline_days", 7))
     resolved, _, _ = _resolve_date(df, payload.get("date"))
     if not resolved:
@@ -4138,9 +4354,20 @@ def v2_forecast_export(payload: dict = None):
         raise HTTPException(status_code=500, detail=f"T+1 pipeline error: {exc}")
 
     # --- T+2 ---
-    config = {"region": region, "candidate_lookback_days": max(45, baseline_days * 7)}
+    config = {
+        "region": region,
+        "candidate_lookback_days": max(45, baseline_days * 7),
+        "forecast_horizon": "t2",
+        "t2_level_norm": {"enabled": True, "blend": 0.45, "ratio_cap": 1.12},
+        "horizon_calibration": {
+            "enabled": True,
+            "t2_blend": 0.72,
+            "t2_segment_blend": 0.45,
+            "t2_ratio_cap": 0.12,
+        },
+    }
     try:
-        t2_raw = run_t2_pipeline(df=df, t1_date=resolved, config=config, region=region)
+        t2_raw = run_t2_pipeline(df=_filter_df_by_region(df, region), t1_date=resolved, config=config, region=region)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"T+2 pipeline error: {exc}")
 
@@ -4195,18 +4422,14 @@ def v2_forecast_export(payload: dict = None):
 
     # ── Styled Excel export ──────────────────────────────────────────────────
     from openpyxl import Workbook
-    from openpyxl.styles import (
-        PatternFill, Font, Alignment, Border, Side, GradientFill
-    )
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
-    from openpyxl.styles.numbers import FORMAT_NUMBER_COMMA_SEPARATED1
 
     # Palette
     CLR_DARK_NAVY   = "0D1B2A"   # sheet title bg
     CLR_NAVY        = "1A3A5C"   # section header bg
     CLR_BLUE_HDR    = "1E5799"   # column header bg
     CLR_ACCENT      = "2196F3"   # accent / forecast
-    CLR_GREEN       = "27AE60"   # actual / positive
     CLR_ORANGE      = "E67E22"   # baseline
     CLR_RED         = "E74C3C"   # warning / P10
     CLR_LIGHT_BLUE  = "EBF4FB"   # alternating row A
@@ -4496,7 +4719,7 @@ def v2_forecast_export(payload: dict = None):
 
 
 @app.get("/forecast")
-def forecast_get(date: Optional[str] = None, baseline_days: int = 7, region: str = "punjab"):
+def forecast_get(date: Optional[str] = None, baseline_days: int = 7, region: str = "haryana"):
     return v2_dayahead({
         "date": date,
         "baseline_days": baseline_days,
@@ -4515,6 +4738,8 @@ def v2_live(payload: dict = None):
     if "date" not in df.columns:
         raise HTTPException(status_code=404, detail="No data available")
     payload = payload or {}
+    region = _request_region(payload)
+    df = _filter_df_by_region(df, region)
 
     dates = sorted(df["date"].dropna().astype(str).unique().tolist())
     if not dates:
@@ -4549,12 +4774,24 @@ def v2_live(payload: dict = None):
     if available_blocks < 2:
         actual_blocks = 0
     config_override = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    config_override.setdefault("forecast_horizon", "t1")
+    config_override.setdefault("horizon_calibration", {
+        "enabled": True,
+        "t1_blend": 0.55,
+        "t1_segment_blend": 0.35,
+        "t1_ratio_cap": 0.10,
+        "live_ratio_weight": 0.55,
+        "live_bias_weight": 0.60,
+        "live_decay_half_blocks": 36,
+        "live_segment_blend_cap": 0.30,
+    })
     if payload.get("calendar_config"):
         config_override["calendar_config"] = payload.get("calendar_config")
-    if payload.get("region"):
-        config_override["region"] = payload.get("region")
+    config_override["region"] = region
     if payload.get("human_behaviour_weight") is not None:
         config_override["human_behaviour_weight"] = float(payload.get("human_behaviour_weight"))
+
+    _inject_train_range(config_override)
 
     try:
         result = run_short_term_pipeline(df, requested_date, actual_blocks=actual_blocks, config=config_override)
@@ -4707,6 +4944,30 @@ def v2_live(payload: dict = None):
             row["mw_diff"] = float(act_val - fc_val) if fc_val is not None and np.isfinite(fc_val) else None
             row["is_actual"] = True
 
+    # Intraday recalibration (A1): use morning settled actuals to correct remaining blocks
+    series = result.get("series", {}) if isinstance(result, dict) else {}
+    if isinstance(series, dict) and actual_blocks >= 8:
+        try:
+            _fc_vec = np.asarray(series.get("forecast", []), dtype=float)
+            _act_vec = np.asarray(series.get("actual", []), dtype=float)
+            if _fc_vec.size == 96 and _act_vec.size >= actual_blocks:
+                _settled = _act_vec[:actual_blocks]
+                _recalib = intraday_recalibrate(_fc_vec, _settled, actual_blocks)
+                if not np.array_equal(_recalib, _fc_vec):
+                    series["forecast"] = _recalib.tolist()
+                    series["intraday_recalibrated"] = True
+                    series["intraday_recalibration_blocks"] = actual_blocks
+                    result["series"] = series
+                    # Sync forecast_df rows
+                    _fdf = result.get("forecast_df")
+                    if isinstance(_fdf, list):
+                        for _i, _r in enumerate(_fdf):
+                            if isinstance(_r, dict) and actual_blocks <= _i < 96:
+                                _r["forecast"] = float(_recalib[_i])
+                                _r["forecast_mw"] = float(_recalib[_i])
+        except Exception as _rc_err:
+            pass  # recalibration is best-effort
+
     # Inject P10/P90 into series for frontend confidence bands
     uncertainty_rows_live = result.get("forecast_uncertainty")
     if isinstance(uncertainty_rows_live, list) and uncertainty_rows_live and isinstance(series, dict):
@@ -4732,6 +4993,174 @@ def v2_live(payload: dict = None):
     result["metadata"]["date_available"] = requested_date in dates
 
     return _json_safe(result)
+
+@app.post("/api/v2/accuracy/live")
+def v2_accuracy_live(payload: dict = None):
+    """Block-level live accuracy tracker.
+
+    Returns per-block APE, running MAPE, drift alerts, and recalibration
+    recommendations for the current day.  Called every 15 min by MonitorPage.
+    """
+    df = _get_df()
+    if "date" not in df.columns:
+        raise HTTPException(status_code=404, detail="No data available")
+    payload = payload or {}
+    region = _request_region(payload)
+    df = _filter_df_by_region(df, region)
+
+    dates = sorted(df["date"].dropna().astype(str).unique().tolist())
+    if not dates:
+        raise HTTPException(status_code=404, detail="No data available")
+
+    target_date = payload.get("date") or dates[-1]
+    if target_date not in dates:
+        target_date = dates[-1]
+
+    forecast_vec = np.asarray(payload.get("forecast", []), dtype=float)
+    actual_vec = np.asarray(payload.get("actual", []), dtype=float)
+    actual_blocks = int(payload.get("actual_blocks", 0))
+
+    if forecast_vec.size != 96:
+        raise HTTPException(status_code=422, detail="forecast must be 96 blocks")
+    if actual_blocks < 1 or actual_vec.size < actual_blocks:
+        return _json_safe({
+            "current_mape": None,
+            "block_mapes": [],
+            "worst_3_blocks": [],
+            "drift_alert": False,
+            "recalibrate_recommended": False,
+            "settled_blocks": 0,
+            "message": "Insufficient settled blocks",
+        })
+
+    settled_a = actual_vec[:actual_blocks]
+    settled_f = forecast_vec[:actual_blocks]
+    valid = (settled_a > 10) & (settled_f > 10)
+    block_apes = np.where(
+        valid,
+        np.abs(settled_a - settled_f) / np.maximum(settled_a, 1.0) * 100.0,
+        np.nan,
+    )
+    current_mape = float(np.nanmean(block_apes)) if valid.any() else None
+
+    # Drift alert: 8+ consecutive settled blocks with APE > 5%
+    drift_alert = False
+    consecutive = 0
+    for ape in block_apes:
+        if np.isnan(ape):
+            consecutive = 0
+            continue
+        if ape > 5.0:
+            consecutive += 1
+            if consecutive >= 8:
+                drift_alert = True
+                break
+        else:
+            consecutive = 0
+
+    # Worst 3 blocks
+    worst_indices = np.argsort(np.where(np.isnan(block_apes), -1, block_apes))[-3:][::-1]
+    worst_3 = [
+        {
+            "block": int(i + 1),
+            "ape": round(float(block_apes[i]), 2) if not np.isnan(block_apes[i]) else None,
+            "forecast_mw": round(float(settled_f[i]), 1),
+            "actual_mw": round(float(settled_a[i]), 1),
+        }
+        for i in worst_indices if not np.isnan(block_apes[i])
+    ]
+
+    recalibrate_recommended = drift_alert and actual_blocks < 72
+
+    return _json_safe({
+        "current_mape": round(current_mape, 3) if current_mape is not None else None,
+        "block_mapes": [round(float(v), 3) if not np.isnan(v) else None for v in block_apes],
+        "worst_3_blocks": worst_3,
+        "drift_alert": drift_alert,
+        "recalibrate_recommended": recalibrate_recommended,
+        "settled_blocks": actual_blocks,
+        "target_date": target_date,
+        "region": region,
+    })
+
+
+@app.post("/api/v2/backtest")
+def v2_backtest(payload: dict = None):
+    """Date-range accuracy backtest.
+
+    Runs the short-term pipeline retrospectively for each date in [date_from, date_to]
+    and returns per-day MAPE, accuracy %, worst block, and weather flag.
+    Powered by the existing backtester.run_backtest utility.
+    """
+    df = _get_df()
+    if "date" not in df.columns:
+        raise HTTPException(status_code=404, detail="No data available")
+    payload = payload or {}
+    region = payload.get("region") or _request_region(payload)
+    df = _filter_df_by_region(df, region)
+
+    date_from = payload.get("date_from")
+    date_to = payload.get("date_to")
+
+    try:
+        import pandas as _pd
+        all_dates = sorted(df["date"].dropna().astype(str).unique().tolist())
+
+        if date_from:
+            all_dates = [d for d in all_dates if d >= str(date_from)[:10]]
+        if date_to:
+            all_dates = [d for d in all_dates if d <= str(date_to)[:10]]
+
+        if not all_dates:
+            return _json_safe({"daily_results": [], "summary": {}, "region": region})
+
+        # Cap at 14 days to keep response time under ~60s
+        MAX_DAYS = 14
+        if len(all_dates) > MAX_DAYS:
+            all_dates = all_dates[-MAX_DAYS:]
+        n_days = len(all_dates)
+
+        def _pipeline_fn(df_, target_date, config=None):
+            return run_short_term_pipeline(
+                df_, target_date, actual_blocks=0, config=config or {}
+            )
+
+        result = run_backtest(
+            df=df,
+            pipeline_fn=_pipeline_fn,
+            n_days=n_days,
+            actual_blocks_sim=0,
+            config={"region": region},
+        )
+
+        # Enrich daily results with weather flag from metadata
+        daily = result.get("daily_results", [])
+        for row in daily:
+            temp = row.get("avg_temp_c")
+            if temp is not None:
+                if temp >= 38:
+                    row["weather_flag"] = "extreme_temp"
+                elif temp >= 32:
+                    row["weather_flag"] = "high_temp"
+                elif temp <= 15:
+                    row["weather_flag"] = "cold"
+                else:
+                    row["weather_flag"] = "normal"
+            # Rename mape → t1_mape for consistency
+            if "mape" in row and "t1_mape" not in row:
+                row["t1_mape"] = row.pop("mape")
+            row["t2_mape"] = None  # T+2 not run in basic backtest
+
+        return _json_safe({
+            "daily_results": daily,
+            "summary": result.get("summary_metrics", {}),
+            "region": region,
+            "date_from": date_from,
+            "date_to": date_to,
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Backtest error: {exc}")
+
 
 @app.post("/api/v2/history")
 def v2_history():
@@ -4941,8 +5370,6 @@ async def v2_precompute(payload: dict):
     if not resolved:
         raise HTTPException(status_code=404, detail="No data available")
 
-    loop = asyncio.get_event_loop()
-
     async def _safe(coro, label):
         try:
             return await coro
@@ -5088,7 +5515,6 @@ async def v2_prepare(payload: dict):
     """
     date = payload.get("date")
     region = payload.get("region", "haryana")
-    baseline_days = int(payload.get("baseline_days", 7))
 
     def _work():
         df = _get_df()
@@ -5270,7 +5696,7 @@ def _make_cache_key(target_date: str, baseline_days: int, region: str, df) -> tu
     return ("dayahead", str(target_date), int(baseline_days), str(region)) + (sig,)
 
 
-def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "punjab", progress_cb=None):
+def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "haryana", progress_cb=None):
     """Sync pipeline runner — always checks cache first, runs pipeline on miss.
     Uses per-key threading.Lock so only ONE pipeline run executes per unique
     (date, region, baseline_days) even under concurrent synchronous callers."""
@@ -5294,26 +5720,40 @@ def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "p
 
         logger.info("[pipeline] starting run for %s (region=%s, window=%s)", target_date, region, baseline_days)
         try:
+            df = _filter_df_by_region(df, region)
             config = {
                 "candidate_lookback_days": int(baseline_days) if baseline_days else 7,
                 "weather_tune_iters": 0,
                 "region": region,
+                "forecast_horizon": "t1",
+                "horizon_calibration": {
+                    "enabled": True,
+                    "t1_blend": 0.50,
+                    "t1_segment_blend": 0.30,
+                    "t1_ratio_cap": 0.08,
+                    "live_ratio_weight": 0.55,
+                    "live_bias_weight": 0.60,
+                    "live_decay_half_blocks": 36,
+                    "live_segment_blend_cap": 0.30,
+                },
             }
+            _inject_train_range(config)
             if progress_cb is not None:
                 config["progress_callback"] = progress_cb
 
             # Auto-detect how many consecutive valid blocks exist for target_date.
             # This prevents raw 0s in the trailing portion of an incomplete day from
             # appearing as actual values in the chart (they should be null/None).
-            _day = df[df["date"].astype(str) == target_date].copy()
-            _day["total_drawal"] = pd.to_numeric(_day.get("total_drawal", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
-            _day = _day[_day["time_block"].between(1, 96)].sort_values("time_block")
             _detected_blocks = 0
-            for _b in range(1, 97):
-                _row = _day[_day["time_block"] == _b]
-                if _row.empty or float(_row["total_drawal"].iloc[0]) < 50.0:
-                    break
-                _detected_blocks = _b
+            if "date" in df.columns and "time_block" in df.columns:
+                _day = df[df["date"].astype(str) == target_date].copy()
+                _day["total_drawal"] = pd.to_numeric(_day.get("total_drawal", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+                _day = _day[_day["time_block"].between(1, 96)].sort_values("time_block")
+                for _b in range(1, 97):
+                    _row = _day[_day["time_block"] == _b]
+                    if _row.empty or float(_row["total_drawal"].iloc[0]) < 50.0:
+                        break
+                    _detected_blocks = _b
 
             result = run_short_term_pipeline(df, target_date, actual_blocks=_detected_blocks, config=config)
             result = _refresh_live_analytics_from_final_series(result, _detected_blocks)
@@ -5330,7 +5770,7 @@ def _compute_dayahead(df, target_date: str, baseline_days: int, region: str = "p
         return None
 
 
-async def _compute_dayahead_async(df, target_date: str, baseline_days: int, region: str = "punjab", progress_cb=None):
+async def _compute_dayahead_async(df, target_date: str, baseline_days: int, region: str = "haryana", progress_cb=None):
     """Async wrapper with in-flight deduplication.
 
     If a pipeline run for this (date, region, baseline_days) is already in progress,
@@ -5435,7 +5875,7 @@ def v2_sldc_export(payload: dict = None):
     payload = payload or {}
     df = _get_df(copy=False)
     date_str = payload.get("date")
-    region = payload.get("region", _app_config.get("region", "punjab"))
+    region = _request_region(payload)
 
     if not date_str:
         valid_dates = _get_valid_dates(df)
@@ -5443,14 +5883,27 @@ def v2_sldc_export(payload: dict = None):
     if not date_str:
         raise HTTPException(status_code=404, detail="No date available")
 
-    result = _compute_dayahead(df.copy(), date_str, 7)
+    result = _compute_dayahead(df.copy(), date_str, 7, region=region)
     if not result:
         raise HTTPException(status_code=404, detail="Forecast unavailable for date")
 
     series = result.get("series", {})
     blocks = series.get("blocks", list(range(1, 97)))
     forecast = series.get("forecast", [0] * 96)
-    baseline = series.get("baseline", [0] * 96)
+    baseline = (
+        series.get("hybrid_baseline")
+        or series.get("historical_baseline")
+        or series.get("baseline")
+        or [0] * 96
+    )
+    season = str((result.get("metadata") or {}).get("season", "summer"))
+    validation = validate_sldc_schedule(
+        forecast,
+        baseline,
+        season=season,
+        enforce=bool(payload.get("enforce_validation", True)),
+    )
+    forecast = validation.forecast.tolist()
 
     # Build SLDC format: Block | Time | Schedule_MW | Baseline_MW
     rows = []
@@ -5474,6 +5927,7 @@ def v2_sldc_export(payload: dict = None):
         "timestamp": pd.Timestamp.now().isoformat(),
         "total_energy_mwh": round(sum(r["Schedule_MW"] for r in rows) * 0.25, 1),
         "peak_mw": round(max(r["Schedule_MW"] for r in rows), 1),
+        "sldc_validation": validation.metadata,
         "data": rows,
     }
 
@@ -5491,7 +5945,8 @@ def v2_save_revision(payload: dict = None):
         raise HTTPException(status_code=400, detail="Date required")
 
     df = _get_df(copy=False)
-    result = _compute_dayahead(df.copy(), date_str, 7)
+    region = _request_region(payload)
+    result = _compute_dayahead(df.copy(), date_str, 7, region=region)
     if not result:
         raise HTTPException(status_code=404, detail="No forecast for date")
 
@@ -5525,6 +5980,7 @@ def v2_model_performance(payload: dict = None):
     """Daily accuracy scorecard with 30-day rolling metrics and drift detection."""
     payload = payload or {}
     df = _get_df(copy=False)
+    region = _request_region(payload)
     n_days = int(payload.get("n_days", 30))
     valid_dates = _get_valid_dates(df)
     recent_dates = valid_dates[-n_days:] if len(valid_dates) >= n_days else valid_dates
@@ -5532,7 +5988,7 @@ def v2_model_performance(payload: dict = None):
     daily_scores = []
     for date_str in recent_dates:
         try:
-            result = _compute_dayahead(df.copy(), date_str, 7)
+            result = _compute_dayahead(df.copy(), date_str, 7, region=region)
             if not result:
                 continue
             series = result.get("series", {})
@@ -5637,6 +6093,7 @@ def v2_backtest(payload: dict = None):
 
     def _pipeline_wrapper(df_inner, target_date, config=None):
         merged = {**config_override, **(config or {})}
+        _inject_train_range(merged)
         return run_short_term_pipeline(df_inner, target_date, config=merged)
 
     result = run_backtest(

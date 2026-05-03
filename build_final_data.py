@@ -27,9 +27,8 @@ Usage:
 import argparse
 import math
 import os
-import sys
+from datetime import datetime
 from pathlib import Path
-from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -78,6 +77,9 @@ def _get(path: str, params: dict) -> list[dict]:
     return []
 
 
+_MAX_ROWS_PER_REQUEST = int(os.environ.get("PIPELINE_API_MAX_LIMIT", "9600"))  # 100 days × 96 blocks
+
+
 def _fetch_table(
     path: str,
     state: str,
@@ -86,23 +88,44 @@ def _fetch_table(
     days: int = 120,
 ) -> list[dict]:
     """
-    Fetch rows from the API with optional date-range filtering.
-    If from_date/to_date are provided they are sent as query params so the
-    server only returns the relevant window.  The row limit is derived from
-    the actual window size rather than a fixed multiplier.
+    Fetch rows from the API with date-range chunking so we never exceed the
+    server's max page size.  Chunks the requested window into N-day slices
+    and concatenates results.
     """
-    params: dict = {"state": state.upper()}
-
+    # Resolve the full window into absolute from/to dates
+    import datetime as _dt
+    today = _dt.date.today()
     if from_date:
-        params["from_date"] = from_date[:10]
+        start_dt = _dt.date.fromisoformat(from_date[:10])
+    else:
+        total_days = _date_range_to_days(from_date, to_date, default=days)
+        start_dt = today - _dt.timedelta(days=total_days)
     if to_date:
-        params["to_date"] = to_date[:10]
+        end_dt = _dt.date.fromisoformat(to_date[:10])
+    else:
+        end_dt = today
 
-    # Derive limit from window; add headroom for partial days
-    window_days = _date_range_to_days(from_date, to_date, default=days)
-    params["limit"] = window_days * 96 + 500
+    if end_dt < start_dt:
+        start_dt, end_dt = end_dt, start_dt
 
-    return _get(path, params)
+    chunk_days = max(1, _MAX_ROWS_PER_REQUEST // 96)  # how many days fit per request
+    all_rows: list[dict] = []
+    cursor = start_dt
+    while cursor <= end_dt:
+        chunk_end = min(cursor + _dt.timedelta(days=chunk_days - 1), end_dt)
+        params = {
+            "state": state.upper(),
+            "from_date": cursor.isoformat(),
+            "to_date":   chunk_end.isoformat(),
+            "limit":     _MAX_ROWS_PER_REQUEST,
+        }
+        rows = _get(path, params)
+        all_rows.extend(rows)
+        if chunk_end >= end_dt:
+            break
+        cursor = chunk_end + _dt.timedelta(days=1)
+
+    return all_rows
 
 
 def _norm_load_df(rows: list[dict]) -> pd.DataFrame:
@@ -413,7 +436,7 @@ def build_final_data(
     else:
         weather_norm = normalise_weather(wdf)
 
-    print(f"[3/4] Joining load + weather ...")
+    print("[3/4] Joining load + weather ...")
     weather_norm["date"] = pd.to_datetime(weather_norm["date"], errors="coerce")
     weather_norm["time_block"] = pd.to_numeric(weather_norm["time_block"], errors="coerce").astype("Int64")
 
@@ -444,7 +467,7 @@ def build_final_data(
 
     merged = filtered
 
-    print(f"[4/4] Engineering features ...")
+    print("[4/4] Engineering features ...")
     result = add_features(merged)
 
     # Reorder to final column set, fill any missing with NaN

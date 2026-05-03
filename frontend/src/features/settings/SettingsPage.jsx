@@ -1,5 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Database, Globe, Plus, Shield, UserCircle2, Workflow } from 'lucide-react';
+import {
+  PageShell as VpPageShell,
+  PageHeader as VpPageHeader,
+  Pill as VpPill,
+} from '../../components/page/PagePrimitives.jsx';
 
 const TABS = [
   { id: 'profile', label: 'User Profile' },
@@ -271,20 +276,7 @@ export default function SettingsPage({
   };
 
   return (
-    <main style={S.page}>
-      <section style={S.hero}>
-        <div>
-          <div style={S.heroTitle}>Settings</div>
-          <div style={S.heroSub}>
-            Manage user identity, connected sources, database endpoints, and workspace defaults through tabs so each settings area is focused and usable.
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span style={S.badge('#34D399')}><Shield size={12} /> Secure Session</span>
-          <span style={S.badge('#5B9FE4')}><UserCircle2 size={12} /> {profile.role}</span>
-          <span style={S.badge('#F07825')}><Globe size={12} /> {profile.region}</span>
-        </div>
-      </section>
+    <VpPageShell className="settings-page">
 
       <section style={S.workspace}>
         <div style={S.workspaceHeader}>
@@ -545,6 +537,6 @@ export default function SettingsPage({
           )}
         </div>
       </section>
-    </main>
+    </VpPageShell>
   );
 }

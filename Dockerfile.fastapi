@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps for psycopg2, lightgbm, torch
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libpq-dev libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+# Install CPU-only torch first (avoids pulling the 3 GB CUDA build)
+RUN pip install --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ ./backend/
+COPY config.py .
+COPY build_final_data.py .
+
+ENV PORT=8000
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

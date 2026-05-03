@@ -1,7 +1,9 @@
-import requests
-import time
-import subprocess
 import os
+import subprocess
+import time
+
+import requests
+
 
 def test_baseline_sync():
     base_url = "http://localhost:8000"

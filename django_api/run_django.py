@@ -9,9 +9,9 @@ For production use gunicorn:
     gunicorn django_api.wsgi:application --bind 0.0.0.0:8001 --workers 2
 """
 
+import argparse
 import os
 import sys
-import argparse
 
 # Make sure Django can find its settings
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +24,9 @@ parser.add_argument("--port", default="8001")
 args = parser.parse_args()
 
 import django
+
 django.setup()
 
 from django.core.management import call_command
+
 call_command("runserver", f"{args.host}:{args.port}", "--noreload")

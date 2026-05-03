@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import React, { useMemo } from 'react';
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 type Props = {
   open: boolean;
@@ -26,12 +26,25 @@ export const ScenarioCompareModal: React.FC<Props> = ({ open, payload, onClose }
             <h3>Scenario Compare</h3>
             <span>Baseline vs Scenario</span>
           </div>
-          <button className="secondary-btn" onClick={onClose}>Close</button>
+          <button className="secondary-btn" onClick={onClose}>
+            Close
+          </button>
         </div>
         <div className="sim-compare-metrics">
-          <div><span>Peak Change</span><strong>{Number(payload?.diff_metrics?.peak_change || 0).toFixed(2)} MW</strong></div>
-          <div><span>Total Energy Change</span><strong>{Number(payload?.diff_metrics?.total_energy_change || 0).toFixed(2)} MWh</strong></div>
-          <div><span>Max Block Delta</span><strong>{Number(payload?.diff_metrics?.max_block_delta || 0).toFixed(2)} MW</strong></div>
+          <div>
+            <span>Peak Change</span>
+            <strong>{Number(payload?.diff_metrics?.peak_change || 0).toFixed(2)} MW</strong>
+          </div>
+          <div>
+            <span>Total Energy Change</span>
+            <strong>
+              {Number(payload?.diff_metrics?.total_energy_change || 0).toFixed(2)} MWh
+            </strong>
+          </div>
+          <div>
+            <span>Max Block Delta</span>
+            <strong>{Number(payload?.diff_metrics?.max_block_delta || 0).toFixed(2)} MW</strong>
+          </div>
         </div>
         <div style={{ height: 320 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -39,7 +52,13 @@ export const ScenarioCompareModal: React.FC<Props> = ({ open, payload, onClose }
               <XAxis dataKey="block" />
               <YAxis />
               <Tooltip />
-              <Line dataKey="base" stroke="#c8b39b" strokeDasharray="5 5" dot={false} name="Baseline" />
+              <Line
+                dataKey="base"
+                stroke="#c8b39b"
+                strokeDasharray="5 5"
+                dot={false}
+                name="Baseline"
+              />
               <Line dataKey="target" stroke="#4f7d5c" dot={false} name="Scenario" />
             </LineChart>
           </ResponsiveContainer>

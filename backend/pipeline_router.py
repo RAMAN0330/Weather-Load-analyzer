@@ -6,9 +6,11 @@ Mount point: /api/pipeline  (included in main.py)
 """
 import os
 import sqlite3
+
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
+from sklearn.linear_model import LinearRegression
 
 try:
     import holidays as holidays_lib
@@ -165,6 +167,177 @@ def pipeline_get_weather_loc(state: str, days: int = Query(60)):
                     break
         df = filter_last_days(df, days)
         return df.to_dict(orient='records')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/circle-impact/{state}")
+def pipeline_get_circle_impact(state: str, days: int = Query(365)):
+    """
+    Haryana-specific (but works if table exists for any state):
+    Rank circles by impact on total state load using history.
+
+    Returns per-circle:
+      - avg_share_pct (energy share proxy)
+      - corr_daily_mean (circle vs total daily mean)
+      - beta_mw_per_mw (slope from linear regression total~circle)
+      - r2
+    """
+    tables = get_all_tables()
+    tables_lower = [t.lower() for t in tables]
+
+    state_norm = state.upper().replace(" ", "_").replace("-", "_")
+    circle_candidates = [
+        f"{state_norm}_circle_load",
+        f"{state_norm}_circleload",
+        f"{state.lower()}_circle_load",
+        f"{state.lower()}_circleload",
+    ]
+    circle_table = None
+    for c in circle_candidates:
+        if c.lower() in tables_lower:
+            circle_table = tables[tables_lower.index(c.lower())]
+            break
+    if circle_table is None:
+        return {"state": state_norm, "available": False, "circles": []}
+
+    load_candidates = [
+        f"{state_norm}_sldc", f"{state_norm}_load",
+        f"{state.lower()}_sldc", f"{state.lower()}_load",
+    ]
+    load_table = None
+    for c in load_candidates:
+        if c.lower() in tables_lower:
+            load_table = tables[tables_lower.index(c.lower())]
+            break
+    if load_table is None:
+        raise HTTPException(status_code=404, detail=f"No load table found for state '{state}'")
+
+    try:
+        conn = get_conn()
+        cdf = pd.read_sql_query(f'SELECT * FROM "{circle_table}"', conn)
+        ldf = pd.read_sql_query(f'SELECT * FROM "{load_table}"', conn)
+        conn.close()
+
+        cdf = normalize_df(cdf)
+        ldf = normalize_df(ldf)
+
+        # Ensure date column name
+        if "date" not in cdf.columns:
+            for col in cdf.columns:
+                if "date" in col.lower():
+                    cdf = cdf.rename(columns={col: "date"})
+                    break
+        if "date" not in ldf.columns:
+            for col in ldf.columns:
+                if "date" in col.lower():
+                    ldf = ldf.rename(columns={col: "date"})
+                    break
+
+        cdf = filter_last_days(cdf, days)
+        ldf = filter_last_days(ldf, days)
+
+        # Circle name column detection
+        circle_col = None
+        for cand in ["circle", "circle_name", "zone", "area", "location", "discom_circle"]:
+            if cand in cdf.columns:
+                circle_col = cand
+                break
+        if circle_col is None:
+            non_key = [c for c in cdf.columns if c not in {"date", "time_block"}]
+            # Prefer first object-like column
+            for c in non_key:
+                if cdf[c].dtype == object:
+                    circle_col = c
+                    break
+        if circle_col is None:
+            raise HTTPException(status_code=500, detail="Could not detect circle name column in circle_load table.")
+
+        # Circle load value detection
+        value_col = None
+        for cand in ["total_drawal", "load", "load_mw", "mw", "demand", "value"]:
+            if cand in cdf.columns:
+                value_col = cand
+                break
+        if value_col is None:
+            numeric_cols = [c for c in cdf.columns if c not in {"date", "time_block", circle_col} and pd.api.types.is_numeric_dtype(cdf[c])]
+            if numeric_cols:
+                value_col = numeric_cols[0]
+        if value_col is None:
+            raise HTTPException(status_code=500, detail="Could not detect circle load value column in circle_load table.")
+
+        # Total load value
+        total_col = "total_drawal" if "total_drawal" in ldf.columns else ("load" if "load" in ldf.columns else None)
+        if total_col is None:
+            raise HTTPException(status_code=500, detail="Could not detect total load column in load table.")
+
+        cdf["date"] = cdf["date"].astype(str)
+        ldf["date"] = ldf["date"].astype(str)
+        cdf["time_block"] = pd.to_numeric(cdf.get("time_block"), errors="coerce")
+        ldf["time_block"] = pd.to_numeric(ldf.get("time_block"), errors="coerce")
+        cdf[value_col] = pd.to_numeric(cdf[value_col], errors="coerce")
+        ldf[total_col] = pd.to_numeric(ldf[total_col], errors="coerce")
+
+        cdf = cdf.dropna(subset=["date", "time_block", circle_col, value_col])
+        ldf = ldf.dropna(subset=["date", "time_block", total_col])
+        cdf["time_block"] = cdf["time_block"].astype(int)
+        ldf["time_block"] = ldf["time_block"].astype(int)
+
+        merged = pd.merge(
+            cdf[["date", "time_block", circle_col, value_col]],
+            ldf[["date", "time_block", total_col]],
+            on=["date", "time_block"],
+            how="inner",
+        )
+        if merged.empty:
+            return {"state": state_norm, "available": True, "circles": []}
+
+        merged = merged.rename(columns={circle_col: "circle", value_col: "circle_load", total_col: "total_load"})
+
+        # Daily aggregates for correlation/regression
+        daily = merged.groupby(["date", "circle"], as_index=False)[["circle_load", "total_load"]].mean()
+
+        out = []
+        for circle, grp in daily.groupby("circle"):
+            x = grp["circle_load"].to_numpy(dtype=float).reshape(-1, 1)
+            y = grp["total_load"].to_numpy(dtype=float).reshape(-1)
+            if len(y) < 8 or not np.isfinite(y).all() or not np.isfinite(x).all():
+                continue
+            # correlation on daily means
+            corr = float(np.corrcoef(x.reshape(-1), y)[0, 1]) if len(y) >= 2 else 0.0
+            reg = LinearRegression()
+            reg.fit(x, y)
+            r2 = float(reg.score(x, y))
+            beta = float(reg.coef_.reshape(-1)[0])
+
+            # share (energy proxy): sum(circle)/sum(total) over merged history
+            share = float(
+                merged.loc[merged["circle"] == circle, "circle_load"].sum()
+                / max(float(merged["total_load"].sum()), 1e-9)
+                * 100.0
+            )
+            out.append(
+                {
+                    "circle": str(circle),
+                    "n_days": int(grp["date"].nunique()),
+                    "avg_share_pct": round(share, 3),
+                    "corr_daily_mean": round(corr, 4),
+                    "beta_mw_per_mw": round(beta, 4),
+                    "r2": round(r2, 4),
+                }
+            )
+
+        out = sorted(out, key=lambda r: (r.get("avg_share_pct", 0.0), r.get("r2", 0.0)), reverse=True)
+        return {
+            "state": state_norm,
+            "available": True,
+            "table": circle_table,
+            "days_window": int(days),
+            "circles": out,
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -421,7 +594,8 @@ def pipeline_get_engine_data(state: str):
 
             wx_cols = ['date', 'time_block', 'temperature', 'humidity',
                        'precipitation', 'cloud_cover', 'cloud_cover_low',
-                       'wind_speed_10m', 'sunshine_duration', 'direct_radiation']
+                       'wind_speed_10m', 'wind_speed_80m',
+                       'sunshine_duration', 'direct_radiation']
             wx_df = wx_df[[c for c in wx_cols if c in wx_df.columns]]
 
             # Dates with actual load → historical weather (training).

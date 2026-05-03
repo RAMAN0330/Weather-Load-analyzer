@@ -1,5 +1,5 @@
-import type { BlockDriver } from "./types";
-import { recalcBlock } from "./utils";
+import type { BlockDriver } from './types';
+import { recalcBlock } from './utils';
 
 export const buildMockBlocks = (): BlockDriver[] => {
   const points: BlockDriver[] = [];
@@ -7,7 +7,7 @@ export const buildMockBlocks = (): BlockDriver[] => {
     const t = (b - 1) / 96;
     const morning = Math.exp(-((t - 0.34) ** 2) / 0.004);
     const evening = Math.exp(-((t - 0.78) ** 2) / 0.008);
-    const baseline = 4300 + (850 * morning) + (1200 * evening) + (120 * Math.sin(2 * Math.PI * t));
+    const baseline = 4300 + 850 * morning + 1200 * evening + 120 * Math.sin(2 * Math.PI * t);
     points.push(
       recalcBlock({
         block_number: b,
@@ -25,4 +25,3 @@ export const buildMockBlocks = (): BlockDriver[] => {
   }
   return points;
 };
-
