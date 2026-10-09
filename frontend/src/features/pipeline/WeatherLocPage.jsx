@@ -7,17 +7,7 @@ import {
   PageHeader as VpPageHeader,
   Pill as VpPill,
 } from '../../components/page/PagePrimitives.jsx';
-
-const COLORS = [
-  '#F07825',
-  '#5B9FE4',
-  '#34D399',
-  '#F87171',
-  '#FBBF24',
-  '#C084FC',
-  '#45b7d1',
-  '#F472B6',
-];
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 
 const VAR_OPTIONS = [
   { value: 'temperature_2m', label: 'Temperature (°C)' },
@@ -26,27 +16,33 @@ const VAR_OPTIONS = [
   { value: 'precipitation', label: 'Precipitation (mm)' },
 ];
 
-const DARK_TOOLTIP = {
-  trigger: 'axis',
-  backgroundColor: 'rgba(20,19,26,0.95)',
-  borderColor: 'rgba(255,255,255,0.1)',
-  borderWidth: 1,
-  textStyle: { color: '#ECEEF3', fontSize: 12 },
-};
-const DARK_LEGEND = {
-  type: 'scroll',
-  bottom: 0,
-  icon: 'roundRect',
-  itemWidth: 14,
-  itemHeight: 8,
-  textStyle: { fontSize: 11, color: '#A0A5B8' },
-};
-const DARK_AXIS = {
-  axisLine: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
-  axisTick: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
-  axisLabel: { color: '#A0A5B8', fontSize: 11 },
-  splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)', type: 'dashed' } },
-};
+// Chart theme — resolved from CSS tokens (see docs/theming-guide.md).
+function chartTheme(tk) {
+  return {
+    COLORS: [tk.warm, tk.accent, tk.success, tk.danger, tk.warning, tk.accent2, tk.info, tk.textSecondary],
+    DARK_TOOLTIP: {
+      trigger: 'axis',
+      backgroundColor: tk.elevated,
+      borderColor: tk.outline,
+      borderWidth: 1,
+      textStyle: { color: tk.text, fontSize: 12 },
+    },
+    DARK_LEGEND: {
+      type: 'scroll',
+      bottom: 0,
+      icon: 'roundRect',
+      itemWidth: 14,
+      itemHeight: 8,
+      textStyle: { fontSize: 11, color: tk.textSecondary },
+    },
+    DARK_AXIS: {
+      axisLine: { lineStyle: { color: tk.outline } },
+      axisTick: { lineStyle: { color: tk.outline } },
+      axisLabel: { color: tk.textSecondary, fontSize: 11 },
+      splitLine: { lineStyle: { color: withAlpha(tk.outline, 0.6), type: 'dashed' } },
+    },
+  };
+}
 
 const S = {
   page: {
@@ -157,7 +153,7 @@ const S = {
     cursor: 'pointer',
     userSelect: 'none',
     background: active ? 'var(--accent)' : 'var(--bg-surface)',
-    color: active ? '#fff' : 'var(--text-secondary)',
+    color: active ? 'var(--accent-fg)' : 'var(--text-secondary)',
     border: `1px solid ${active ? 'var(--accent)' : 'var(--outline)'}`,
     fontWeight: active ? 600 : 400,
   }),
@@ -176,6 +172,8 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedLocs, setSelectedLocs] = useState([]);
   const [activeTab, setActiveTab] = useState('overlay');
+  const tk = useChartTokens();
+  const { COLORS, DARK_TOOLTIP, DARK_LEGEND, DARK_AXIS } = useMemo(() => chartTheme(tk), [tk]);
 
   useEffect(() => {
     if (!initialState) return;
@@ -263,10 +261,10 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
         name: 'Block',
         ...DARK_AXIS,
       },
-      yAxis: { type: 'value', name: varLabel, nameTextStyle: { color: '#A0A5B8' }, ...DARK_AXIS },
+      yAxis: { type: 'value', name: varLabel, nameTextStyle: { color: tk.textSecondary }, ...DARK_AXIS },
       series,
     };
-  }, [selectedDate, selectedLocs, selectedVar, data]);
+  }, [selectedDate, selectedLocs, selectedVar, data, tk]);
 
   // Time-series chart: selected locations across all dates
   const tsOption = useMemo(() => {
@@ -312,25 +310,25 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
           rotate: 30,
           fontSize: 9,
           interval: Math.floor(xData.length / 10),
-          color: '#A0A5B8',
+          color: tk.textSecondary,
         },
         axisLine: DARK_AXIS.axisLine,
         axisTick: DARK_AXIS.axisTick,
       },
-      yAxis: { type: 'value', name: varLabel, nameTextStyle: { color: '#A0A5B8' }, ...DARK_AXIS },
+      yAxis: { type: 'value', name: varLabel, nameTextStyle: { color: tk.textSecondary }, ...DARK_AXIS },
       dataZoom: [
         { type: 'inside' },
         {
           type: 'slider',
           height: 18,
           bottom: 28,
-          borderColor: 'rgba(255,255,255,0.1)',
-          fillerColor: 'rgba(240,120,37,0.15)',
+          borderColor: tk.outline,
+          fillerColor: withAlpha(tk.accent, 0.15),
         },
       ],
       series,
     };
-  }, [selectedLocs, selectedVar, data]);
+  }, [selectedLocs, selectedVar, data, tk]);
 
   const avgByLoc = useMemo(() => {
     if (!data.length || !selectedDate) return [];
@@ -433,7 +431,7 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#F87171',
+            color: 'var(--danger)',
             fontSize: 13,
           }}
         >
@@ -520,7 +518,7 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
               {circleLoading ? (
                 <div style={S.empty}>Loading circle impact…</div>
               ) : circleError ? (
-                <div style={{ ...S.empty, color: '#F87171' }}>{circleError}</div>
+                <div style={{ ...S.empty, color: 'var(--danger)' }}>{circleError}</div>
               ) : !circleImpact?.available ? (
                 <div style={S.empty}>No circle_load table found for Haryana.</div>
               ) : (circleImpact?.circles || []).length === 0 ? (
@@ -529,7 +527,7 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
                 <div style={{ padding: '10px 12px 14px', overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                     <thead>
-                      <tr style={{ color: '#A0A5B8', textAlign: 'left' }}>
+                      <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
                         <th style={{ padding: '8px 6px' }}>Circle</th>
                         <th style={{ padding: '8px 6px' }}>Share %</th>
                         <th style={{ padding: '8px 6px' }}>Corr</th>
@@ -540,8 +538,8 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
                     </thead>
                     <tbody>
                       {(circleImpact.circles || []).slice(0, 12).map((r) => (
-                        <tr key={r.circle} style={{ borderTop: '1px solid #2A292F' }}>
-                          <td style={{ padding: '8px 6px', color: '#ECEEF3' }}>{r.circle}</td>
+                        <tr key={r.circle} style={{ borderTop: '1px solid var(--outline)' }}>
+                          <td style={{ padding: '8px 6px', color: 'var(--text)' }}>{r.circle}</td>
                           <td style={{ padding: '8px 6px' }}>{r.avg_share_pct}</td>
                           <td style={{ padding: '8px 6px' }}>{r.corr_daily_mean}</td>
                           <td style={{ padding: '8px 6px' }}>{r.r2}</td>

@@ -1,7 +1,7 @@
 /**
  * forecastWorker.js
  * Web Worker: polls forecast job status and posts results back to main thread.
- * Messages in:  { type: 'start', jobId, apiBase }  |  { type: 'stop' }
+ * Messages in:  { type: 'start', jobId, apiBase, token }  |  { type: 'stop' }
  * Messages out: { type: 'progress', status, events }
  *               { type: 'result',   data }
  *               { type: 'error',    message }
@@ -15,7 +15,8 @@ const joinApi = (base, path) =>
   String(base || '').replace(/\/$/, '') + (path.startsWith('/') ? path : '/' + path);
 
 self.onmessage = function (e) {
-  const { type, jobId, apiBase } = e.data;
+  const { type, jobId, apiBase, token } = e.data;
+  const fetchOpts = token ? { headers: { Authorization: 'Bearer ' + token } } : {};
 
   if (type === 'start') {
     if (_interval) clearInterval(_interval);
@@ -23,7 +24,7 @@ self.onmessage = function (e) {
 
     _interval = setInterval(async function () {
       try {
-        const statusRes = await fetch(joinApi(apiBase, '/v2/forecast/job/' + jobId));
+        const statusRes = await fetch(joinApi(apiBase, '/v2/forecast/job/' + jobId), fetchOpts);
         if (!statusRes.ok) {
           if (statusRes.status === 404) {
             _notFoundCount++;
@@ -51,7 +52,10 @@ self.onmessage = function (e) {
         if (job.status === 'done') {
           clearInterval(_interval);
           _interval = null;
-          const resultRes = await fetch(joinApi(apiBase, '/v2/forecast/job/' + jobId + '/result'));
+          const resultRes = await fetch(
+            joinApi(apiBase, '/v2/forecast/job/' + jobId + '/result'),
+            fetchOpts
+          );
           if (!resultRes.ok) {
             self.postMessage({ type: 'error', message: 'Failed to fetch result' });
             return;

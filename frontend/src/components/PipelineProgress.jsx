@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { useAuthStore } from '../features/auth/authStore';
 
 const joinApi = (base, path) =>
   `${String(base || '').replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
@@ -42,7 +43,10 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
     setElapsed('0.0');
     setMinimized(false);
 
-    const wsUrl = toWebSocketUrl(apiBase, `/v2/ws/forecast/${jobId}`);
+    // Browsers can't set headers on a WebSocket, so the session token rides in the query.
+    const token = useAuthStore.getState().token;
+    const wsPath = `/v2/ws/forecast/${jobId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const wsUrl = toWebSocketUrl(apiBase, wsPath);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -119,18 +123,18 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
           bottom: 20,
           left: 64,
           zIndex: 9999,
-          background: '#0d1117',
-          border: '1px solid #238636',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--success)',
           borderRadius: 20,
           padding: '6px 14px',
-          color: '#7ee787',
+          color: 'var(--success)',
           fontSize: 13,
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           fontFamily: "'IBM Plex Mono', monospace",
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          boxShadow: '0 4px 12px rgba(var(--shadow-rgb), 0.4)',
         }}
       >
         ✓ Forecast ready · {elapsed}s
@@ -138,10 +142,10 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
     );
 
   const statusColor = {
-    connecting: '#7d8590',
-    running: '#f59e0b',
-    done: '#22c55e',
-    error: '#ef4444',
+    connecting: 'var(--text-muted)',
+    running: 'var(--warning)',
+    done: 'var(--success)',
+    error: 'var(--danger)',
   }[status];
   const statusLabel = {
     connecting: 'Connecting',
@@ -158,10 +162,10 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
         left: 64,
         zIndex: 9999,
         width: 300,
-        background: '#0d1117',
-        border: `1px solid ${status === 'error' ? '#6e1a1a' : '#21262d'}`,
+        background: 'var(--bg-elevated)',
+        border: `1px solid ${status === 'error' ? 'color-mix(in srgb, var(--danger) 50%, transparent)' : 'var(--outline)'}`,
         borderRadius: 12,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+        boxShadow: '0 8px 32px rgba(var(--shadow-rgb), 0.6)',
         fontFamily: "'IBM Plex Mono', monospace",
         fontSize: 13,
       }}
@@ -173,8 +177,8 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '9px 12px',
-          background: '#161b22',
-          borderBottom: '1px solid #21262d',
+          background: 'var(--bg-surface)',
+          borderBottom: '1px solid var(--outline)',
           borderRadius: '12px 12px 0 0',
         }}
       >
@@ -189,7 +193,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
               animation: status === 'running' ? 'mlpulse 1.2s ease-in-out infinite' : 'none',
             }}
           />
-          <span style={{ color: '#e6edf3', fontWeight: 600, fontSize: 13 }}>ML Pipeline</span>
+          <span style={{ color: 'var(--text)', fontWeight: 600, fontSize: 13 }}>ML Pipeline</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: statusColor, fontSize: 12 }}>{statusLabel}</span>
@@ -198,7 +202,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
             style={{
               background: 'none',
               border: 'none',
-              color: '#8a90a6',
+              color: 'var(--text-muted)',
               cursor: 'pointer',
               padding: 0,
               fontSize: 14,
@@ -220,7 +224,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
               height: 3,
               borderRadius: 2,
               background:
-                currentStep > s.key ? '#238636' : currentStep === s.key ? '#f59e0b' : '#21262d',
+                currentStep > s.key ? 'var(--success)' : currentStep === s.key ? 'var(--warning)' : 'var(--outline)',
               transition: 'background 0.4s',
             }}
           />
@@ -231,7 +235,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
       <div
         style={{
           padding: '3px 12px 8px',
-          color: '#8a90a6',
+          color: 'var(--text-muted)',
           fontSize: 12,
           minHeight: 18,
           letterSpacing: '0.01em',
@@ -258,9 +262,9 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
                   justifyContent: 'center',
                   fontSize: 10,
                   fontWeight: 700,
-                  background: done ? '#238636' : active ? 'rgba(245,158,11,0.15)' : 'transparent',
-                  border: `1px solid ${done ? '#238636' : active ? '#f59e0b' : '#30363d'}`,
-                  color: done ? '#fff' : active ? '#f59e0b' : '#6b7280',
+                  background: done ? 'var(--success)' : active ? 'color-mix(in srgb, var(--warning) 15%, transparent)' : 'transparent',
+                  border: `1px solid ${done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--outline-light)'}`,
+                  color: done ? 'var(--accent-fg)' : active ? 'var(--warning)' : 'var(--text-dim)',
                   transition: 'all 0.3s',
                 }}
               >
@@ -268,7 +272,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
               </div>
               <span
                 style={{
-                  color: done ? '#7ee787' : active ? '#e6edf3' : '#6b7280',
+                  color: done ? 'var(--success)' : active ? 'var(--text)' : 'var(--text-dim)',
                   fontSize: 12,
                   transition: 'color 0.3s',
                   flex: 1,
@@ -276,7 +280,7 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
               >
                 {s.label}
               </span>
-              {active && <span style={{ color: '#f59e0b', fontSize: 10 }}>●</span>}
+              {active && <span style={{ color: 'var(--warning)', fontSize: 10 }}>●</span>}
             </div>
           );
         })}

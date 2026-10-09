@@ -98,6 +98,9 @@ type SimulatorState = {
   driverSliders: DriverSliders;
   weatherComponentSliders: WeatherComponentSliders;
   dataDate?: string;
+  // 'demo' = bundled mock blocks, not real load; 'live' = loaded from the API.
+  dataStatus: 'demo' | 'live';
+  dataError: string | null;
   dataBaselineDays: number;
   weightsSource: string;
   partialDayBiasCorrection: PartialDayBiasCorrection | null;
@@ -338,6 +341,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
     pressure: 0,
   },
   dataDate: undefined,
+  dataStatus: 'demo',
+  dataError: null,
   dataBaselineDays: 7,
   weightsSource: 'unknown',
   partialDayBiasCorrection: null,
@@ -871,18 +876,29 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
   },
   closeCompare: () => set({ comparePayload: null }),
   loadFromFileData: async (date, baselineDays = 7) => {
+    // Falling back to mock blocks is always surfaced to the UI, never silent.
+    const showDemoData = (reason: string) =>
+      set({
+        blocks: buildMockBlocks(),
+        dataStatus: 'demo',
+        dataError: reason,
+      });
     try {
       const res = await loadSimulatorBlocksApi(date, baselineDays);
       const rows = Array.isArray(res?.blocks) ? res.blocks : [];
-      if (!rows.length) return;
+      if (!rows.length) {
+        showDemoData(
+          `No simulator blocks returned for ${res?.date || date || 'the selected date'}.`
+        );
+        return;
+      }
 
-      // Safeguard: Check if data is essentially all zeroes
+      // Never invent a baseline: near-zero data means history is missing for this date.
       const avgBaseline =
         rows.reduce((acc, r) => acc + Number(r.baseline_mw || 0), 0) / rows.length;
       if (avgBaseline < 1) {
-        console.warn(
-          `Simulator data for ${res.date} consists of near-zero values. This might be due to missing historical data for the selected date.`
-        );
+        showDemoData(`Baseline for ${res.date} is near zero, likely missing historical load data.`);
+        return;
       }
 
       const weatherDeltasByBlock: Record<number, WeatherDeltaByBlock> = {};
@@ -920,6 +936,8 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
       set({
         dataDate: res.date,
+        dataStatus: 'live',
+        dataError: null,
         dataBaselineDays: Number(res.baseline_days || baselineDays || 7),
         pendingRecompute: false,
         weightsSource: String(res.weights_source || 'unknown'),
@@ -951,14 +969,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             const row = matrixByBlock[blockNum];
             const weightRow = weightByBlock[blockNum];
 
-            // Handle potentially flat/zero data from API
-            let baseline = Number(apiBlock?.baseline_mw || 0);
-            if (avgBaseline < 1) {
-              // Synthetic baseline: 4000 MW + daily pattern + noise
-              const hour = (blockNum - 1) / 4;
-              const sinVal = Math.sin(((hour - 6) * Math.PI) / 12); // Peak around hour 12
-              baseline = 4000 + sinVal * 800 + (Math.random() * 100 - 50);
-            }
+            const baseline = Number(apiBlock?.baseline_mw || 0);
 
             const actualMw =
               apiBlock?.actual_mw == null || !Number.isFinite(Number(apiBlock?.actual_mw))
@@ -973,9 +984,7 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             const finalMw =
               apiBlock?.final_mw != null && Number(apiBlock.final_mw) > 0
                 ? Number(apiBlock.final_mw)
-                : avgBaseline < 1
-                  ? baseline * 1.02
-                  : baseline;
+                : baseline;
 
             return {
               block_number: blockNum,
@@ -1149,16 +1158,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
             const shift = anchor - anchorBaseline;
             for (let i = lastActualBlock; i < 96; i++) {
               const b = mappedBlocks[i];
-              if (avgBaseline < 1) {
-                // Synthetic fallback data: pin to anchor and let the shape drift naturally
-                b.baseline_mw = anchor;
-                b.final_mw = anchor * 1.01;
-              } else {
-                // Real data: blend the shift out over ~12 blocks so the line re-joins the model profile
-                const decay = Math.pow(0.5, (i - lastActualBlock + 1) / 12);
-                b.baseline_mw += shift * decay;
-                b.final_mw += shift * decay;
-              }
+              // Blend the shift out over ~12 blocks so the line re-joins the model profile
+              const decay = Math.pow(0.5, (i - lastActualBlock + 1) / 12);
+              b.baseline_mw += shift * decay;
+              b.final_mw += shift * decay;
               b.net_pct = (b.final_mw / Math.max(b.baseline_mw, 1e-6) - 1) * 100;
             }
           }
@@ -1168,8 +1171,10 @@ export const useSimulatorStore = create<SimulatorState>((set, get) => ({
 
         weatherDeltasByBlock,
       });
-    } catch {
-      // Keep mock data fallback.
+    } catch (err) {
+      showDemoData(
+        `Could not load simulator data: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   },
 }));

@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'rea
 import axios from 'axios';
 import { API_BASE, TRAINING_API_BASE, getApiUrl, getTrainingApiUrl } from './apiConfig';
 import { useSimulatorStore } from './features/simulator/store';
+import { useAuthStore } from './features/auth/authStore';
 
 import CommandStrip from './components/CommandStrip';
 import {
@@ -14,6 +15,7 @@ import AlertRibbon from './components/AlertRibbon';
 import WeatherStrip from './components/WeatherStrip';
 import ContextPanel from './components/ContextPanel';
 import ForecastTable from './components/ForecastTable';
+import { useChartTokens, withAlpha } from './lib/chartTheme';
 import {
   Activity,
   ArrowRight,
@@ -36,7 +38,8 @@ import {
   Wind,
   Zap,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Sparkles
 } from 'lucide-react';
 
 const ReactECharts = lazy(() => import('echarts-for-react'));
@@ -50,6 +53,7 @@ const SimilarDaysPage = lazy(() => import('./features/pipeline/SimilarDaysPage')
 const WeatherLocPage = lazy(() => import('./features/pipeline/WeatherLocPage'));
 const AccuracyMonitorPage = lazy(() => import('./features/monitor/AccuracyMonitorPage'));
 const BacktestPage = lazy(() => import('./features/backtest/BacktestPage'));
+const ForecastStudioPage = lazy(() => import('./features/studio/ForecastStudioPage'));
 
 // API URL builders moved to apiConfig.ts
 const API_URL = getApiUrl;
@@ -58,10 +62,14 @@ const TRAINING_API_URL = getTrainingApiUrl;
 
 axios.defaults.timeout = 45000;
 
-const APP_TITLE = 'VidyutPragya';
+// Product name and its one descriptor, used in the browser tab and brand blocks.
+const APP_TITLE = 'Forecast Studio';
+const APP_TAGLINE = 'Grid Load Forecasting';
+const APP_TAGLINE_SHORT = 'Load Forecasting'; // fits the 220px sidebar brand block
 const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 
 const NAV_ITEMS = [
+  { key: 'studio', label: 'Studio', icon: Sparkles },
   { key: 'load_analysis', label: 'Load Analysis', icon: Activity },
   { key: 'weather_analysis', label: 'Weather Analysis', icon: Sun },
   { key: 'simulator', label: 'Simulator', icon: Play },
@@ -95,31 +103,6 @@ const fmt = (val, digits = 2) => {
 };
 
 const pct = (val) => `${fmt(val)}%`;
-
-const seededUnit = (seed) => {
-  let hash = 2166136261;
-  const text = String(seed || '');
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) / 4294967295;
-};
-
-const actualSeededForecast = (actualValue, block, dateKey = '') => {
-  const actual = Number(actualValue);
-  if (!Number.isFinite(actual) || actual <= 0) return null;
-  const offset = 1 + (seededUnit(`${dateKey}:${block}`) * 132);
-  return Math.max(0, actual - offset);
-};
-
-const applySettledT1ForecastFormula = (forecast = [], actual = [], blocks = [], dateKey = '') =>
-  forecast.map((value, idx) => {
-    const actualValue = actual?.[idx];
-    const block = blocks?.[idx] ?? idx + 1;
-    const adjusted = actualSeededForecast(actualValue, block, dateKey);
-    return adjusted == null ? value : adjusted;
-  });
 
 const getNumericStats = (values = []) => {
   const clean = values.filter((v) => Number.isFinite(v));
@@ -470,6 +453,7 @@ const LoadChart = ({
   dateLabel,
   showForecast = true
 }) => {
+  const t = useChartTokens();
   if (!blocks.length) return <div className="chart-empty">No data available.</div>;
   const axisInterval = blocks.length >= 90 ? 3 : blocks.length >= 64 ? 2 : blocks.length >= 48 ? 1 : 0;
   const forecastSeries = (Array.isArray(forecast) && forecast.length === blocks.length) ? forecast : baseline;
@@ -480,7 +464,7 @@ const LoadChart = ({
     .filter(({ v }) => thresholds && Math.abs(v) >= thresholds.warning)
     .map(({ idx, v }) => ({
       value: [blocks[idx], alertSeries[idx] ?? null, v],
-      itemStyle: { color: Math.abs(v) >= thresholds.critical ? '#c7655f' : '#d2a46f' }
+      itemStyle: { color: Math.abs(v) >= thresholds.critical ? t.danger : t.warning }
     }));
 
   const residualAreas = [];
@@ -502,14 +486,14 @@ const LoadChart = ({
   const markAreas = [];
   if (highlight?.start && highlight?.end) {
     markAreas.push([
-      { xAxis: highlight.start, itemStyle: { color: 'rgba(199, 101, 95, 0.18)' } },
+      { xAxis: highlight.start, itemStyle: { color: withAlpha(t.danger, 0.18) } },
       { xAxis: highlight.end }
     ]);
   }
   residualAreas.forEach(([start, end]) => {
     if (blocks[start] === undefined || blocks[end] === undefined) return;
     markAreas.push([
-      { xAxis: blocks[start], itemStyle: { color: 'rgba(210, 164, 111, 0.16)' } },
+      { xAxis: blocks[start], itemStyle: { color: withAlpha(t.warning, 0.16) } },
       { xAxis: blocks[end] }
     ]);
   });
@@ -520,8 +504,8 @@ const LoadChart = ({
     ? {
       data: [{ coord: [peakMarkers.baseline.block, peakMarkers.baseline.value] }],
       symbolSize: 10,
-      itemStyle: { color: '#d2a46f' },
-      label: { show: true, color: '#d2a46f', formatter: 'Peak' }
+      itemStyle: { color: t.accent2 },
+      label: { show: true, color: t.accent2, formatter: 'Peak' }
     }
     : undefined;
 
@@ -529,8 +513,8 @@ const LoadChart = ({
     ? {
       data: [{ coord: [peakMarkers.actual.block, peakMarkers.actual.value] }],
       symbolSize: 10,
-      itemStyle: { color: '#4f7d5c' },
-      label: { show: true, color: '#4f7d5c', formatter: 'Peak' }
+      itemStyle: { color: t.success },
+      label: { show: true, color: t.success, formatter: 'Peak' }
     }
     : undefined;
 
@@ -548,12 +532,12 @@ const LoadChart = ({
     grid: { left: 40, right: 20, top: 30, bottom: 55, containLabel: true },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: '#1C1F28',
-      borderColor: '#262A35',
+      backgroundColor: t.elevated,
+      borderColor: t.outline,
       borderWidth: 1,
       padding: [10, 14],
       borderRadius: 4,
-      textStyle: { color: '#E2E4E9', fontSize: 12, fontFamily: 'IBM Plex Mono, monospace' },
+      textStyle: { color: t.text, fontSize: 12, fontFamily: 'IBM Plex Mono, monospace' },
       formatter: (params) => {
         const block = params?.[0]?.axisValue;
         const bIdx = blocks.indexOf(Number(block));
@@ -563,14 +547,14 @@ const LoadChart = ({
         const lo = p10[bIdx];
         const hi = p90[bIdx];
         const lines = [
-          `<div style="font-family:'IBM Plex Mono';font-weight:600;font-size:11px;margin-bottom:6px;border-bottom:1px solid #262A35;padding-bottom:4px;color:#8B8FA3;">BLOCK ${block} • ${blockTime(Number(block))}</div>`,
-          `<div style="display:flex;justify-content:space-between;gap:20px;color:#565B6B;"><span>Baseline</span> <span style="font-weight:600;">${fmt(b)} MW</span></div>`,
-          `<div style="display:flex;justify-content:space-between;gap:20px;color:#E2E4E9;"><span>Actual</span> <span style="font-weight:600;">${fmt(a)} MW</span></div>`
+          `<div style="font-family:'IBM Plex Mono';font-weight:600;font-size:11px;margin-bottom:6px;border-bottom:1px solid ${t.outline};padding-bottom:4px;color:${t.textMuted};">BLOCK ${block} • ${blockTime(Number(block))}</div>`,
+          `<div style="display:flex;justify-content:space-between;gap:20px;color:${t.accent2};"><span>Baseline</span> <span style="font-weight:600;">${fmt(b)} MW</span></div>`,
+          `<div style="display:flex;justify-content:space-between;gap:20px;color:${t.success};"><span>Actual</span> <span style="font-weight:600;">${fmt(a)} MW</span></div>`
         ];
         if (showForecast) {
-          lines.splice(2, 0, `<div style="display:flex;justify-content:space-between;gap:20px;color:#4A90D9;"><span>Forecast</span> <span style="font-weight:600;">${fmt(f)} MW</span></div>`);
+          lines.splice(2, 0, `<div style="display:flex;justify-content:space-between;gap:20px;color:${t.accent};"><span>Forecast</span> <span style="font-weight:600;">${fmt(f)} MW</span></div>`);
           if (lo != null && hi != null && lo > 0) {
-            lines.push(`<div style="display:flex;justify-content:space-between;gap:20px;color:#565B6B;font-size:11px;"><span>P10–P90</span> <span>${fmt(lo)} – ${fmt(hi)} MW</span></div>`);
+            lines.push(`<div style="display:flex;justify-content:space-between;gap:20px;color:${t.textMuted};font-size:11px;"><span>P10–P90</span> <span>${fmt(lo)} – ${fmt(hi)} MW</span></div>`);
           }
         }
         return lines.join('');
@@ -581,19 +565,19 @@ const LoadChart = ({
       data: blocks,
       nameLocation: 'middle',
       nameGap: 30,
-      axisLine: { lineStyle: { color: '#262A35' } },
+      axisLine: { lineStyle: { color: t.outline } },
       axisTick: { show: false },
-      axisLabel: { color: '#565B6B', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace', interval: axisInterval, margin: 15 },
+      axisLabel: { color: t.textMuted, fontSize: 10, fontFamily: 'IBM Plex Mono, monospace', interval: axisInterval, margin: 15 },
       splitLine: { show: false }
     },
     yAxis: {
       type: 'value',
       min: _yMin,
       max: _yMax,
-      axisLine: { lineStyle: { color: '#262A35' } },
+      axisLine: { lineStyle: { color: t.outline } },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: '#1C1F28', type: 'solid' } },
-      axisLabel: { color: '#565B6B', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace',
+      splitLine: { lineStyle: { color: withAlpha(t.outline, 0.6), type: 'solid' } },
+      axisLabel: { color: t.textMuted, fontSize: 10, fontFamily: 'IBM Plex Mono, monospace',
         formatter: (v) => Math.abs(v) >= 1000 ? `${(v/1000).toFixed(1)}k` : `${v}` }
     },
     series: [
@@ -618,7 +602,7 @@ const LoadChart = ({
           symbol: 'none',
           lineStyle: { opacity: 0 },
           stack: 'confidence',
-          areaStyle: { color: 'rgba(74, 144, 217, 0.08)' },
+          areaStyle: { color: withAlpha(t.accent, 0.1) },
           z: 1
         }
       ] : []),
@@ -628,7 +612,7 @@ const LoadChart = ({
         data: baseline,
         smooth: true,
         symbol: 'none',
-        lineStyle: { color: '#3B4050', type: 'dashed', width: 1 },
+        lineStyle: { color: t.accent2, type: 'dashed', width: 1 },
         markArea: showForecast ? undefined : markArea,
         markPoint: baselineMarkPoint,
         z: 2
@@ -640,15 +624,15 @@ const LoadChart = ({
         smooth: true,
         symbol: 'none',
         lineStyle: {
-          color: '#4A90D9',
+          color: t.accent,
           width: 2
         },
-        itemStyle: { color: '#4A90D9' },
+        itemStyle: { color: t.accent },
         markArea,
         markPoint: peakBlock && peakValue !== undefined ? {
           data: [{ coord: [peakBlock, peakValue] }],
           symbolSize: 8,
-          itemStyle: { color: '#D4952A' }
+          itemStyle: { color: t.warning }
         } : undefined,
         z: 3
       }] : []),
@@ -659,10 +643,10 @@ const LoadChart = ({
         smooth: true,
         showSymbol: false,
         lineStyle: {
-          color: '#E2E4E9',
+          color: t.success,
           width: 1.5
         },
-        itemStyle: { color: '#E2E4E9' },
+        itemStyle: { color: t.success },
         markPoint: actualMarkPoint
       },
       {
@@ -672,7 +656,7 @@ const LoadChart = ({
         symbolSize: 8,
         itemStyle: {
           borderWidth: 2,
-          borderColor: '#0F1117'
+          borderColor: t.panel
         },
         tooltip: { show: false }
       }
@@ -732,10 +716,10 @@ const AttributionBar = ({ label, value, percent, color }) => (
 const ImpactMatrix = ({ blocks = [], impacts = [] }) => {
   if (!blocks.length || !impacts?.length) return <div className="muted">No block-level KPI impacts available.</div>;
   const columns = [
-    { key: 'temperature', label: 'Temperature', color: '#d19069' },
-    { key: 'humidity', label: 'Humidity', color: '#c8b39b' },
-    { key: 'precipitation', label: 'Precipitation', color: '#7f8b75' },
-    { key: 'unexplained', label: 'Unexplained', color: '#736f68' }
+    { key: 'temperature', label: 'Temperature', color: 'var(--tone-warm)' },
+    { key: 'humidity', label: 'Humidity', color: 'var(--info)' },
+    { key: 'precipitation', label: 'Precipitation', color: 'var(--accent2)' },
+    { key: 'unexplained', label: 'Unexplained', color: 'var(--text-muted)' }
   ];
   return (
     <div className="impact-matrix">
@@ -822,7 +806,7 @@ const Ring = ({ value = 0 }) => {
   const offset = circ - (pctVal / 100) * circ;
   return (
     <svg width={size} height={size} className="ring">
-      <circle cx={size / 2} cy={size / 2} r={radius} stroke="rgba(240, 221, 199, 0.16)" strokeWidth={stroke} fill="none" />
+      <circle cx={size / 2} cy={size / 2} r={radius} stroke="rgba(var(--overlay-rgb), 0.12)" strokeWidth={stroke} fill="none" />
       <circle cx={size / 2} cy={size / 2} r={radius} stroke="var(--accent)" strokeWidth={stroke} fill="none" strokeDasharray={circ} strokeDashoffset={offset} />
       <text x="50%" y="50%" dominantBaseline="middle" textAnchor="middle" className="ring-text">
         {Math.round(pctVal)}%
@@ -1211,7 +1195,7 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 
   /* ── similar days: filter + sort ── */
   const dayOfWeek = (ds) => { try { return new Date(ds + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' }); } catch { return ''; } };
-  const simColor  = (s) => s >= 85 ? '#34D399' : s >= 70 ? '#FBBF24' : '#F87171';
+  const simColor  = (s) => s >= 85 ? 'var(--success)' : s >= 70 ? 'var(--warning)' : 'var(--danger)';
 
   const filteredSim = React.useMemo(() => {
     let rows = rawSim.map((d, i) => ({ ...d, _rank: i }));
@@ -1234,10 +1218,10 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 
   /* ── stat tabs ── */
   const statGroups = {
-    central:  [['Peak Load', fmtN(peak,0), 'MW', '#F07825', `Occurs at ${peakTime}`], ['Valley Load', fmtN(valley,0), 'MW', '#5B9FE4', `Occurs at ${valleyTime}`], ['Mean Load', fmtN(avgLoad,0), 'MW', '#ECEEF3', 'Simple arithmetic mean of all valid blocks'], ['Median Load', fmtN(median,0), 'MW', '#FBBF24', '50th percentile — robust to outliers'], ['Day Energy', fmtN(energy,0), 'MWh', '#ECEEF3', 'Sum of load × 0.25 h across all 96 blocks'], ['Load Factor', fmtN(loadFactor,2), '%', loadFactor>=70?'#34D399':'#FBBF24', 'Mean/Peak — higher = more efficient utilisation']],
-    spread:   [['Std Deviation', fmtN(stdDev,0), 'MW', '#C084FC', 'Square root of variance — measures load volatility'], ['IQR (Q3−Q1)', fmtN(iqr,0), 'MW', '#C084FC', 'Middle 50% spread — resistant to extremes'], ['Q1 (25th pct)', fmtN(q1,0), 'MW', '#5B9FE4', 'Bottom quartile load threshold'], ['Q3 (75th pct)', fmtN(q3,0), 'MW', '#C084FC', 'Top quartile load threshold'], ['CV %', fmtN(cv,2), '%', '#C084FC', 'Std Dev / Mean × 100 — normalised volatility'], ['P/V Ratio', pvRatio!=null?pvRatio.toFixed(3):'--', '', '#ECEEF3', 'Peak-to-valley — higher = greater storage opportunity']],
-    ramp:     [['Max Ramp Up', fmtN(maxRampUp,0), 'MW/15m', maxRampUp>200?'#F87171':'#FBBF24', 'Largest positive 15-min delta'], ['Max Ramp Down', fmtN(Math.abs(maxRampDown),0), 'MW/15m', '#5B9FE4', 'Largest negative 15-min delta (absolute)'], ['Valid Blocks', validLoads.length, '/ 96', '#ECEEF3', 'Blocks with non-zero load observed'], ['Peak Time', peakTime, '', '#F07825', 'Clock time of peak block'], ['Valley Time', valleyTime, '', '#5B9FE4', 'Clock time of lowest load block'], ['Temp Now', monTemps[nowBlk]!=null?`${monTemps[nowBlk].toFixed(1)}°C`:'--', '', '#FBBF24', 'Ambient temperature at current block']],
-    perf:     [['MAPE (meta)', mape!=null?`${mape.toFixed(2)}%`:'--', '', mape!=null&&mape<3?'#34D399':'#F87171', 'Mean Absolute % Error from API metadata'], ['MAPE (calc)', mapeVal!=null?`${mapeVal.toFixed(2)}%`:'--', '', mapeVal!=null&&mapeVal<3?'#34D399':mapeVal!=null&&mapeVal<6?'#FBBF24':'#F87171', 'Computed from actual vs baseline pairs'], ['MAE', fmtN(maeVal,0), 'MW', '#5B9FE4', 'Mean Absolute Error in MW'], ['RMSE', fmtN(rmseVal,0), 'MW', '#C084FC', 'Root Mean Squared Error — penalises large errors'], ['Bias', biasVal!=null?`${biasVal>0?'+':''}${fmtN(biasVal,0)}`:'--', 'MW', biasVal!=null&&Math.abs(biasVal)<50?'#34D399':'#FBBF24', 'Signed mean error — positive = over-forecast'], ['Error Pairs', errorPairs.length, 'blocks', '#ECEEF3', 'Blocks used for error calculation']],
+    central:  [['Peak Load', fmtN(peak,0), 'MW', 'var(--tone-warm)', `Occurs at ${peakTime}`], ['Valley Load', fmtN(valley,0), 'MW', 'var(--accent)', `Occurs at ${valleyTime}`], ['Mean Load', fmtN(avgLoad,0), 'MW', 'var(--text)', 'Simple arithmetic mean of all valid blocks'], ['Median Load', fmtN(median,0), 'MW', 'var(--warning)', '50th percentile — robust to outliers'], ['Day Energy', fmtN(energy,0), 'MWh', 'var(--text)', 'Sum of load × 0.25 h across all 96 blocks'], ['Load Factor', fmtN(loadFactor,2), '%', loadFactor>=70?'var(--success)':'var(--warning)', 'Mean/Peak — higher = more efficient utilisation']],
+    spread:   [['Std Deviation', fmtN(stdDev,0), 'MW', 'var(--accent2)', 'Square root of variance — measures load volatility'], ['IQR (Q3−Q1)', fmtN(iqr,0), 'MW', 'var(--accent2)', 'Middle 50% spread — resistant to extremes'], ['Q1 (25th pct)', fmtN(q1,0), 'MW', 'var(--accent)', 'Bottom quartile load threshold'], ['Q3 (75th pct)', fmtN(q3,0), 'MW', 'var(--accent2)', 'Top quartile load threshold'], ['CV %', fmtN(cv,2), '%', 'var(--accent2)', 'Std Dev / Mean × 100 — normalised volatility'], ['P/V Ratio', pvRatio!=null?pvRatio.toFixed(3):'--', '', 'var(--text)', 'Peak-to-valley — higher = greater storage opportunity']],
+    ramp:     [['Max Ramp Up', fmtN(maxRampUp,0), 'MW/15m', maxRampUp>200?'var(--danger)':'var(--warning)', 'Largest positive 15-min delta'], ['Max Ramp Down', fmtN(Math.abs(maxRampDown),0), 'MW/15m', 'var(--accent)', 'Largest negative 15-min delta (absolute)'], ['Valid Blocks', validLoads.length, '/ 96', 'var(--text)', 'Blocks with non-zero load observed'], ['Peak Time', peakTime, '', 'var(--tone-warm)', 'Clock time of peak block'], ['Valley Time', valleyTime, '', 'var(--accent)', 'Clock time of lowest load block'], ['Temp Now', monTemps[nowBlk]!=null?`${monTemps[nowBlk].toFixed(1)}°C`:'--', '', 'var(--warning)', 'Ambient temperature at current block']],
+    perf:     [['MAPE (meta)', mape!=null?`${mape.toFixed(2)}%`:'--', '', mape!=null&&mape<3?'var(--success)':'var(--danger)', 'Mean Absolute % Error from API metadata'], ['MAPE (calc)', mapeVal!=null?`${mapeVal.toFixed(2)}%`:'--', '', mapeVal!=null&&mapeVal<3?'var(--success)':mapeVal!=null&&mapeVal<6?'var(--warning)':'var(--danger)', 'Computed from actual vs baseline pairs'], ['MAE', fmtN(maeVal,0), 'MW', 'var(--accent)', 'Mean Absolute Error in MW'], ['RMSE', fmtN(rmseVal,0), 'MW', 'var(--accent2)', 'Root Mean Squared Error — penalises large errors'], ['Bias', biasVal!=null?`${biasVal>0?'+':''}${fmtN(biasVal,0)}`:'--', 'MW', biasVal!=null&&Math.abs(biasVal)<50?'var(--success)':'var(--warning)', 'Signed mean error — positive = over-forecast'], ['Error Pairs', errorPairs.length, 'blocks', 'var(--text)', 'Blocks used for error calculation']],
   };
 
   /* ── KPI card drill-down detail ── */
@@ -1259,12 +1243,12 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
   };
 
   /* ── styles ── */
-  const cardS = { background: 'linear-gradient(180deg,rgba(26,25,30,.98),rgba(20,20,24,.96))', borderRadius: 14, border: '1px solid #2A292F', overflow: 'hidden', display: 'flex', flexDirection: 'column' };
-  const headS = { padding: '12px 16px', borderBottom: '1px solid #2A292F', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 };
-  const titleS = { fontSize: 12, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#B8BDCC', fontFamily: "'IBM Plex Mono',monospace" };
-  const badge  = (c) => ({ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: `${c}18`, color: c, border: `1px solid ${c}33` });
-  const tabBtn = (active) => ({ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, padding: '5px 12px', borderRadius: 999, border: `1px solid ${active ? '#F07825' : '#2A292F'}`, background: active ? '#F0782518' : 'transparent', color: active ? '#F07825' : '#8A90A6', cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase', transition: 'all 0.12s' });
-  const sortTh = (col) => ({ padding: '8px 10px', textAlign: 'left', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: simSort.col === col ? '#F07825' : '#8A90A6', borderBottom: '1px solid #2A292F', fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s' });
+  const cardS = { background: 'linear-gradient(180deg,var(--bg-elevated),var(--bg-panel))', borderRadius: 14, border: '1px solid var(--outline)', overflow: 'hidden', display: 'flex', flexDirection: 'column' };
+  const headS = { padding: '12px 16px', borderBottom: '1px solid var(--outline)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 };
+  const titleS = { fontSize: 12, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: 'var(--text-secondary)', fontFamily: "'IBM Plex Mono',monospace" };
+  const badge  = (c) => ({ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: `color-mix(in srgb, ${c} 9%, transparent)`, color: c, border: `1px solid color-mix(in srgb, ${c} 20%, transparent)` });
+  const tabBtn = (active) => ({ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, padding: '5px 12px', borderRadius: 999, border: `1px solid ${active ? 'var(--accent)' : 'var(--outline)'}`, background: active ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent', color: active ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase', transition: 'all 0.12s' });
+  const sortTh = (col) => ({ padding: '8px 10px', textAlign: 'left', fontSize: 11, letterSpacing: 0.5, textTransform: 'uppercase', color: simSort.col === col ? 'var(--accent)' : 'var(--text-muted)', borderBottom: '1px solid var(--outline)', fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s' });
   const onSort = (col) => setSimSort(s => ({ col, dir: s.col === col && s.dir === 'asc' ? 'desc' : 'asc' }));
   const sortIcon = (col) => simSort.col === col ? (simSort.dir === 'asc' ? ' ↑' : ' ↓') : '';
 
@@ -1273,35 +1257,35 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
       {/* ── HEADER ── */}
       <div style={{ display: 'none', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#F0F2F8' }}>Similar Days &amp; Statistics</div>
-          <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 3 }}>Click any KPI card · Sort table columns · Filter by day type · Click a bin to narrow similar days</div>
+          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: 'var(--text)' }}>Similar Days &amp; Statistics</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>Click any KPI card · Sort table columns · Filter by day type · Click a bin to narrow similar days</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {mape != null && <span style={badge('#F07825')}>{`MAPE ${mape.toFixed(1)}%`}</span>}
-          <span style={badge('#34D399')}>{effectiveDate || new Date().toISOString().slice(0,10)}</span>
+          {mape != null && <span style={badge('var(--accent)')}>{`MAPE ${mape.toFixed(1)}%`}</span>}
+          <span style={badge('var(--success)')}>{effectiveDate || new Date().toISOString().slice(0,10)}</span>
         </div>
       </div>
 
       {/* ── KPI STRIP (clickable) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, flexShrink: 0 }}>
         {[
-          { label: 'Peak Load',     value: fmtN(peak),           unit: 'MW',     color: '#F07825', sub: `at ${peakTime}` },
-          { label: 'Valley Load',   value: fmtN(valley),         unit: 'MW',     color: '#5B9FE4', sub: `at ${valleyTime}` },
-          { label: 'Day Energy',    value: fmtN(energy,0),       unit: 'MWh',    color: '#ECEEF3', sub: `Avg ${fmtN(avgLoad,0)} MW` },
-          { label: 'Load Factor',   value: fmtN(loadFactor,1),   unit: '%',      color: loadFactor>=70?'#34D399':'#FBBF24', sub: `P/V ${pvRatio!=null?pvRatio.toFixed(2):'--'}` },
-          { label: 'Std Deviation', value: fmtN(stdDev,0),       unit: 'MW',     color: '#C084FC', sub: `CV ${fmtN(cv,1)}%` },
-          { label: 'Max Ramp Up',   value: fmtN(maxRampUp,0),    unit: 'MW/15m', color: maxRampUp>200?'#F87171':'#FBBF24', sub: `Down ${fmtN(Math.abs(maxRampDown),0)}` },
+          { label: 'Peak Load',     value: fmtN(peak),           unit: 'MW',     color: 'var(--tone-warm)', sub: `at ${peakTime}` },
+          { label: 'Valley Load',   value: fmtN(valley),         unit: 'MW',     color: 'var(--accent)', sub: `at ${valleyTime}` },
+          { label: 'Day Energy',    value: fmtN(energy,0),       unit: 'MWh',    color: 'var(--text)', sub: `Avg ${fmtN(avgLoad,0)} MW` },
+          { label: 'Load Factor',   value: fmtN(loadFactor,1),   unit: '%',      color: loadFactor>=70?'var(--success)':'var(--warning)', sub: `P/V ${pvRatio!=null?pvRatio.toFixed(2):'--'}` },
+          { label: 'Std Deviation', value: fmtN(stdDev,0),       unit: 'MW',     color: 'var(--accent2)', sub: `CV ${fmtN(cv,1)}%` },
+          { label: 'Max Ramp Up',   value: fmtN(maxRampUp,0),    unit: 'MW/15m', color: maxRampUp>200?'var(--danger)':'var(--warning)', sub: `Down ${fmtN(Math.abs(maxRampDown),0)}` },
         ].map(k => {
           const isActive = activeKpi === k.label;
           return (
             <button key={k.label} onClick={() => setActiveKpi(isActive ? null : k.label)}
-              style={{ ...cardS, padding: '14px 14px 12px', cursor: 'pointer', textAlign: 'left', border: `1px solid ${isActive ? k.color+'66' : '#2A292F'}`, boxShadow: isActive ? `0 0 16px ${k.color}18` : 'none', transition: 'all 0.15s' }}>
-              <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: isActive ? k.color : '#8A90A6', marginBottom: 6 }}>{k.label}</div>
+              style={{ ...cardS, padding: '14px 14px 12px', cursor: 'pointer', textAlign: 'left', border: `1px solid ${isActive ? `color-mix(in srgb, ${k.color} 40%, transparent)` : 'var(--outline)'}`, boxShadow: isActive ? `0 0 16px color-mix(in srgb, ${k.color} 9%, transparent)` : 'none', transition: 'all 0.15s' }}>
+              <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: isActive ? k.color : 'var(--text-muted)', marginBottom: 6 }}>{k.label}</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginBottom: 4 }}>
                 <span style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, color: k.color }}>{k.value}</span>
-                <span style={{ fontSize: 12, color: '#8A90A6' }}>{k.unit}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{k.unit}</span>
               </div>
-              <div style={{ fontSize: 12, color: isActive ? k.color+'cc' : '#8A90A6' }}>{k.sub}</div>
+              <div style={{ fontSize: 12, color: isActive ? `color-mix(in srgb, ${k.color} 80%, transparent)` : 'var(--text-muted)' }}>{k.sub}</div>
               {isActive && <div style={{ marginTop: 6, width: 20, height: 2, borderRadius: 1, background: k.color }} />}
             </button>
           );
@@ -1310,17 +1294,17 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 
       {/* ── KPI DRILL-DOWN PANEL ── */}
       {activeKpi && kpiDetail[activeKpi] && (
-        <div style={{ ...cardS, flexShrink: 0, border: `1px solid ${['#F07825','#5B9FE4','#ECEEF3','#34D399','#C084FC','#FBBF24'].find((_,i)=>['Peak Load','Valley Load','Day Energy','Load Factor','Std Deviation','Max Ramp Up'][i]===activeKpi)||'#2A292F'}33` }}>
+        <div style={{ ...cardS, flexShrink: 0, border: `1px solid color-mix(in srgb, ${['var(--tone-warm)','var(--accent)','var(--text)','var(--success)','var(--accent2)','var(--warning)'].find((_,i)=>['Peak Load','Valley Load','Day Energy','Load Factor','Std Deviation','Max Ramp Up'][i]===activeKpi)||'var(--outline)'} 20%, transparent)` }}>
           <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#8A90A6', marginBottom: 8 }}>{kpiDetail[activeKpi].title}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>{kpiDetail[activeKpi].title}</div>
               <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                 {kpiDetail[activeKpi].lines.map((l, i) => (
-                  <div key={i} style={{ fontSize: 13, color: l.startsWith('⚠') ? '#F87171' : l.startsWith('✓') ? '#34D399' : '#F0F2F8', lineHeight: 1.6 }}>{l}</div>
+                  <div key={i} style={{ fontSize: 13, color: l.startsWith('⚠') ? 'var(--danger)' : l.startsWith('✓') ? 'var(--success)' : 'var(--text)', lineHeight: 1.6 }}>{l}</div>
                 ))}
               </div>
             </div>
-            <button onClick={() => setActiveKpi(null)} style={{ fontSize: 14, background: 'none', border: 'none', color: '#4A4D5E', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>×</button>
+            <button onClick={() => setActiveKpi(null)} style={{ fontSize: 14, background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>×</button>
           </div>
         </div>
       )}
@@ -1344,31 +1328,31 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
           <div style={{ ...cardS, flex: 1, minHeight: 0 }}>
             <div style={headS}>
               <div style={titleS}>Load Distribution</div>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>Click a bin to filter similar days</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Click a bin to filter similar days</span>
             </div>
             <div style={{ flex: 1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 4, overflow: 'auto' }}>
               {bins.length === 0 ? (
-                <div style={{ color: '#8A90A6', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>No data</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>No data</div>
               ) : bins.map((b, i) => {
                 const isActiveBin = activeBin === i;
                 return (
                   <button key={b.label} onClick={() => setActiveBin(isActiveBin ? null : i)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, background: isActiveBin ? '#F0782508' : 'transparent', border: `1px solid ${isActiveBin ? '#F0782540' : 'transparent'}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', transition: 'all 0.12s' }}>
-                    <div style={{ fontSize: 12, color: isActiveBin ? '#F07825' : '#8A90A6', width: 38, textAlign: 'right', flexShrink: 0 }}>{b.label}</div>
-                    <div style={{ flex: 1, height: 14, background: '#1A191E', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${(b.count / maxBin) * 100}%`, background: isActiveBin ? '#F07825' : 'linear-gradient(90deg,#F0782550,#F07825)', borderRadius: 3 }} />
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, background: isActiveBin ? 'color-mix(in srgb, var(--accent) 3%, transparent)' : 'transparent', border: `1px solid ${isActiveBin ? 'color-mix(in srgb, var(--accent) 25%, transparent)' : 'transparent'}`, borderRadius: 6, padding: '3px 4px', cursor: 'pointer', transition: 'all 0.12s' }}>
+                    <div style={{ fontSize: 12, color: isActiveBin ? 'var(--accent)' : 'var(--text-muted)', width: 38, textAlign: 'right', flexShrink: 0 }}>{b.label}</div>
+                    <div style={{ flex: 1, height: 14, background: 'var(--bg-surface)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(b.count / maxBin) * 100}%`, background: isActiveBin ? 'var(--accent)' : 'linear-gradient(90deg,color-mix(in srgb, var(--accent) 31%, transparent),var(--accent))', borderRadius: 3 }} />
                     </div>
-                    <div style={{ fontSize: 12, color: isActiveBin ? '#F07825' : '#B8BDCC', width: 24, textAlign: 'right', flexShrink: 0, fontWeight: isActiveBin ? 700 : 400 }}>{b.count}</div>
+                    <div style={{ fontSize: 12, color: isActiveBin ? 'var(--accent)' : 'var(--text-secondary)', width: 24, textAlign: 'right', flexShrink: 0, fontWeight: isActiveBin ? 700 : 400 }}>{b.count}</div>
                   </button>
                 );
               })}
               {validLoads.length > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, padding: '8px 4px 0', borderTop: '1px solid #2A292F' }}>
-                  {[['Q1', q1, '#5B9FE4'], ['Median', median, '#FBBF24'], ['Q3', q3, '#C084FC']].map(([l, v, c]) => (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, padding: '8px 4px 0', borderTop: '1px solid var(--outline)' }}>
+                  {[['Q1', q1, 'var(--accent)'], ['Median', median, 'var(--warning)'], ['Q3', q3, 'var(--accent2)']].map(([l, v, c]) => (
                     <div key={l} style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, color: '#8A90A6' }}>{l}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l}</div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: c }}>{fmtN(v, 0)}</div>
-                      <div style={{ fontSize: 11, color: '#8A90A6' }}>MW</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>MW</div>
                     </div>
                   ))}
                 </div>
@@ -1380,39 +1364,39 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
           <div style={cardS}>
             <div style={headS}>
               <div style={titleS}>Error Diagnostics</div>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>Click to explain</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Click to explain</span>
             </div>
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
               {[
-                { label: 'MAPE', value: mapeVal, unit: '%', color: mapeVal!=null&&mapeVal<3?'#34D399':mapeVal!=null&&mapeVal<6?'#FBBF24':'#F87171', fmt: v => v.toFixed(2) },
-                { label: 'MAE',  value: maeVal,  unit: 'MW', color: '#5B9FE4', fmt: v => fmtN(v, 0) },
-                { label: 'RMSE', value: rmseVal, unit: 'MW', color: '#C084FC', fmt: v => fmtN(v, 0) },
-                { label: 'Bias', value: biasVal, unit: 'MW', color: biasVal!=null&&Math.abs(biasVal)<50?'#34D399':'#FBBF24', fmt: v => `${v>0?'+':''}${fmtN(v,0)}` },
+                { label: 'MAPE', value: mapeVal, unit: '%', color: mapeVal!=null&&mapeVal<3?'var(--success)':mapeVal!=null&&mapeVal<6?'var(--warning)':'var(--danger)', fmt: v => v.toFixed(2) },
+                { label: 'MAE',  value: maeVal,  unit: 'MW', color: 'var(--accent)', fmt: v => fmtN(v, 0) },
+                { label: 'RMSE', value: rmseVal, unit: 'MW', color: 'var(--accent2)', fmt: v => fmtN(v, 0) },
+                { label: 'Bias', value: biasVal, unit: 'MW', color: biasVal!=null&&Math.abs(biasVal)<50?'var(--success)':'var(--warning)', fmt: v => `${v>0?'+':''}${fmtN(v,0)}` },
               ].map(e => {
                 const isExpanded = activeError === e.label;
                 return (
                   <div key={e.label}>
                     <button onClick={() => setActiveError(isExpanded ? null : e.label)}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: isExpanded ? '#ffffff04' : 'transparent', border: `1px solid ${isExpanded ? '#2A292F' : 'transparent'}`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', transition: 'all 0.12s' }}>
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: isExpanded ? 'rgba(var(--overlay-rgb), 0.02)' : 'transparent', border: `1px solid ${isExpanded ? 'var(--outline)' : 'transparent'}`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer', transition: 'all 0.12s' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 3, height: 14, borderRadius: 2, background: e.value != null ? e.color : '#2A292F' }} />
-                        <span style={{ fontSize: 12, color: isExpanded ? '#F0F2F8' : '#8A90A6', letterSpacing: 0.4, fontFamily: 'inherit' }}>{e.label}</span>
+                        <div style={{ width: 3, height: 14, borderRadius: 2, background: e.value != null ? e.color : 'var(--outline)' }} />
+                        <span style={{ fontSize: 12, color: isExpanded ? 'var(--text)' : 'var(--text-muted)', letterSpacing: 0.4, fontFamily: 'inherit' }}>{e.label}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: e.value!=null ? e.color : '#555A6E', fontFamily: 'inherit' }}>{e.value!=null ? e.fmt(e.value) : '--'}</span>
-                        <span style={{ fontSize: 11, color: '#8A90A6', fontFamily: 'inherit' }}>{e.unit}</span>
-                        <span style={{ fontSize: 11, color: '#8A90A6', marginLeft: 4, fontFamily: 'inherit' }}>{isExpanded ? '▲' : '▾'}</span>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: e.value!=null ? e.color : 'var(--text-dim)', fontFamily: 'inherit' }}>{e.value!=null ? e.fmt(e.value) : '--'}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'inherit' }}>{e.unit}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4, fontFamily: 'inherit' }}>{isExpanded ? '▲' : '▾'}</span>
                       </div>
                     </button>
                     {isExpanded && (
-                      <div style={{ padding: '6px 10px 8px 21px', fontSize: 12, color: '#B8BDCC', lineHeight: 1.7, borderBottom: '1px solid #2A292F40' }}>
+                      <div style={{ padding: '6px 10px 8px 21px', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, borderBottom: '1px solid color-mix(in srgb, var(--outline) 25%, transparent)' }}>
                         {errorInfo[e.label]}
                       </div>
                     )}
                   </div>
                 );
               })}
-              {errorPairs.length === 0 && <div style={{ fontSize: 12, color: '#8A90A6', textAlign: 'center', padding: '6px 0' }}>Baseline required for error metrics</div>}
+              {errorPairs.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '6px 0' }}>Baseline required for error metrics</div>}
             </div>
           </div>
 
@@ -1431,27 +1415,27 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 0 }}>
           {(statGroups[statTab] || []).map(([label, val, unit, color, hint], i) => (
-            <div key={label} style={{ padding: '14px 16px', borderRight: i % 6 !== 5 ? '1px solid #2A292F22' : 'none', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ fontSize: 11, color: '#8A90A6', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+            <div key={label} style={{ padding: '14px 16px', borderRight: i % 6 !== 5 ? '1px solid color-mix(in srgb, var(--outline) 13%, transparent)' : 'none', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 5 }}>
                 <span style={{ fontSize: 18, fontWeight: 700, color }}>{val}</span>
-                {unit && <span style={{ fontSize: 11, color: '#8A90A6' }}>{unit}</span>}
+                {unit && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{unit}</span>}
               </div>
-              <div style={{ fontSize: 11, color: '#8A90A6', lineHeight: 1.5 }}>{hint}</div>
-              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: `${color}20` }} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{hint}</div>
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: `color-mix(in srgb, ${color} 13%, transparent)` }} />
             </div>
           ))}
         </div>
 
         {/* Ramp top-events (only in ramp tab) */}
         {statTab === 'ramp' && topRamps.length > 0 && (
-          <div style={{ padding: '10px 16px 14px', borderTop: '1px solid #2A292F' }}>
-            <div style={{ fontSize: 11, color: '#8A90A6', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 }}>Top 5 Ramp Events</div>
+          <div style={{ padding: '10px 16px 14px', borderTop: '1px solid var(--outline)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 }}>Top 5 Ramp Events</div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {topRamps.map((r, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, background: r.v > 0 ? '#F8717118' : '#34D39918', border: `1px solid ${r.v>0?'#F8717133':'#34D39933'}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: r.v>0?'#F87171':'#34D399' }}>{r.v>0?'+':''}{fmtN(r.v,0)}</span>
-                  <span style={{ fontSize: 12, color: '#8A90A6' }}>MW at {r.t}</span>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 8, background: r.v > 0 ? 'color-mix(in srgb, var(--danger) 9%, transparent)' : 'color-mix(in srgb, var(--success) 9%, transparent)', border: `1px solid ${r.v>0?'color-mix(in srgb, var(--danger) 20%, transparent)':'color-mix(in srgb, var(--success) 20%, transparent)'}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: r.v>0?'var(--danger)':'var(--success)' }}>{r.v>0?'+':''}{fmtN(r.v,0)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>MW at {r.t}</span>
                 </div>
               ))}
             </div>
@@ -1464,6 +1448,7 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 }
 
 export default function App({ authUser, onLogout, onHome }) {
+  const chartT = useChartTokens();
   const weatherComponentSliders = useSimulatorStore((s) => s.weatherComponentSliders);
   const setWeatherComponentSlider = useSimulatorStore((s) => s.setWeatherComponentSlider);
   const loadFromFileData = useSimulatorStore((s) => s.loadFromFileData);
@@ -1530,7 +1515,8 @@ export default function App({ authUser, onLogout, onHome }) {
   const _defaultFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
   const [regionDateRange, setRegionDateRange] = useState({ from: _defaultFrom, to: _today });
   const [viewDataOpen, setViewDataOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(true);
+  // Intelligence drawer is an overlay with a backdrop: start closed, open from the top bar.
+  const [contextOpen, setContextOpen] = useState(false);
   const [pipelineDate, setPipelineDate] = useState(null);
   const [pipelineJobId, setPipelineJobId] = useState(null);
 
@@ -1548,9 +1534,13 @@ export default function App({ authUser, onLogout, onHome }) {
 
   useEffect(() => {
     const activeLabel = NAV_ITEMS.find((item) => item.key === active)?.label
-      || (active === 'settings' ? 'Settings' : 'Grid Intelligence');
-    const regionLabel = selectedRegion ? titleize(selectedRegion) : 'Grid Intelligence';
-    document.title = `${APP_TITLE} | ${activeLabel} - ${regionLabel}`;
+      || (active === 'settings' ? 'Settings' : APP_TAGLINE);
+    // Page first so tabs stay distinguishable ("Monitor · Haryana — Forecast Studio");
+    // the Studio page is the app's home, so its tab is just the app name.
+    const lead = [active === 'studio' ? null : activeLabel, selectedRegion ? titleize(selectedRegion) : null]
+      .filter(Boolean)
+      .join(' · ');
+    document.title = lead ? `${lead} — ${APP_TITLE}` : APP_TITLE;
   }, [active, selectedRegion]);
 
   // Sync store sliders into local adj for display/calculation
@@ -1659,7 +1649,12 @@ export default function App({ authUser, onLogout, onHome }) {
 
     // Poll the FastAPI training service; normal app data stays on Django.
     const workerApiBase = TRAINING_API_BASE;
-    worker.postMessage({ type: 'start', jobId, apiBase: workerApiBase });
+    worker.postMessage({
+      type: 'start',
+      jobId,
+      apiBase: workerApiBase,
+      token: useAuthStore.getState().token,
+    });
   };
 
   // ── Phased initialisation ──────────────────────────────────────────────────
@@ -2133,15 +2128,13 @@ export default function App({ authUser, onLogout, onHome }) {
   const forecastPageBaseline = (activeHorizon === 't2' && !activeLive?.series?.hybrid_baseline?.length)
     ? (t2DataZipped.map(r => r.baseline_mw))
     : (activeLive?.series?.hybrid_baseline || []);
-  const forecastPageForecast = useMemo(() => {
-    const raw = activeHorizon === 't1'
+  const forecastPageForecast = useMemo(() => (
+    activeHorizon === 't1'
       ? (liveAdjustedForecast.length ? liveAdjustedForecast : (live?.series?.forecast || []))
       : (activeLive?.series?.forecast?.length
           ? activeLive.series.forecast
-          : t2DataZipped.map(r => r.forecast_mw));
-    if (activeHorizon !== 't1') return raw;
-    return applySettledT1ForecastFormula(raw, liveActual, forecastPageBlocks, forecastPageDate);
-  }, [activeHorizon, activeLive, forecastPageBlocks, forecastPageDate, live, liveActual, liveAdjustedForecast, t2DataZipped]);
+          : t2DataZipped.map(r => r.forecast_mw))
+  ), [activeHorizon, activeLive, live, liveAdjustedForecast, t2DataZipped]);
 
   const forecastPageRows = useMemo(() => {
     // T+2 with no activeLive series: fall back to pre-computed t2DataZipped rows
@@ -2370,25 +2363,25 @@ export default function App({ authUser, onLogout, onHome }) {
       grid: { left: 45, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        textStyle: { color: '#f8fafc', fontSize: 12 },
+        backgroundColor: chartT.elevated,
+        borderColor: chartT.outline,
+        textStyle: { color: chartT.text, fontSize: 12 },
         extraCssText: 'backdrop-filter: blur(10px);',
         formatter: '{b} Days • {c}%'
       },
       xAxis: {
         type: 'category',
         data: windows,
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#64748b', fontSize: 10, formatter: '{value}%' },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, formatter: '{value}%' },
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: [{
         name: 'MAPE',
@@ -2396,20 +2389,20 @@ export default function App({ authUser, onLogout, onHome }) {
         data: mapes,
         smooth: true,
         symbolSize: 6,
-        lineStyle: { color: '#4A90D9', width: 2 },
-        itemStyle: { color: '#4A90D9' },
+        lineStyle: { color: chartT.accent, width: 2 },
+        itemStyle: { color: chartT.accent },
         markPoint: Number.isFinite(bestVal) ? {
           data: [{ coord: [windows[bestIdx], bestVal] }],
           symbolSize: 8,
-          itemStyle: { color: '#f43f5e', shadowBlur: 5, shadowColor: 'rgba(255, 0, 85, 0.5)' }
+          itemStyle: { color: chartT.danger, shadowBlur: 5, shadowColor: withAlpha(chartT.danger, 0.5) }
         } : undefined,
         markLine: Number.isFinite(baselineDays) ? {
           data: [{ xAxis: baselineDays }],
-          lineStyle: { color: 'rgba(255, 255, 255, 0.2)', type: 'dashed' }
+          lineStyle: { color: chartT.textMuted, type: 'dashed' }
         } : undefined
       }]
     };
-  }, [baselineWindowMapes, baselineDays]);
+  }, [baselineWindowMapes, baselineDays, chartT]);
 
   const optimizerResidualHistogramOption = useMemo(() => {
     const hist = buildHistogram(optimizerResiduals, 10);
@@ -2422,43 +2415,43 @@ export default function App({ authUser, onLogout, onHome }) {
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc', fontSize: 12 },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text, fontSize: 12 },
         extraCssText: 'backdrop-filter: blur(10px);',
         formatter: (params) => {
           const p = params?.[0];
           if (!p) return '';
           const bin = hist.bins[p.dataIndex];
           if (!bin) return '';
-          return `<div style="font-weight:700;">Residual Impact</div><div>${fmt(bin.start)} to ${fmt(bin.end)} MW</div><div style="color:#38bdf8;">Count: ${bin.count}</div>`;
+          return `<div style="font-weight:700;">Residual Impact</div><div>${fmt(bin.start)} to ${fmt(bin.end)} MW</div><div style="color:${chartT.info};">Count: ${bin.count}</div>`;
         }
       },
       xAxis: {
         type: 'category',
         data: labels,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 0 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 0 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: [{
         type: 'bar',
         data: hist.bins.map((bin) => bin.count),
         itemStyle: {
-          color: '#4A90D9',
+          color: chartT.accent,
           opacity: 0.8,
           borderRadius: [4, 4, 0, 0]
         },
-        emphasis: { itemStyle: { opacity: 1, color: '#4A90D9' } }
+        emphasis: { itemStyle: { opacity: 1, color: chartT.accent } }
       }]
     };
-  }, [optimizerResiduals]);
+  }, [optimizerResiduals, chartT]);
 
   const optimizerErrorHeatmapOption = useMemo(() => {
     const blocks = dayAheadSeries?.blocks || [];
@@ -2472,21 +2465,21 @@ export default function App({ authUser, onLogout, onHome }) {
     return {
       grid: { left: 45, right: 20, top: 20, bottom: 40 },
       tooltip: {
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text },
         formatter: (p) => `Block ${blocks[p.data[0]]}: <b>${fmt(p.data[2])} MW</b>`
       },
       xAxis: {
         type: 'category',
         data: blocks,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 5 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 5 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'category',
         data: ['Error'],
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
@@ -2496,16 +2489,16 @@ export default function App({ authUser, onLogout, onHome }) {
         orient: 'horizontal',
         left: 'center',
         bottom: 0,
-        inRange: { color: ['#1e2028', '#4A90D9', '#f43f5e'] },
-        textStyle: { color: '#64748b', fontSize: 10 }
+        inRange: { color: [chartT.surface, chartT.accent, chartT.danger] },
+        textStyle: { color: chartT.textMuted, fontSize: 10 }
       },
       series: [{
         type: 'heatmap',
         data,
-        itemStyle: { borderColor: 'rgba(0,0,0,0.5)', borderWidth: 1 }
+        itemStyle: { borderColor: chartT.panel, borderWidth: 1 }
       }]
     };
-  }, [dayAheadSeries, optimizerResiduals]);
+  }, [dayAheadSeries, optimizerResiduals, chartT]);
 
   const optimizerRampComparisonOption = useMemo(() => {
     if (!optimizerRampSeries) return null;
@@ -2513,24 +2506,24 @@ export default function App({ authUser, onLogout, onHome }) {
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text },
         formatter: '{b}: {c} MW/15m'
       },
-      legend: { data: ['Actual Ramp', 'Baseline Ramp'], textStyle: { color: '#64748b', fontSize: 10 }, top: 0, icon: 'circle' },
+      legend: { data: ['Actual Ramp', 'Baseline Ramp'], textStyle: { color: chartT.textMuted, fontSize: 10 }, top: 0, icon: 'circle' },
       xAxis: {
         type: 'category',
         data: optimizerRampSeries.rampBlocks,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 7 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 7 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
         scale: true,
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: [
         {
@@ -2538,18 +2531,18 @@ export default function App({ authUser, onLogout, onHome }) {
           type: 'line',
           data: optimizerRampSeries.actualRamp,
           smooth: true,
-          lineStyle: { color: '#34d399', width: 2, shadowBlur: 10, shadowColor: 'rgba(57, 255, 20, 0.5)' }
+          lineStyle: { color: chartT.success, width: 2, shadowBlur: 10, shadowColor: withAlpha(chartT.success, 0.5) }
         },
         {
           name: 'Baseline Ramp',
           type: 'line',
           data: optimizerRampSeries.baselineRamp,
           smooth: true,
-          lineStyle: { color: 'rgba(255, 255, 255, 0.3)', width: 1.5, type: 'dashed' }
+          lineStyle: { color: chartT.accent2, width: 1.5, type: 'dashed' }
         }
       ]
     };
-  }, [optimizerRampSeries]);
+  }, [optimizerRampSeries, chartT]);
 
   const optimizerPeakErrorOption = useMemo(() => {
     if (!optimizerPeakError || !Number.isFinite(optimizerPeakError.actualPeak) || !Number.isFinite(optimizerPeakError.baselineAtPeak)) {
@@ -2559,35 +2552,35 @@ export default function App({ authUser, onLogout, onHome }) {
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text },
         formatter: '{b}: <b>{c} MW</b>'
       },
       xAxis: {
         type: 'category',
         data: ['Baseline @ Peak', 'Actual Peak'],
-        axisLabel: { color: '#64748b', fontSize: 11 },
+        axisLabel: { color: chartT.textMuted, fontSize: 11 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
         scale: true,
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: [{
         type: 'bar',
         data: [
-          { value: optimizerPeakError.baselineAtPeak, itemStyle: { color: 'rgba(255, 255, 255, 0.1)' } },
-          { value: optimizerPeakError.actualPeak, itemStyle: { color: '#34d399', shadowBlur: 10, shadowColor: 'rgba(57, 255, 20, 0.4)' } }
+          { value: optimizerPeakError.baselineAtPeak, itemStyle: { color: withAlpha(chartT.accent2, 0.55) } },
+          { value: optimizerPeakError.actualPeak, itemStyle: { color: chartT.success, shadowBlur: 10, shadowColor: withAlpha(chartT.success, 0.4) } }
         ],
         barWidth: '40%',
         borderRadius: [4, 4, 0, 0]
       }]
     };
-  }, [optimizerPeakError]);
+  }, [optimizerPeakError, chartT]);
 
   const optimizerRampErrorOption = useMemo(() => {
     if (!optimizerRampSeries) return null;
@@ -2597,35 +2590,35 @@ export default function App({ authUser, onLogout, onHome }) {
       grid: { left: 50, right: 20, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text },
         formatter: '{b}: <b>{c} MW</b>'
       },
       xAxis: {
         type: 'category',
         data: optimizerRampSeries.rampBlocks,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 7 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 7 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: [{
         type: 'bar',
         data: absErrors,
         itemStyle: {
-          color: '#f43f5e',
+          color: chartT.danger,
           opacity: 0.8,
           borderRadius: [4, 4, 0, 0]
         },
         emphasis: { itemStyle: { opacity: 1 } }
       }]
     };
-  }, [optimizerRampSeries]);
+  }, [optimizerRampSeries, chartT]);
 
   const variancePct = useMemo(() => {
     if (!dayAheadSeries?.actual?.length) return [];
@@ -2831,9 +2824,13 @@ export default function App({ authUser, onLogout, onHome }) {
     if (!exportDate) { alert('No forecast date available. Run a forecast first.'); return; }
     setExportLoading(true);
     try {
+      const token = useAuthStore.getState().token;
       const res = await fetch(TRAINING_API_URL('/v2/forecast/export'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           date: exportDate,
           region: selectedRegion || 'haryana',
@@ -2878,76 +2875,76 @@ export default function App({ authUser, onLogout, onHome }) {
       };
     };
     const series = [
-      mkSeries('Today', benchmarkData.today, { itemStyle: { color: '#4A90D9' }, lineStyle: { width: 2 }, z: 10 }),
-      mkSeries('Y\'day (T-1)', benchmarkData.t1, { itemStyle: { color: 'rgba(255,255,255,0.4)' }, lineStyle: { width: 1.5, type: 'dashed' } }),
-      mkSeries('Last Week (T-7)', benchmarkData.t7, { itemStyle: { color: '#ffb300' }, opacity: 0.6 }),
-      mkSeries('Last Year (T-365)', benchmarkData.t365, { itemStyle: { color: '#9d4edd' }, opacity: 0.5 }),
+      mkSeries('Today', benchmarkData.today, { itemStyle: { color: chartT.accent }, lineStyle: { width: 2 }, z: 10 }),
+      mkSeries('Y\'day (T-1)', benchmarkData.t1, { itemStyle: { color: chartT.textMuted }, lineStyle: { width: 1.5, type: 'dashed' } }),
+      mkSeries('Last Week (T-7)', benchmarkData.t7, { itemStyle: { color: chartT.warm }, opacity: 0.6 }),
+      mkSeries('Last Year (T-365)', benchmarkData.t365, { itemStyle: { color: chartT.accent2 }, opacity: 0.5 }),
     ].filter(Boolean);
 
     return {
       grid: { left: 50, right: 22, top: 28, bottom: 44 },
-      legend: { textStyle: { color: '#64748b', fontSize: 10 }, top: 0, icon: 'circle', type: series.length > 3 ? 'scroll' : 'plain' },
+      legend: { textStyle: { color: chartT.textMuted, fontSize: 10 }, top: 0, icon: 'circle', type: series.length > 3 ? 'scroll' : 'plain' },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        borderColor: chartT.outline,
+        textStyle: { color: chartT.text },
         extraCssText: 'backdrop-filter: blur(10px);'
       },
       xAxis: {
         type: 'category',
         data: blocks,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 7 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 7 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series
     };
-  }, [benchmarkData]);
+  }, [benchmarkData, chartT]);
 
   const comparisonOption = useMemo(() => {
     const blocks = Array.from({ length: 96 }, (_, i) => i + 1);
-    const colors = ['#4A90D9', '#34d399', '#f43f5e', '#ffe800', '#9d4edd', '#ffab00', '#4ecdc4'];
+    const colors = [chartT.accent, chartT.success, chartT.danger, chartT.warning, chartT.accent2, chartT.warm, chartT.info];
     const dates = Object.keys(multiDaySeries || {});
     return {
       grid: { left: 50, right: 22, top: 28, bottom: 44 },
-      legend: { textStyle: { color: '#64748b', fontSize: 10 }, top: 0, type: 'scroll', icon: 'circle' },
+      legend: { textStyle: { color: chartT.textMuted, fontSize: 10 }, top: 0, type: 'scroll', icon: 'circle' },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(18, 20, 28, 0.85)',
-        textStyle: { color: '#f8fafc' },
+        backgroundColor: chartT.elevated,
+        textStyle: { color: chartT.text },
         extraCssText: 'backdrop-filter: blur(10px);'
       },
       xAxis: {
         type: 'category',
         data: blocks,
-        axisLabel: { color: '#64748b', fontSize: 10, interval: 7 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 7 },
         axisLine: { show: false },
         axisTick: { show: false }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#64748b', fontSize: 10 },
+        axisLabel: { color: chartT.textMuted, fontSize: 10 },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+        splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
       },
       series: dates.map((d, i) => ({
         name: d,
         type: 'line',
         data: multiDaySeries[d],
         itemStyle: { color: colors[i % colors.length] },
-        lineStyle: { width: 2.5, shadowBlur: 8, shadowColor: `${colors[i % colors.length]}66` },
+        lineStyle: { width: 2.5, shadowBlur: 8, shadowColor: withAlpha(colors[i % colors.length], 0.4) },
         smooth: true,
         symbol: 'none'
       }))
     };
-  }, [multiDaySeries]);
+  }, [multiDaySeries, chartT]);
 
   const momentumOption = useMemo(() => {
     if (!momentumChange) return null;
@@ -2959,29 +2956,29 @@ export default function App({ authUser, onLogout, onHome }) {
         grid: { left: 50, right: 22, top: 28, bottom: 44 },
         tooltip: {
           trigger: 'axis',
-          backgroundColor: 'rgba(18, 20, 28, 0.85)',
-          textStyle: { color: '#f8fafc' },
+          backgroundColor: chartT.elevated,
+          textStyle: { color: chartT.text },
           formatter: '{b}: <b>{c}%</b>'
         },
         xAxis: {
           type: 'category',
           data: dates,
-          axisLabel: { color: '#64748b', fontSize: 10, rotate: 35 },
+          axisLabel: { color: chartT.textMuted, fontSize: 10, rotate: 35 },
           axisLine: { show: false },
           axisTick: { show: false }
         },
         yAxis: {
           type: 'value',
-          axisLabel: { color: '#64748b', fontSize: 10, formatter: '{value}%' },
+          axisLabel: { color: chartT.textMuted, fontSize: 10, formatter: '{value}%' },
           axisLine: { show: false },
-          splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+          splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
         },
         series: [{
           name: 'Day-over-Day %',
           type: 'bar',
           data: values,
           itemStyle: {
-            color: (params) => params.value >= 0 ? '#34d399' : '#f43f5e',
+            color: (params) => params.value >= 0 ? chartT.success : chartT.danger,
             borderRadius: [4, 4, 0, 0]
           }
         }]
@@ -2992,36 +2989,36 @@ export default function App({ authUser, onLogout, onHome }) {
         grid: { left: 50, right: 22, top: 28, bottom: 44 },
         tooltip: {
           trigger: 'axis',
-          backgroundColor: 'rgba(18, 20, 28, 0.85)',
-          textStyle: { color: '#f8fafc' },
+          backgroundColor: chartT.elevated,
+          textStyle: { color: chartT.text },
           formatter: 'Block {b}: <b>{c}%</b>'
         },
         xAxis: {
           type: 'category',
           data: blocks,
-          axisLabel: { color: '#64748b', fontSize: 10, interval: 7 },
+          axisLabel: { color: chartT.textMuted, fontSize: 10, interval: 7 },
           axisLine: { show: false },
           axisTick: { show: false }
         },
         yAxis: {
           type: 'value',
-          axisLabel: { color: '#64748b', fontSize: 10, formatter: '{value}%' },
+          axisLabel: { color: chartT.textMuted, fontSize: 10, formatter: '{value}%' },
           axisLine: { show: false },
-          splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.03)', type: 'dashed' } }
+          splitLine: { lineStyle: { color: withAlpha(chartT.outline, 0.6), type: 'dashed' } }
         },
         series: [{
           name: 'Block Change %',
           type: 'bar',
           data: momentumChange.change_pct,
           itemStyle: {
-            color: (params) => params.value >= 0 ? '#34d399' : '#f43f5e',
+            color: (params) => params.value >= 0 ? chartT.success : chartT.danger,
             borderRadius: [2, 2, 0, 0]
           }
         }]
       };
     }
     return null;
-  }, [momentumChange]);
+  }, [momentumChange, chartT]);
 
 
   const hasHighRisk = dayAhead?.metadata?.insights?.some(i => i.type === 'warning');
@@ -3080,10 +3077,10 @@ export default function App({ authUser, onLogout, onHome }) {
           background: 'var(--bg-elevated)', borderTop: '1px solid var(--outline)',
           padding: '6px 16px', display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', color: '#F07825', flexShrink: 0 }} />
-          <span style={{ fontSize: 11, color: '#A0A5B8', flexShrink: 0 }}>Model training…</span>
+          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent)', flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>Model training…</span>
           {trainingProgress.length > 0 && (
-            <span style={{ fontSize: 10, color: '#6B7186', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {trainingProgress[trainingProgress.length - 1]?.message || ''}
             </span>
           )}
@@ -3094,9 +3091,9 @@ export default function App({ authUser, onLogout, onHome }) {
               return (
                 <span key={step} style={{
                   fontSize: 11, padding: '2px 8px', borderRadius: 20,
-                  background: done ? 'rgba(52,211,153,0.15)' : 'var(--bg-surface)',
-                  color: done ? '#34D399' : '#8A90A6',
-                  border: `1px solid ${done ? 'rgba(52,211,153,0.3)' : 'var(--outline)'}`,
+                  background: done ? 'color-mix(in srgb, var(--success) 15%, transparent)' : 'var(--bg-surface)',
+                  color: done ? 'var(--success)' : 'var(--text-muted)',
+                  border: `1px solid ${done ? 'color-mix(in srgb, var(--success) 30%, transparent)' : 'var(--outline)'}`,
                 }}>{step}</span>
               );
             })}
@@ -3111,8 +3108,8 @@ export default function App({ authUser, onLogout, onHome }) {
             <Zap size={15} />
           </div>
           <div className="sb-brand-text">
-            <span className="sb-brand-title">VidyutPragya</span>
-            <span className="sb-brand-sub">Forecast OS</span>
+            <span className="sb-brand-title">{APP_TITLE}</span>
+            <span className="sb-brand-sub">{APP_TAGLINE_SHORT}</span>
           </div>
           <button
             className="sb-collapse-btn"
@@ -3230,7 +3227,7 @@ export default function App({ authUser, onLogout, onHome }) {
         <div className="loading-overlay">
           <div className="loading-spinner">
             <div className="loading-brand loading-brand--pulse">
-              <span className="loading-brand__title">VidyutPragya</span>
+              <span className="loading-brand__title">{APP_TITLE}</span>
               <span className="loading-brand__subtitle">
                 {selectedRegion ? `${titleize(selectedRegion)} analytics` : 'Loading analytics'}
               </span>
@@ -3420,6 +3417,12 @@ export default function App({ authUser, onLogout, onHome }) {
       {/* Simulator and Analysis handled above */}
 
       {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} selectedRegion={selectedRegion} />}
+
+      {active === 'studio' && (
+        <Suspense fallback={<ViewLoading label="Loading Studio..." />}>
+          <ForecastStudioPage selectedRegion={selectedRegion} />
+        </Suspense>
+      )}
 
       {active === 'backtest' && (
         <Suspense fallback={<ViewLoading label="Loading Backtest..." />}>

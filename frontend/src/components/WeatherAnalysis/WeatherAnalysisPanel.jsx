@@ -48,7 +48,7 @@ export default function WeatherAnalysisPanel({
 
       {/* 3. Content Panel */}
       <div className="analysis-main analysis-main--stretch">
-        <div className="flex-1 bg-slate-900/40 border border-slate-800 rounded-xl p-4 overflow-hidden flex flex-col">
+        <div className="flex-1 bg-[rgba(var(--panel-rgb),0.4)] border border-[color:var(--outline)] rounded-xl p-4 overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
             {activeTab === 'intraday' && data.intraday && <IntradayWeather data={data.intraday} />}
             {activeTab === 'peak' && data.peak_windows && (

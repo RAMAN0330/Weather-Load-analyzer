@@ -253,7 +253,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
     return (
       <div className="glass-panel p-4 flex flex-col gap-4">
         <div
-          className="flex justify-between items-center bg-white/5 p-3 rounded-xl border border-[var(--outline)] cursor-pointer hover:bg-white/10 transition-colors"
+          className="flex justify-between items-center bg-[rgba(var(--overlay-rgb),0.05)] p-3 rounded-xl border border-[var(--outline)] cursor-pointer hover:bg-[rgba(var(--overlay-rgb),0.1)] transition-colors"
           onClick={() => setCalendarPanelOpen(true)}
         >
           <div className="flex flex-col">
@@ -282,7 +282,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
             ))}
           </div>
 
-          <div className="rounded-lg border border-[var(--outline)] bg-white/[0.03] px-3 py-2">
+          <div className="rounded-lg border border-[var(--outline)] bg-[rgba(var(--overlay-rgb),0.03)] px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
                 Current Scope
@@ -308,7 +308,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
                 <label className="text-[10px] uppercase text-[var(--muted)]">Start</label>
                 <input
                   type="number"
-                  className="bg-white/5 border border-[var(--outline)] rounded-lg p-2 text-xs text-white"
+                  className="bg-[rgba(var(--overlay-rgb),0.05)] border border-[var(--outline)] rounded-lg p-2 text-xs text-[var(--text)]"
                   min={1}
                   max={96}
                   value={rangeStart}
@@ -323,7 +323,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
                 <label className="text-[10px] uppercase text-[var(--muted)]">End</label>
                 <input
                   type="number"
-                  className="bg-white/5 border border-[var(--outline)] rounded-lg p-2 text-xs text-white"
+                  className="bg-[rgba(var(--overlay-rgb),0.05)] border border-[var(--outline)] rounded-lg p-2 text-xs text-[var(--text)]"
                   min={1}
                   max={96}
                   value={rangeEnd}
@@ -342,7 +342,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
               <label className="text-[10px] uppercase text-[var(--muted)]">Block Number</label>
               <input
                 type="number"
-                className="bg-white/5 border border-[var(--outline)] rounded-lg p-2 text-xs text-white"
+                className="bg-[rgba(var(--overlay-rgb),0.05)] border border-[var(--outline)] rounded-lg p-2 text-xs text-[var(--text)]"
                 min={1}
                 max={96}
                 value={singleBlock}
@@ -420,7 +420,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
           {SCENARIO_PRESETS.map((preset) => (
             <button
               key={preset.name}
-              className="p-2 rounded-lg bg-white/5 border border-[var(--outline)] hover:bg-white/10 hover:border-[var(--accent)] transition-all text-left"
+              className="p-2 rounded-lg bg-[rgba(var(--overlay-rgb),0.05)] border border-[var(--outline)] hover:bg-[rgba(var(--overlay-rgb),0.1)] hover:border-[var(--accent)] transition-all text-left"
               onClick={() => applyScenario(preset)}
               title={preset.desc}
             >
@@ -463,7 +463,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
             <div
               key={driver.key}
               className="rounded-lg border border-[var(--outline)] p-2"
-              style={{ background: isActive ? 'rgba(255,255,255,0.03)' : 'transparent' }}
+              style={{ background: isActive ? 'rgba(var(--overlay-rgb), 0.03)' : 'transparent' }}
             >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[11px] text-[var(--muted)]">
@@ -575,7 +575,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
             {SCENARIO_PRESETS.map((preset) => (
               <button
                 key={preset.name}
-                className="p-2 rounded-lg bg-white/5 border border-[var(--outline)] hover:bg-white/10 hover:border-[var(--accent)] transition-all text-left"
+                className="p-2 rounded-lg bg-[rgba(var(--overlay-rgb),0.05)] border border-[var(--outline)] hover:bg-[rgba(var(--overlay-rgb),0.1)] hover:border-[var(--accent)] transition-all text-left"
                 onClick={() => applyScenario(preset)}
                 title={preset.desc}
               >
@@ -712,10 +712,10 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
           </div>
           <div className="flex flex-col gap-2">
             <span className="text-[10px] uppercase text-[var(--muted)]">Impact Summary</span>
-            <div className="bg-white/5 p-3 rounded-lg border border-[var(--outline)]">
+            <div className="bg-[rgba(var(--overlay-rgb),0.05)] p-3 rounded-lg border border-[var(--outline)]">
               <p className="text-xs leading-relaxed text-[var(--muted)]">
                 Atmospheric pressure across the {selectedBlocks.length} selected blocks indicates a
-                <span className="text-white font-medium">
+                <span className="text-[var(--text)] font-medium">
                   {' '}
                   {exogInsight.weatherTotal >= 0 ? 'bullish' : 'bearish'}{' '}
                 </span>
@@ -756,7 +756,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
           return (
             <div
               key={item.label}
-              className="rounded-lg border border-[var(--outline)] p-2.5 bg-white/[0.02]"
+              className="rounded-lg border border-[var(--outline)] p-2.5 bg-[rgba(var(--overlay-rgb),0.02)]"
             >
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[11px] text-[var(--muted)]">
@@ -767,7 +767,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
                   {item.value.toFixed(1)} MW
                 </span>
               </div>
-              <div className="h-1 rounded-full bg-white/5">
+              <div className="h-1 rounded-full bg-[rgba(var(--overlay-rgb),0.05)]">
                 <div
                   className="h-full rounded-full transition-all"
                   style={{ width: `${Math.max(barPct, 2)}%`, background: item.color }}
@@ -812,7 +812,7 @@ export const DriverEditorPanel: React.FC<DriverEditorPanelProps> = ({
         {defaultBands.map((card) => (
           <div
             key={card.key}
-            className="flex items-center gap-3 p-3 rounded-lg border border-[var(--outline)] bg-white/5"
+            className="flex items-center gap-3 p-3 rounded-lg border border-[var(--outline)] bg-[rgba(var(--overlay-rgb),0.05)]"
             style={{ borderLeftWidth: '3px', borderLeftColor: card.color }}
           >
             <span className="text-lg">{card.icon}</span>

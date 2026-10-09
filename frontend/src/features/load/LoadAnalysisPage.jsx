@@ -1,6 +1,7 @@
 import axios from 'axios';
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 import {
   PageShell as VpPageShell,
   PageHeader as VpPageHeader,
@@ -31,7 +32,7 @@ const DETAIL_PANELS = [
 const S = {
   page: {
     fontFamily: "'IBM Plex Mono', monospace",
-    color: '#ECEEF3',
+    color: 'var(--text)',
     minHeight: 0,
     height: '100%',
     overflow: 'hidden',
@@ -41,19 +42,19 @@ const S = {
     padding: '10px 12px 0',
   },
   card: {
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    background: 'linear-gradient(180deg, var(--bg-panel), var(--bg-surface))',
     borderRadius: 16,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.18)',
   },
   cardTitle: {
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: 0.6,
-    color: '#B8BDCC',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase',
   },
   badge: (color) => ({
@@ -61,33 +62,33 @@ const S = {
     fontWeight: 700,
     padding: '4px 10px',
     borderRadius: 999,
-    background: `${color}18`,
+    background: `color-mix(in srgb, ${color} 9%, transparent)`,
     color,
-    border: `1px solid ${color}33`,
+    border: `1px solid color-mix(in srgb, ${color} 20%, transparent)`,
   }),
   th: {
     fontSize: 11,
-    color: '#8A90A6',
+    color: 'var(--text-muted)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     padding: '10px 12px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     textAlign: 'right',
     fontWeight: 600,
   },
   td: {
     fontSize: 13,
     padding: '10px 12px',
-    borderBottom: '1px solid rgba(42, 41, 47, 0.7)',
+    borderBottom: '1px solid color-mix(in srgb, var(--outline) 70%, transparent)',
     textAlign: 'right',
-    color: '#F0F2F8',
+    color: 'var(--text)',
   },
   tabBar: {
     display: 'inline-flex',
     gap: 4,
     padding: '5px',
-    background: '#141419',
-    border: '1px solid #2A292F',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 999,
     flexWrap: 'wrap',
   },
@@ -99,8 +100,8 @@ const S = {
     border: '1px solid transparent',
     fontFamily: 'inherit',
     borderRadius: 999,
-    background: active ? 'rgba(240, 120, 37, 0.14)' : 'transparent',
-    color: active ? '#F07825' : '#B8BDCC',
+    background: active ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
     transition: 'all 0.15s ease',
   }),
   actionBtn: (active) => ({
@@ -111,9 +112,9 @@ const S = {
     minWidth: 180,
     padding: '10px 12px',
     borderRadius: 14,
-    border: `1px solid ${active ? '#F0782566' : '#2A292F'}`,
-    background: active ? 'rgba(240, 120, 37, 0.12)' : 'rgba(255, 255, 255, 0.02)',
-    color: active ? '#F07825' : '#ECEEF3',
+    border: `1px solid ${active ? 'color-mix(in srgb, var(--accent) 40%, transparent)' : 'var(--outline)'}`,
+    background: active ? 'rgba(var(--accent-rgb), 0.12)' : 'rgba(var(--overlay-rgb), 0.02)',
+    color: active ? 'var(--accent)' : 'var(--text)',
     cursor: 'pointer',
     fontFamily: 'inherit',
     textAlign: 'left',
@@ -123,25 +124,25 @@ const S = {
     fontSize: 11,
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    color: '#8A90A6',
+    color: 'var(--text-muted)',
   },
 };
 
-const ecBase = () => ({
+const ecBase = (tk) => ({
   backgroundColor: 'transparent',
-  textStyle: { color: '#8a90a6', fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 },
+  textStyle: { color: tk.textMuted, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 },
   grid: { top: 36, right: 20, bottom: 36, left: 55 },
   tooltip: {
     trigger: 'axis',
-    backgroundColor: 'rgba(22,22,27,0.96)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: tk.elevated,
+    borderColor: tk.outline,
     borderWidth: 1,
-    textStyle: { color: '#f0f2f8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
-    extraCssText: 'box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-radius: 8px; padding: 8px 12px;',
+    textStyle: { color: tk.text, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
+    extraCssText: 'box-shadow: 0 8px 24px rgba(var(--shadow-rgb), 0.25); border-radius: 8px; padding: 8px 12px;',
     confine: true,
   },
   legend: {
-    textStyle: { color: '#8a90a6', fontSize: 11 },
+    textStyle: { color: tk.textMuted, fontSize: 11 },
     top: 4,
     right: 8,
     itemWidth: 12,
@@ -149,17 +150,17 @@ const ecBase = () => ({
   },
   xAxis: {
     type: 'category',
-    axisLine: { lineStyle: { color: '#2a292f' } },
+    axisLine: { lineStyle: { color: tk.outline } },
     axisTick: { show: false },
-    axisLabel: { color: '#555a6e', fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" },
+    axisLabel: { color: tk.textMuted, fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" },
     splitLine: { show: false },
   },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { color: '#555a6e', fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" },
-    splitLine: { lineStyle: { color: '#1e1d23', type: 'dashed', width: 1 } },
+    axisLabel: { color: tk.textMuted, fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" },
+    splitLine: { lineStyle: { color: withAlpha(tk.outline, 0.7), type: 'dashed', width: 1 } },
   },
 });
 
@@ -168,7 +169,7 @@ const safeAverage = (values = []) => {
   return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : 0;
 };
 
-const KpiCard = ({ eyebrow, title, value, unit, tone = '#ECEEF3', detail, footer }) => (
+const KpiCard = ({ eyebrow, title, value, unit, tone = 'var(--text)', detail, footer }) => (
   <div
     className="kpi-card"
     style={{
@@ -177,22 +178,22 @@ const KpiCard = ({ eyebrow, title, value, unit, tone = '#ECEEF3', detail, footer
       gap: 4,
       minHeight: 88,
       justifyContent: 'space-between',
-      background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+      background: 'linear-gradient(180deg, var(--bg-panel), var(--bg-surface))',
     }}
   >
     <div style={S.miniLabel}>{eyebrow}</div>
     <div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#A0A5B8', marginBottom: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
         {title}
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 22, lineHeight: 1, fontWeight: 700, color: tone, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.4px', fontFamily: "'IBM Plex Mono', monospace" }}>{value}</span>
-        {unit ? <span style={{ fontSize: 11, color: '#6B7186' }}>{unit}</span> : null}
+        {unit ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{unit}</span> : null}
       </div>
     </div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {detail ? <div style={{ fontSize: 12, color: '#F0F2F8' }}>{detail}</div> : null}
-      {footer ? <div style={{ fontSize: 11, color: '#8A90A6' }}>{footer}</div> : null}
+      {detail ? <div style={{ fontSize: 12, color: 'var(--text)' }}>{detail}</div> : null}
+      {footer ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{footer}</div> : null}
     </div>
   </div>
 );
@@ -215,6 +216,7 @@ export default function LoadAnalysisPage({
 }) {
   // When T+2 is active, use T+2 live series for forecast/regime analysis
   const activeLiveData = horizon === 't2' && liveT2 ? liveT2 : liveData;
+  const tk = useChartTokens();
   const [mainTab, setMainTab] = useState('benchmark');
   const [compareDates, setCompareDates] = useState(multiSelectedDates || []);
   const [overlayPanel, setOverlayPanel] = useState(null);
@@ -402,17 +404,17 @@ export default function LoadAnalysisPage({
 
   const fingerprintRows = useMemo(
     () => [
-      { l: 'Peak Hour', v: peakIdx >= 0 ? blockToTime(peakIdx + 1) : '--', c: '#F07825' },
-      { l: 'Night Base (00-06)', v: `${fmt(nightBase, 0)} MW`, c: '#5B9FE4' },
+      { l: 'Peak Hour', v: peakIdx >= 0 ? blockToTime(peakIdx + 1) : '--', c: 'var(--accent)' },
+      { l: 'Night Base (00-06)', v: `${fmt(nightBase, 0)} MW`, c: 'var(--info)' },
       {
         l: 'Morning Ramp (06-10)',
         v: `${morningRampWindow >= 0 ? '+' : ''}${fmt(morningRampWindow, 0)} MW`,
-        c: '#FBBF24',
+        c: 'var(--warning)',
       },
-      { l: 'Afternoon Plateau', v: `${fmt(afternoonPlateau, 0)} MW`, c: '#F07825' },
-      { l: 'Evening Peak (18-21)', v: `${fmt(eveningPeakWindow, 0)} MW`, c: '#EC4899' },
-      { l: 'Demand Range', v: `${fmt(demandRange, 0)} MW`, c: '#ECEEF3' },
-      { l: 'P/V Ratio', v: pvRatio != null ? pvRatio.toFixed(2) : '--', c: '#ECEEF3' },
+      { l: 'Afternoon Plateau', v: `${fmt(afternoonPlateau, 0)} MW`, c: 'var(--accent)' },
+      { l: 'Evening Peak (18-21)', v: `${fmt(eveningPeakWindow, 0)} MW`, c: 'var(--accent2)' },
+      { l: 'Demand Range', v: `${fmt(demandRange, 0)} MW`, c: 'var(--text)' },
+      { l: 'P/V Ratio', v: pvRatio != null ? pvRatio.toFixed(2) : '--', c: 'var(--text)' },
     ],
     [
       peakIdx,
@@ -432,7 +434,7 @@ export default function LoadAnalysisPage({
         title: 'Peak Load',
         value: fmt(peak, 0),
         unit: 'MW',
-        tone: '#F07825',
+        tone: 'var(--accent)',
         detail:
           peakShiftBlocks == null
             ? 'Peak timing unavailable'
@@ -444,7 +446,7 @@ export default function LoadAnalysisPage({
         title: 'Daily Energy',
         value: fmt(energy, 0),
         unit: 'MWh',
-        tone: '#ECEEF3',
+        tone: 'var(--text)',
         detail:
           yEnergy > 0
             ? `${(energy - yEnergy) / yEnergy >= 0 ? '+' : ''}${fmt(((energy - yEnergy) / yEnergy) * 100)}% vs yesterday`
@@ -456,7 +458,7 @@ export default function LoadAnalysisPage({
         title: 'Load Factor',
         value: fmt(loadFactor, 1),
         unit: '%',
-        tone: loadFactor >= 70 ? '#34D399' : '#FBBF24',
+        tone: loadFactor >= 70 ? 'var(--success)' : 'var(--warning)',
         detail: yLoadFactor
           ? `${loadFactor - yLoadFactor >= 0 ? '+' : ''}${fmt(loadFactor - yLoadFactor, 1)} pts vs yesterday`
           : 'No yesterday factor',
@@ -466,7 +468,7 @@ export default function LoadAnalysisPage({
         eyebrow: 'Day context',
         title: dayRegime,
         value: detectedSeason ? detectedSeason.toUpperCase() : '--',
-        tone: '#5B9FE4',
+        tone: 'var(--accent)',
         detail: effectiveDate || 'No active date',
         footer:
           reserveMargin != null
@@ -478,7 +480,7 @@ export default function LoadAnalysisPage({
         title: trend.dir,
         value: `${trend.val > 0 ? '+' : ''}${fmt(trend.val, 1)}`,
         unit: '%/day',
-        tone: trend.val > 0.5 ? '#F87171' : trend.val < -0.5 ? '#34D399' : '#ECEEF3',
+        tone: trend.val > 0.5 ? 'var(--danger)' : trend.val < -0.5 ? 'var(--success)' : 'var(--text)',
         detail: trend.data.length
           ? `${trend.data.length} daily points tracked`
           : 'Momentum unavailable',
@@ -491,7 +493,7 @@ export default function LoadAnalysisPage({
         title: 'Peak-to-Valley',
         value: pvRatio != null ? pvRatio.toFixed(2) : '--',
         unit: 'ratio',
-        tone: pvRatio != null && pvRatio > 1.5 ? '#F87171' : '#ECEEF3',
+        tone: pvRatio != null && pvRatio > 1.5 ? 'var(--danger)' : 'var(--text)',
         detail:
           pvRatio != null
             ? `Peak ${fmt(peak, 0)} MW / Valley ${fmt(valley, 0)} MW`
@@ -504,10 +506,10 @@ export default function LoadAnalysisPage({
         value: duckCurveSeverity != null ? duckCurveSeverity.toFixed(2) : '--',
         unit: 'ratio',
         tone: duckCurveFlag
-          ? '#F87171'
+          ? 'var(--danger)'
           : duckCurveSeverity != null && duckCurveSeverity < 0.75
-            ? '#FBBF24'
-            : '#34D399',
+            ? 'var(--warning)'
+            : 'var(--success)',
         detail: duckCurveFlag
           ? 'Midday dip severe — solar ramp risk'
           : duckCurveSeverity != null
@@ -560,22 +562,22 @@ export default function LoadAnalysisPage({
         : null;
 
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       legend: {
-        ...ecBase().legend,
+        ...ecBase(tk).legend,
         data: ['Today', 'Yesterday', 'Last Week', 'Last Year'].filter(
           (_, i) => [today, t1, t7, t365][i].length
         ),
       },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(tk).yAxis, name: 'MW' },
       series: [
         {
-          ...mk('Today', today, '#F07825', 2.6),
+          ...mk('Today', today, tk.accent, 2.6),
           z: 10,
           areaStyle: {
             color: {
@@ -585,7 +587,7 @@ export default function LoadAnalysisPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: '#F078251A' },
+                { offset: 0, color: withAlpha(tk.accent, 0.1) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -598,12 +600,12 @@ export default function LoadAnalysisPage({
                 label: {
                   formatter: (p) => `${fmt(p.value, 0)}`,
                   fontSize: 12,
-                  color: '#F07825',
+                  color: tk.accent,
                   fontWeight: 700,
                 },
               },
             ],
-            itemStyle: { color: '#F07825' },
+            itemStyle: { color: tk.accent },
           },
           markLine: {
             silent: true,
@@ -611,34 +613,34 @@ export default function LoadAnalysisPage({
             data: [
               {
                 xAxis: blockToTime(nowBlk + 1),
-                lineStyle: { color: '#F87171', type: 'dashed', width: 1 },
-                label: { formatter: 'NOW', fontSize: 12, color: '#F87171' },
+                lineStyle: { color: tk.danger, type: 'dashed', width: 1 },
+                label: { formatter: 'NOW', fontSize: 12, color: tk.danger },
               },
             ],
           },
         },
-        mk('Yesterday', t1, '#ECEEF360', 1.5, true),
-        mk('Last Week', t7, '#FBBF2490', 1.25, true),
-        mk('Last Year', t365, '#8B5CF690', 1.25, true),
+        mk('Yesterday', t1, withAlpha(tk.textMuted, 0.6), 1.5, true),
+        mk('Last Week', t7, withAlpha(tk.warning, 0.56), 1.25, true),
+        mk('Last Year', t365, withAlpha(tk.accent2, 0.56), 1.25, true),
       ].filter(Boolean),
     };
-  }, [today, t1, t7, t365]);
+  }, [today, t1, t7, t365, tk]);
 
   const deviationOpt = useMemo(() => {
     if (!deviation.length) return null;
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW delta vs yesterday' },
+      yAxis: { ...ecBase(tk).yAxis, name: 'MW delta vs yesterday' },
       visualMap: {
         show: false,
         min: -300,
         max: 300,
-        inRange: { color: ['#34D399', '#2A292F', '#F87171'] },
+        inRange: { color: [tk.success, tk.outline, tk.danger] },
       },
       series: [
         {
@@ -648,33 +650,33 @@ export default function LoadAnalysisPage({
           markLine: {
             silent: true,
             symbol: 'none',
-            data: [{ yAxis: 0, lineStyle: { color: '#6B718640', width: 1 } }],
+            data: [{ yAxis: 0, lineStyle: { color: withAlpha(tk.textMuted, 0.25), width: 1 } }],
           },
         },
       ],
     };
-  }, [deviation]);
+  }, [deviation, tk]);
 
   const durationOpt = useMemo(() => {
     if (!sortedLoad.length) return null;
     const pctLabels = sortedLoad.map((_, i) => `${((i / sortedLoad.length) * 100).toFixed(0)}%`);
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: pctLabels,
         name: '% of time exceeded',
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 9 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 9 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(tk).yAxis, name: 'MW' },
       series: [
         {
           type: 'line',
           data: sortedLoad,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 2.5, color: '#F07825' },
-          itemStyle: { color: '#F07825' },
+          lineStyle: { width: 2.5, color: tk.accent },
+          itemStyle: { color: tk.accent },
           areaStyle: {
             color: {
               type: 'linear',
@@ -683,7 +685,7 @@ export default function LoadAnalysisPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: '#F0782515' },
+                { offset: 0, color: withAlpha(tk.accent, 0.08) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -696,9 +698,9 @@ export default function LoadAnalysisPage({
                 label: {
                   formatter: `Peak\n${fmt(sortedLoad[0], 0)}`,
                   fontSize: 12,
-                  color: '#F87171',
+                  color: tk.danger,
                 },
-                itemStyle: { color: '#F87171' },
+                itemStyle: { color: tk.danger },
               },
               {
                 coord: [
@@ -709,16 +711,16 @@ export default function LoadAnalysisPage({
                 label: {
                   formatter: `P50\n${fmt(sortedLoad[Math.floor(sortedLoad.length * 0.5)], 0)}`,
                   fontSize: 12,
-                  color: '#FBBF24',
+                  color: tk.warning,
                 },
-                itemStyle: { color: '#FBBF24' },
+                itemStyle: { color: tk.warning },
               },
             ],
           },
         },
       ],
     };
-  }, [sortedLoad]);
+  }, [sortedLoad, tk]);
 
   const comparisonSeries = useMemo(() => {
     const merged = { ...(localMultiSeries || {}) };
@@ -729,16 +731,16 @@ export default function LoadAnalysisPage({
   const comparisonOpt = useMemo(() => {
     const dates = Object.keys(comparisonSeries || {});
     if (!dates.length) return null;
-    const colors = ['#F07825', '#34D399', '#F87171', '#FBBF24', '#8B5CF6', '#45B7D1', '#EC4899'];
+    const colors = [tk.accent, tk.success, tk.danger, tk.warning, tk.accent2, tk.info, tk.warm];
     return {
-      ...ecBase(),
-      legend: { ...ecBase().legend, data: dates },
+      ...ecBase(tk),
+      legend: { ...ecBase(tk).legend, data: dates },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(tk).yAxis, name: 'MW' },
       series: dates.map((date, i) => ({
         name: date,
         type: 'line',
@@ -749,26 +751,26 @@ export default function LoadAnalysisPage({
         itemStyle: { color: colors[i % colors.length] },
       })),
     };
-  }, [comparisonSeries, effectiveDate]);
+  }, [comparisonSeries, effectiveDate, tk]);
 
   const momentumOpt = useMemo(() => {
     if (!trend.data.length) return null;
     return {
-      ...ecBase(),
-      grid: { ...ecBase().grid, bottom: 56 },
+      ...ecBase(tk),
+      grid: { ...ecBase(tk).grid, bottom: 56 },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: trend.data.map((d) => d.date),
-        axisLabel: { ...ecBase().xAxis.axisLabel, rotate: 35 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, rotate: 35 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'DoD %' },
+      yAxis: { ...ecBase(tk).yAxis, name: 'DoD %' },
       series: [
         {
           type: 'bar',
           data: trend.data.map((d) => ({
             value: d.value,
             itemStyle: {
-              color: d.value >= 0 ? '#34D399' : '#F87171',
+              color: d.value >= 0 ? tk.success : tk.danger,
               borderRadius: d.value >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3],
             },
           })),
@@ -776,12 +778,12 @@ export default function LoadAnalysisPage({
           markLine: {
             silent: true,
             symbol: 'none',
-            data: [{ yAxis: 0, lineStyle: { color: '#6B718640' } }],
+            data: [{ yAxis: 0, lineStyle: { color: withAlpha(tk.textMuted, 0.25) } }],
           },
         },
       ],
     };
-  }, [trend]);
+  }, [trend, tk]);
 
   const hourlyDev = useMemo(
     () =>
@@ -903,28 +905,28 @@ export default function LoadAnalysisPage({
           >
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Peak shift</span>
-              <strong style={{ fontSize: 22, color: '#F07825' }}>
+              <strong style={{ fontSize: 22, color: 'var(--accent)' }}>
                 {peakShiftBlocks == null
                   ? '--'
                   : `${peakShiftBlocks > 0 ? '+' : ''}${peakShiftBlocks}`}
               </strong>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>15-min blocks vs yesterday</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>15-min blocks vs yesterday</span>
             </div>
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Largest block delta</span>
-              <strong style={{ fontSize: 22, color: '#F87171' }}>
+              <strong style={{ fontSize: 22, color: 'var(--danger)' }}>
                 {fmt(absDeviation[maxDevBlock], 0)} MW
               </strong>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {maxDevBlock >= 0 ? `Around ${blockToTime(maxDevBlock + 1)}` : 'Not available'}
               </span>
             </div>
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Ramp spread</span>
-              <strong style={{ fontSize: 22, color: '#34D399' }}>
+              <strong style={{ fontSize: 22, color: 'var(--success)' }}>
                 {fmt(maxRampUp - maxRampDown, 0)} MW
               </strong>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>Intraday movement envelope</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Intraday movement envelope</span>
             </div>
           </div>
           <div style={{ ...S.card, borderRadius: 14 }}>
@@ -945,19 +947,19 @@ export default function LoadAnalysisPage({
                       : null;
                   return (
                     <tr key={row.m}>
-                      <td style={{ ...S.td, textAlign: 'left', fontWeight: 600, color: '#A0A5B8' }}>
+                      <td style={{ ...S.td, textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>
                         {row.m}
                       </td>
                       <td style={{ ...S.td, fontWeight: 600 }}>
                         {row.raw ? row.t : fmt(row.t, 0)}
                       </td>
-                      <td style={{ ...S.td, color: '#6B7186' }}>
+                      <td style={{ ...S.td, color: 'var(--text-muted)' }}>
                         {row.y == null ? '--' : row.raw ? row.y : fmt(row.y, 0)}
                       </td>
                       <td
                         style={{
                           ...S.td,
-                          color: delta != null ? (delta >= 0 ? '#F87171' : '#34D399') : '#6B7186',
+                          color: delta != null ? (delta >= 0 ? 'var(--danger)' : 'var(--success)') : 'var(--text-muted)',
                           fontWeight: 600,
                         }}
                       >
@@ -987,10 +989,10 @@ export default function LoadAnalysisPage({
               }}
             >
               <div>
-                <div style={{ fontSize: 19, fontWeight: 700, color: '#ECEEF3' }}>
+                <div style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)' }}>
                   {similarDays[0].date}
                 </div>
-                <div style={{ fontSize: 10, color: '#6B7186', marginTop: 4 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                   {similarDays[0].day_type || 'Historical analog'} with{' '}
                   {(similarDays[0].similarity_score * 100).toFixed(0)}% similarity
                 </div>
@@ -999,7 +1001,7 @@ export default function LoadAnalysisPage({
                 type="button"
                 onClick={() => upsertCompareDate(similarDays[0].date)}
                 style={{
-                  ...S.badge('#F07825'),
+                  ...S.badge('var(--accent)'),
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                   border: 'none',
@@ -1023,8 +1025,8 @@ export default function LoadAnalysisPage({
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#ECEEF3' }}>{item.date}</div>
-                <div style={{ fontSize: 12, color: '#8A90A6', marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{item.date}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                   {item.day_type || 'Historical day pattern'}
                 </div>
               </div>
@@ -1041,7 +1043,7 @@ export default function LoadAnalysisPage({
                   style={{
                     width: 92,
                     height: 8,
-                    background: '#2A292F',
+                    background: 'var(--outline)',
                     borderRadius: 999,
                     overflow: 'hidden',
                   }}
@@ -1050,7 +1052,7 @@ export default function LoadAnalysisPage({
                     style={{
                       width: `${Math.max(0, Math.min(100, item.similarity_score * 100))}%`,
                       height: '100%',
-                      background: 'linear-gradient(90deg, #FBBF24, #F07825)',
+                      background: 'linear-gradient(90deg, var(--warning), var(--tone-warm))',
                       borderRadius: 999,
                     }}
                   />
@@ -1059,7 +1061,7 @@ export default function LoadAnalysisPage({
                   style={{
                     fontSize: 10,
                     fontWeight: 700,
-                    color: '#F07825',
+                    color: 'var(--accent)',
                     minWidth: 38,
                     textAlign: 'right',
                   }}
@@ -1070,7 +1072,7 @@ export default function LoadAnalysisPage({
                   type="button"
                   onClick={() => upsertCompareDate(item.date)}
                   style={{
-                    ...S.badge('#5B9FE4'),
+                    ...S.badge('var(--accent)'),
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     border: 'none',
@@ -1083,7 +1085,7 @@ export default function LoadAnalysisPage({
           ))}
         </div>
       ) : (
-        <div style={{ padding: 20, textAlign: 'center', color: '#6B7186', fontSize: 11 }}>
+        <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>
           No similar historical days are available for this date.
         </div>
       );
@@ -1102,7 +1104,7 @@ export default function LoadAnalysisPage({
             <div key={row.l} style={{ ...S.card, padding: '14px 16px', gap: 6, borderRadius: 14 }}>
               <span style={S.miniLabel}>{row.l}</span>
               <strong style={{ fontSize: 21, color: row.c, lineHeight: 1.15 }}>{row.v}</strong>
-              <span style={{ fontSize: 12, color: '#8A90A6' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {row.l === 'Peak Hour'
                   ? 'Shape anchor for intraday operations'
                   : 'Fingerprint trait for today'}
@@ -1181,11 +1183,11 @@ export default function LoadAnalysisPage({
                     }}
                   >
                     <div style={S.cardTitle}>Hourly Load vs Yesterday</div>
-                    <div style={{ fontSize: 10, color: '#6B7186', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                       Fast hourly heatbar to spot where the shape drifted.
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 12, fontSize: 12, color: '#8A90A6' }}>
+                  <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--text-muted)' }}>
                     <span>
                       <span
                         style={{
@@ -1193,7 +1195,7 @@ export default function LoadAnalysisPage({
                           width: 8,
                           height: 8,
                           borderRadius: 2,
-                          background: '#34D399',
+                          background: 'var(--success)',
                           marginRight: 4,
                         }}
                       />
@@ -1206,7 +1208,7 @@ export default function LoadAnalysisPage({
                           width: 8,
                           height: 8,
                           borderRadius: 2,
-                          background: '#F87171',
+                          background: 'var(--danger)',
                           marginRight: 4,
                         }}
                       />
@@ -1226,8 +1228,8 @@ export default function LoadAnalysisPage({
                     const intensity = Math.abs(clamp) / 10;
                     const bg =
                       h.pct >= 0
-                        ? `rgba(248, 113, 113, ${0.14 + intensity * 0.62})`
-                        : `rgba(52, 211, 153, ${0.14 + intensity * 0.62})`;
+                        ? `color-mix(in srgb, var(--danger) ${(0.14 + intensity * 0.62) * 100}%, transparent)`
+                        : `color-mix(in srgb, var(--success) ${(0.14 + intensity * 0.62) * 100}%, transparent)`;
 
                     return (
                       <div
@@ -1252,12 +1254,12 @@ export default function LoadAnalysisPage({
                             padding: '0 2px',
                           }}
                         >
-                          <span style={{ fontSize: 8, fontWeight: 700, color: '#ECEEF3' }}>
+                          <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--text)' }}>
                             {h.pct >= 0 ? '+' : ''}
                             {fmt(h.pct, 1)}%
                           </span>
                         </div>
-                        <span style={{ fontSize: 8, color: '#6B7186' }}>{h.hour.slice(0, 2)}</span>
+                        <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>{h.hour.slice(0, 2)}</span>
                       </div>
                     );
                   })}
@@ -1274,7 +1276,7 @@ export default function LoadAnalysisPage({
                   flexDirection: 'column',
                   gap: 12,
                   padding: '16px 16px 10px',
-                  borderBottom: '1px solid rgba(42, 41, 47, 0.9)',
+                  borderBottom: '1px solid color-mix(in srgb, var(--outline) 90%, transparent)',
                 }}
               >
                 <div
@@ -1322,11 +1324,11 @@ export default function LoadAnalysisPage({
                           type="date"
                           onChange={(e) => upsertCompareDate(e.target.value)}
                           style={{
-                            background: '#141419',
-                            border: '1px solid #2A292F',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--outline)',
                             borderRadius: 999,
                             padding: '8px 12px',
-                            color: '#ECEEF3',
+                            color: 'var(--text)',
                             fontSize: 10,
                             fontFamily: 'inherit',
                           }}
@@ -1335,7 +1337,7 @@ export default function LoadAnalysisPage({
                           <span
                             key={date}
                             style={{
-                              ...S.badge('#F07825'),
+                              ...S.badge('var(--accent)'),
                               display: 'flex',
                               alignItems: 'center',
                               gap: 6,
@@ -1348,7 +1350,7 @@ export default function LoadAnalysisPage({
                               style={{
                                 border: 'none',
                                 background: 'none',
-                                color: '#F07825',
+                                color: 'var(--accent)',
                                 cursor: 'pointer',
                                 fontSize: 11,
                                 fontWeight: 700,
@@ -1366,7 +1368,7 @@ export default function LoadAnalysisPage({
                               setMultiSelectedDates([]);
                             }}
                             style={{
-                              ...S.badge('#F87171'),
+                              ...S.badge('var(--danger)'),
                               cursor: 'pointer',
                               border: 'none',
                               fontFamily: 'inherit',
@@ -1408,7 +1410,7 @@ export default function LoadAnalysisPage({
                             {active ? 'Close overlay' : 'Quick panel'}
                           </span>
                           <span style={{ fontSize: 11, fontWeight: 700 }}>{panel.label}</span>
-                          <span style={{ fontSize: 12, color: active ? '#F5B17D' : '#8A90A6' }}>
+                          <span style={{ fontSize: 12, color: active ? 'var(--accent)' : 'var(--text-muted)' }}>
                             {meta}
                           </span>
                         </button>
@@ -1426,7 +1428,7 @@ export default function LoadAnalysisPage({
                     notMerge
                   />
                 ) : (
-                  <div style={{ padding: 70, textAlign: 'center', color: '#6B7186', fontSize: 11 }}>
+                  <div style={{ padding: 70, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>
                     {mainTab === 'comparison'
                       ? 'Pick dates above or from similar-day overlays to compare.'
                       : selfFetching
@@ -1441,7 +1443,7 @@ export default function LoadAnalysisPage({
                     style={{
                       position: 'absolute',
                       inset: 0,
-                      background: 'rgba(7, 7, 10, 0.52)',
+                      background: 'rgba(var(--shadow-rgb), 0.52)',
                       backdropFilter: 'blur(4px)',
                       display: 'flex',
                       justifyContent: 'flex-end',
@@ -1455,7 +1457,7 @@ export default function LoadAnalysisPage({
                         ...S.card,
                         borderRadius: 18,
                         background:
-                          'linear-gradient(180deg, rgba(24, 24, 29, 0.98), rgba(18, 18, 22, 0.98))',
+                          'linear-gradient(180deg, var(--bg-panel), var(--bg-surface))',
                       }}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -1466,14 +1468,14 @@ export default function LoadAnalysisPage({
                           justifyContent: 'space-between',
                           gap: 12,
                           padding: '16px 16px 14px',
-                          borderBottom: '1px solid rgba(42, 41, 47, 0.9)',
+                          borderBottom: '1px solid color-mix(in srgb, var(--outline) 90%, transparent)',
                         }}
                       >
                         <div>
                           <div style={S.cardTitle}>
                             {DETAIL_PANELS.find((panel) => panel.id === overlayPanel)?.label}
                           </div>
-                          <div style={{ fontSize: 10, color: '#6B7186', marginTop: 4 }}>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                             {overlayPanel === 'structural' &&
                               'Shape deltas, peak timing, and ramp comparison against yesterday.'}
                             {overlayPanel === 'similar' &&
@@ -1489,9 +1491,9 @@ export default function LoadAnalysisPage({
                             width: 30,
                             height: 30,
                             borderRadius: 999,
-                            border: '1px solid #2A292F',
-                            background: '#141419',
-                            color: '#A0A5B8',
+                            border: '1px solid var(--outline)',
+                            background: 'var(--bg-surface)',
+                            color: 'var(--text-secondary)',
                             cursor: 'pointer',
                             fontFamily: 'inherit',
                           }}

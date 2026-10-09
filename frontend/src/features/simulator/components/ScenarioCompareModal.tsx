@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useThemeColors } from '../../../lib/useThemeColors';
 
 type Props = {
   open: boolean;
@@ -8,6 +9,7 @@ type Props = {
 };
 
 export const ScenarioCompareModal: React.FC<Props> = ({ open, payload, onClose }) => {
+  const c = useThemeColors({ baseline: '--accent2', scenario: '--accent' });
   const chartData = useMemo(() => {
     const rows = Array.isArray(payload?.blocks) ? payload.blocks : [];
     return rows.map((r: any) => ({
@@ -54,12 +56,12 @@ export const ScenarioCompareModal: React.FC<Props> = ({ open, payload, onClose }
               <Tooltip />
               <Line
                 dataKey="base"
-                stroke="#c8b39b"
+                stroke={c.baseline}
                 strokeDasharray="5 5"
                 dot={false}
                 name="Baseline"
               />
-              <Line dataKey="target" stroke="#4f7d5c" dot={false} name="Scenario" />
+              <Line dataKey="target" stroke={c.scenario} dot={false} name="Scenario" />
             </LineChart>
           </ResponsiveContainer>
         </div>

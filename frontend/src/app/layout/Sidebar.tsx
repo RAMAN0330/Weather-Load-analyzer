@@ -48,8 +48,8 @@ export function Sidebar() {
         </div>
         {!collapsed && (
           <div className="overflow-hidden">
-            <div className="font-display text-sm font-bold leading-tight text-fg">VidyutPragya</div>
-            <div className="text-2xs uppercase tracking-wider text-faint">Forecast OS</div>
+            <div className="font-display text-sm font-bold leading-tight text-fg">Forecast Studio</div>
+            <div className="text-2xs uppercase tracking-wider text-faint">Grid Load Forecasting</div>
           </div>
         )}
       </div>

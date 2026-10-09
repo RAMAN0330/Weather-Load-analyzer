@@ -4,28 +4,30 @@ import { Card, CardContent, CardHeader, CardTitle, CardSubtitle } from '../ui/ca
 import { Skeleton } from '../ui/skeleton';
 import type { ForecastResponse } from '../../types/api';
 import { blockToTime } from '../../lib/utils';
+import { useChartTokens, withAlpha, type ChartTokens } from '../../lib/chartTheme';
 
 interface Props {
   data: ForecastResponse | undefined;
   loading?: boolean;
 }
 
-const FEATURE_COLORS: Record<string, string> = {
-  temperature: 'hsl(22 87% 55%)',
-  humidity: 'hsl(195 71% 62%)',
-  precipitation: 'hsl(258 71% 65%)',
-  rain: 'hsl(220 75% 60%)',
-  showers: 'hsl(195 71% 62%)',
-  snowfall: 'hsl(200 30% 75%)',
-  apparent_temperature: 'hsl(15 80% 60%)',
-  cloud_cover: 'hsl(228 11% 60%)',
-  wind: 'hsl(160 60% 55%)',
-  daytype: 'hsl(280 60% 65%)',
-  holiday: 'hsl(330 60% 65%)',
-  manual: 'hsl(60 60% 60%)',
+const FEATURE_COLORS: Record<string, keyof ChartTokens> = {
+  temperature: 'warm',
+  humidity: 'info',
+  precipitation: 'accent2',
+  rain: 'accent',
+  showers: 'info',
+  snowfall: 'textSecondary',
+  apparent_temperature: 'danger',
+  cloud_cover: 'textMuted',
+  wind: 'success',
+  daytype: 'accent2',
+  holiday: 'danger',
+  manual: 'warning',
 };
 
 export function DriversBar({ data, loading }: Props) {
+  const t = useChartTokens();
   const option = useMemo(() => {
     const series = data?.series as any;
     if (!series) return null;
@@ -57,7 +59,7 @@ export function DriversBar({ data, loading }: Props) {
         type: 'bar',
         stack: 'drivers',
         data: arr,
-        itemStyle: { color: FEATURE_COLORS[f] || 'hsl(228 11% 60%)' },
+        itemStyle: { color: t[FEATURE_COLORS[f]] || t.textMuted },
         emphasis: { focus: 'series' },
         barCategoryGap: '15%',
       });
@@ -68,36 +70,36 @@ export function DriversBar({ data, loading }: Props) {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        backgroundColor: 'hsl(226 14% 13%)',
-        borderColor: 'hsl(226 10% 22%)',
-        textStyle: { color: 'hsl(230 14% 92%)', fontSize: 12 },
+        backgroundColor: t.elevated,
+        borderColor: t.outline,
+        textStyle: { color: t.text, fontSize: 12 },
       },
       legend: {
         top: 0,
         right: 0,
-        textStyle: { color: 'hsl(228 11% 60%)', fontSize: 11 },
+        textStyle: { color: t.textMuted, fontSize: 11 },
         itemWidth: 10,
         itemHeight: 10,
       },
       xAxis: {
         type: 'category',
         data: xLabels,
-        axisLabel: { color: 'hsl(228 11% 60%)', fontSize: 10, interval: 11 },
-        axisLine: { lineStyle: { color: 'hsl(226 10% 22%)' } },
+        axisLabel: { color: t.textMuted, fontSize: 10, interval: 11 },
+        axisLine: { lineStyle: { color: t.outline } },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value',
         scale: true,
-        axisLabel: { color: 'hsl(228 11% 60%)', fontSize: 10 },
-        splitLine: { lineStyle: { color: 'hsl(226 10% 22% / 0.6)', type: 'dashed' } },
+        axisLabel: { color: t.textMuted, fontSize: 10 },
+        splitLine: { lineStyle: { color: withAlpha(t.outline, 0.6), type: 'dashed' } },
         axisLine: { show: false },
         axisTick: { show: false },
       },
       series: seriesArr,
       animationDuration: 320,
     };
-  }, [data]);
+  }, [data, t]);
 
   return (
     <Card>

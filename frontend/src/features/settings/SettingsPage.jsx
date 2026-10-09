@@ -12,10 +12,14 @@ const TABS = [
   { id: 'workspace', label: 'Workspace' },
 ];
 
+/* Theme-aware: colours are CSS variables from index.css (Light / One Dark Pro). */
+const tint = (c, pct) => `color-mix(in srgb, ${c} ${pct}%, transparent)`;
+const PANEL_GRAD = 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.96))';
+
 const S = {
   page: {
     fontFamily: "'IBM Plex Mono', monospace",
-    color: '#ECEEF3',
+    color: 'var(--text)',
     minHeight: 0,
     height: '100%',
     overflowX: 'hidden',
@@ -27,19 +31,19 @@ const S = {
   },
   hero: {
     margin: '0 16px',
-    background: 'radial-gradient(circle at top right, rgba(91, 159, 228, 0.12), transparent 34%), radial-gradient(circle at bottom left, rgba(240, 120, 37, 0.12), transparent 34%), linear-gradient(180deg, rgba(29, 28, 34, 0.98), rgba(19, 19, 24, 0.98))',
+    background: `radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.12), transparent 34%), radial-gradient(circle at bottom left, ${tint('var(--tone-warm)', 12)}, transparent 34%), ${PANEL_GRAD}`,
     borderRadius: 18,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     padding: '20px 22px',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.12)',
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
     flexWrap: 'wrap',
   },
-  heroTitle: { fontSize: 28, fontWeight: 700, lineHeight: 1.08, color: '#ECEEF3' },
-  heroSub: { fontSize: 12, color: '#8A90A7', lineHeight: 1.65, marginTop: 8, maxWidth: 780 },
+  heroTitle: { fontSize: 28, fontWeight: 700, lineHeight: 1.08, color: 'var(--text)' },
+  heroSub: { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.65, marginTop: 8, maxWidth: 780 },
   badge: (color) => ({
     display: 'inline-flex',
     alignItems: 'center',
@@ -48,36 +52,36 @@ const S = {
     fontWeight: 700,
     padding: '5px 10px',
     borderRadius: 999,
-    background: `${color}18`,
+    background: tint(color, 10),
     color,
-    border: `1px solid ${color}33`,
+    border: `1px solid ${tint(color, 22)}`,
   }),
   workspace: {
     margin: '0 16px',
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    background: PANEL_GRAD,
     borderRadius: 16,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.12)',
   },
   workspaceHeader: {
     padding: '18px 20px 14px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
     flexWrap: 'wrap',
   },
-  workspaceTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: '#A0A5B8' },
+  workspaceTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: 'var(--text-secondary)' },
   tabBar: {
     display: 'inline-flex',
     gap: 4,
     padding: 5,
-    background: '#141419',
-    border: '1px solid #2A292F',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 999,
     flexWrap: 'wrap',
   },
@@ -89,8 +93,8 @@ const S = {
     cursor: 'pointer',
     border: '1px solid transparent',
     borderRadius: 999,
-    background: active ? 'rgba(240, 120, 37, 0.14)' : 'transparent',
-    color: active ? '#F07825' : '#A0A5B8',
+    background: active ? 'rgba(var(--accent-rgb), 0.14)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
     fontFamily: 'inherit',
   }),
   content: {
@@ -111,21 +115,21 @@ const S = {
     gap: 12,
   },
   card: {
-    background: 'linear-gradient(180deg, rgba(29, 28, 34, 0.98), rgba(21, 21, 26, 0.96))',
+    background: PANEL_GRAD,
     borderRadius: 14,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
   },
   cardHeader: {
     padding: '14px 16px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
     flexWrap: 'wrap',
   },
-  cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: '#A0A5B8' },
+  cardTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 1.4, textTransform: 'uppercase', color: 'var(--text-secondary)' },
   cardBody: { padding: 16 },
   fieldGrid: {
     display: 'grid',
@@ -133,30 +137,30 @@ const S = {
     gap: 10,
   },
   fieldBlock: {
-    background: '#201F25',
-    border: '1px solid #2A292F',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 12,
     padding: '12px 14px',
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
   },
-  fieldLabel: { fontSize: 9, letterSpacing: 1.2, textTransform: 'uppercase', color: '#6B7186' },
+  fieldLabel: { fontSize: 9, letterSpacing: 1.2, textTransform: 'uppercase', color: 'var(--text-muted)' },
   input: {
     width: '100%',
     borderRadius: 10,
-    border: '1px solid rgba(255,255,255,0.06)',
-    background: 'rgba(255,255,255,0.02)',
-    color: '#ECEEF3',
+    border: '1px solid var(--outline)',
+    background: 'var(--bg-panel)',
+    color: 'var(--text)',
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: 12,
     padding: '10px 12px',
     outline: 'none',
   },
-  helper: { fontSize: 10, color: '#7E849A', lineHeight: 1.5 },
+  helper: { fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 },
   profileHero: {
-    background: 'radial-gradient(circle at top, rgba(91, 159, 228, 0.16), transparent 55%), linear-gradient(180deg, rgba(34, 33, 39, 0.96), rgba(24, 23, 28, 0.96))',
-    border: '1px solid #2A292F',
+    background: `radial-gradient(circle at top, rgba(var(--accent-rgb), 0.16), transparent 55%), ${PANEL_GRAD}`,
+    border: '1px solid var(--outline)',
     borderRadius: 14,
     padding: 18,
     display: 'flex',
@@ -165,11 +169,11 @@ const S = {
     gap: 14,
     minHeight: 100,
   },
-  profileMeta: { fontSize: 12, color: '#8A90A7', lineHeight: 1.6 },
+  profileMeta: { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 },
   sourceStack: { display: 'flex', flexDirection: 'column', gap: 12 },
   sourceCard: {
-    background: 'linear-gradient(180deg, rgba(33, 32, 39, 0.96), rgba(23, 22, 27, 0.96))',
-    border: '1px solid #2A292F',
+    background: PANEL_GRAD,
+    border: '1px solid var(--outline)',
     borderRadius: 14,
     padding: 14,
     display: 'flex',
@@ -183,25 +187,25 @@ const S = {
     gap: 12,
     flexWrap: 'wrap',
   },
-  sourceName: { fontSize: 13, fontWeight: 700, color: '#ECEEF3' },
-  sourceDesc: { fontSize: 11, color: '#8A90A7', lineHeight: 1.6 },
+  sourceName: { fontSize: 13, fontWeight: 700, color: 'var(--text)' },
+  sourceDesc: { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 },
   sourceMeta: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
     gap: 10,
   },
   smallField: {
-    background: '#1F1E24',
-    border: '1px solid rgba(255,255,255,0.04)',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 12,
     padding: '10px 12px',
   },
-  smallLabel: { fontSize: 9, color: '#6B7186', letterSpacing: 1.1, textTransform: 'uppercase' },
-  smallValue: { marginTop: 8, fontSize: 12, color: '#ECEEF3', lineHeight: 1.5, wordBreak: 'break-word' },
+  smallLabel: { fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.1, textTransform: 'uppercase' },
+  smallValue: { marginTop: 8, fontSize: 12, color: 'var(--text)', lineHeight: 1.5, wordBreak: 'break-word' },
   actionBtn: {
-    border: '1px solid rgba(240, 120, 37, 0.35)',
-    background: 'rgba(240, 120, 37, 0.14)',
-    color: '#F7A35B',
+    border: '1px solid rgba(var(--accent-rgb), 0.35)',
+    background: 'rgba(var(--accent-rgb), 0.12)',
+    color: 'var(--accent)',
     borderRadius: 999,
     padding: '9px 14px',
     fontSize: 11,
@@ -295,21 +299,21 @@ export default function SettingsPage({
             <div style={S.grid2}>
               <div style={S.profileHero}>
                 <div>
-                  <UserCircle2 size={44} color="#5B9FE4" />
+                  <UserCircle2 size={44} style={{ color: 'var(--accent)' }} />
                   <div style={{ marginTop: 14, fontSize: 22, fontWeight: 700 }}>{profile.name}</div>
                   <div style={S.profileMeta}>{profile.email}</div>
                   <div style={{ ...S.profileMeta, marginTop: 10 }}>{profile.team}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={S.badge('#34D399')}>{profile.role}</span>
-                  <span style={S.badge('#5B9FE4')}>{profile.timezone}</span>
+                  <span style={S.badge('var(--success)')}>{profile.role}</span>
+                  <span style={S.badge('var(--accent)')}>{profile.timezone}</span>
                 </div>
               </div>
 
               <div style={S.card}>
                 <div style={S.cardHeader}>
                   <div style={S.cardTitle}>Profile Details</div>
-                  <span style={S.badge('#5B9FE4')}><UserCircle2 size={12} /> Editable</span>
+                  <span style={S.badge('var(--accent)')}><UserCircle2 size={12} /> Editable</span>
                 </div>
                 <div style={S.cardBody}>
                   <div style={S.fieldGrid}>
@@ -348,9 +352,9 @@ export default function SettingsPage({
               {/* Active mode banner */}
               <div style={{
                 background: activeDbSource
-                  ? 'linear-gradient(135deg, rgba(52,211,153,0.08), rgba(52,211,153,0.04))'
-                  : 'linear-gradient(135deg, rgba(240,120,37,0.08), rgba(240,120,37,0.04))',
-                border: `1px solid ${activeDbSource ? '#34D39333' : '#F0782533'}`,
+                  ? `linear-gradient(135deg, ${tint('var(--success)', 8)}, ${tint('var(--success)', 4)})`
+                  : `linear-gradient(135deg, ${tint('var(--tone-warm)', 8)}, ${tint('var(--tone-warm)', 4)})`,
+                border: `1px solid ${activeDbSource ? tint('var(--success)', 20) : tint('var(--tone-warm)', 20)}`,
                 borderRadius: 14,
                 padding: '14px 18px',
                 display: 'flex',
@@ -360,14 +364,14 @@ export default function SettingsPage({
                 flexWrap: 'wrap',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Database size={16} color={activeDbSource ? '#34D399' : '#F07825'} />
+                  <Database size={16} style={{ color: activeDbSource ? 'var(--success)' : 'var(--tone-warm)' }} />
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#ECEEF3' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
                       {activeDbSource
                         ? `Using ${databases.find(d => d.id === activeDbSource)?.label} as data source`
                         : 'Using file-based data (CSV)'}
                     </div>
-                    <div style={{ fontSize: 10, color: '#8A90A7', marginTop: 2 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
                       {activeDbSource
                         ? 'Data will be read from the connected database instead of local files.'
                         : 'Configure a database below and click "Use as Data Source" to switch.'}
@@ -375,7 +379,7 @@ export default function SettingsPage({
                   </div>
                 </div>
                 {activeDbSource && (
-                  <button type="button" style={{ ...S.actionBtn, borderColor: 'rgba(107,113,134,0.4)', background: 'rgba(107,113,134,0.1)', color: '#A0A5B8' }}
+                  <button type="button" style={{ ...S.actionBtn, borderColor: tint('var(--text-muted)', 40), background: tint('var(--text-muted)', 10), color: 'var(--text-secondary)' }}
                     onClick={() => setActiveDbSource(null)}>
                     Switch back to File
                   </button>
@@ -387,13 +391,13 @@ export default function SettingsPage({
                 {databases.map((db) => {
                   const isActive = activeDbSource === db.id;
                   return (
-                    <div key={db.id} style={{ ...S.card, border: isActive ? '1px solid #34D39966' : '1px solid #2A292F' }}>
+                    <div key={db.id} style={{ ...S.card, border: isActive ? `1px solid ${tint('var(--success)', 40)}` : '1px solid var(--outline)' }}>
                       <div style={S.cardHeader}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <Database size={14} color={isActive ? '#34D399' : '#5B9FE4'} />
+                          <Database size={14} style={{ color: isActive ? 'var(--success)' : 'var(--accent)' }} />
                           <div style={S.cardTitle}>{db.label}</div>
                         </div>
-                        {isActive && <span style={S.badge('#34D399')}><CheckCircle2 size={11} /> Active Source</span>}
+                        {isActive && <span style={S.badge('var(--success)')}><CheckCircle2 size={11} /> Active Source</span>}
                       </div>
                       <div style={S.cardBody}>
                         <div style={{ ...S.helper, marginBottom: 14 }}>{db.description}</div>
@@ -429,7 +433,7 @@ export default function SettingsPage({
                             style={{
                               ...S.actionBtn,
                               ...(isActive
-                                ? { borderColor: '#34D39944', background: 'rgba(52,211,153,0.12)', color: '#34D399' }
+                                ? { borderColor: tint('var(--success)', 27), background: 'var(--success-dim)', color: 'var(--success)' }
                                 : {}),
                             }}
                             onClick={() => setActiveDbSource(isActive ? null : db.id)}
@@ -451,7 +455,7 @@ export default function SettingsPage({
               <div style={S.card}>
                 <div style={S.cardHeader}>
                   <div style={S.cardTitle}>General Defaults</div>
-                  <span style={S.badge('#F07825')}><Workflow size={12} /> Workspace</span>
+                  <span style={S.badge('var(--tone-warm)')}><Workflow size={12} /> Workspace</span>
                 </div>
                 <div style={S.cardBody}>
                   <div style={S.fieldGrid}>
@@ -478,7 +482,7 @@ export default function SettingsPage({
               <div style={S.card}>
                 <div style={S.cardHeader}>
                   <div style={S.cardTitle}>Runtime Links</div>
-                  <span style={S.badge('#5B9FE4')}><Globe size={12} /> API</span>
+                  <span style={S.badge('var(--accent)')}><Globe size={12} /> API</span>
                 </div>
                 <div style={S.cardBody}>
                   <div style={S.fieldGrid}>
@@ -497,10 +501,10 @@ export default function SettingsPage({
               <div style={S.card}>
                 <div style={S.cardHeader}>
                   <div style={S.cardTitle}>Region Calibration</div>
-                  <span style={S.badge('#34D399')}><Shield size={12} /> Operational</span>
+                  <span style={S.badge('var(--success)')}><Shield size={12} /> Operational</span>
                 </div>
                 <div style={S.cardBody}>
-                  <div style={{ fontSize: 10, color: '#8A90A7', marginBottom: 12, lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
                     These values feed Capacity Utilisation KPI, Ramp Risk alerts, and Reserve Margin calculations. Defaults shown — update per region commissioning report.
                   </div>
                   <div style={S.fieldGrid}>
@@ -509,23 +513,23 @@ export default function SettingsPage({
                       { region: 'Rajasthan', capacity: 7200, rampLimit: 160, eveningPeak: '70–88 (summer)' },
                       { region: 'Haryana', capacity: 4800, rampLimit: 140, eveningPeak: '66–82' },
                     ].map(({ region, capacity, rampLimit, eveningPeak }) => (
-                      <div key={region} style={{ ...S.fieldBlock, background: '#0E0D12', borderRadius: 10, padding: '12px 14px', border: '1px solid #2A292F' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: '#F07825', marginBottom: 8, letterSpacing: 0.5 }}>{region}</div>
+                      <div key={region} style={{ ...S.fieldBlock, background: 'var(--bg)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--outline)' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--tone-warm)', marginBottom: 8, letterSpacing: 0.5 }}>{region}</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                            <span style={{ color: '#8A90A7' }}>Installed Capacity</span>
-                            <span style={{ color: '#ECEEF3', fontWeight: 600 }}>{capacity.toLocaleString('en-IN')} MW</span>
+                            <span style={{ color: 'var(--text-muted)' }}>Installed Capacity</span>
+                            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{capacity.toLocaleString('en-IN')} MW</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                            <span style={{ color: '#8A90A7' }}>Ramp Rate Limit</span>
-                            <span style={{ color: selectedRegion?.toLowerCase() === region.toLowerCase() && rampLimit < 160 ? '#F87171' : '#ECEEF3', fontWeight: 600 }}>{rampLimit} MW/15min</span>
+                            <span style={{ color: 'var(--text-muted)' }}>Ramp Rate Limit</span>
+                            <span style={{ color: selectedRegion?.toLowerCase() === region.toLowerCase() && rampLimit < 160 ? 'var(--danger)' : 'var(--text)', fontWeight: 600 }}>{rampLimit} MW/15min</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                            <span style={{ color: '#8A90A7' }}>Evening Peak Blocks</span>
-                            <span style={{ color: '#ECEEF3', fontWeight: 600 }}>{eveningPeak}</span>
+                            <span style={{ color: 'var(--text-muted)' }}>Evening Peak Blocks</span>
+                            <span style={{ color: 'var(--text)', fontWeight: 600 }}>{eveningPeak}</span>
                           </div>
                           {selectedRegion?.toLowerCase() === region.toLowerCase() && (
-                            <div style={{ marginTop: 4, fontSize: 9, color: '#34D399', fontWeight: 600 }}>▶ ACTIVE REGION</div>
+                            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--success)', fontWeight: 600 }}>▶ ACTIVE REGION</div>
                           )}
                         </div>
                       </div>

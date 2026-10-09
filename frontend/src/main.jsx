@@ -1,6 +1,8 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
 import './index.css'
+// Applies the persisted theme to <html> before first render (no flash).
+import './features/studio/theme'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useAuthStore } from './features/auth/authStore'
 import LoginPage from './features/auth/LoginPage'
@@ -13,9 +15,9 @@ const SESSION_KEY = 'vp-mode'
 
 function Spinner() {
   return (
-    <div style={{ minHeight: '100vh', background: '#0E0D12', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: '#F07825', fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>
-        VidyutPragya…
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: 'var(--accent)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>
+        Forecast Studio…
       </div>
     </div>
   )

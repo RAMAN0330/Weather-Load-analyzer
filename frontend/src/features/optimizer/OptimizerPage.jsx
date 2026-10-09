@@ -7,6 +7,7 @@ import {
   Pill as VpPill,
   EmptyState as VpEmptyState,
 } from '../../components/page/PagePrimitives.jsx';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 
 /* ─── Helpers ─── */
 const fmt = (v, d = 1) =>
@@ -63,7 +64,7 @@ const buildHistogram = (values = [], binCount = 10) => {
 const S = {
   page: {
     fontFamily: "'IBM Plex Mono', monospace",
-    color: '#ECEEF3',
+    color: 'var(--text)',
     minHeight: 0,
     height: '100%',
     overflow: 'hidden',
@@ -84,48 +85,48 @@ const S = {
     minWidth: 0,
     minHeight: 132,
     padding: '16px 18px',
-    background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+    background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.98))',
     borderRadius: 14,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'space-between',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.18)',
   },
   kpiLabel: {
     fontSize: 9,
     textTransform: 'uppercase',
     letterSpacing: 1.5,
-    color: '#6B7186',
+    color: 'var(--text-muted)',
     marginBottom: 8,
   },
-  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#ECEEF3', lineHeight: 1.05 }),
+  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || 'var(--text)', lineHeight: 1.05 }),
   kpiUnit: { fontSize: 11, fontWeight: 400, opacity: 0.5 },
-  kpiSub: { fontSize: 10, color: '#6B7186', marginTop: 6, lineHeight: 1.45 },
+  kpiSub: { fontSize: 10, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.45 },
   card: {
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.96))',
     borderRadius: 16,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.18)',
   },
   cardTitle: {
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: 1.2,
-    color: '#A0A5B8',
+    color: 'var(--text-secondary)',
     padding: '14px 16px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     textTransform: 'uppercase',
   },
   tabBar: {
     display: 'inline-flex',
     gap: 4,
     padding: '5px',
-    background: '#141419',
-    border: '1px solid #2A292F',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 999,
     flexWrap: 'wrap',
   },
@@ -139,8 +140,8 @@ const S = {
     border: '1px solid transparent',
     fontFamily: 'inherit',
     borderRadius: 999,
-    background: active ? '#F0782518' : 'transparent',
-    color: active ? '#F07825' : '#A0A5B8',
+    background: active ? 'rgba(var(--accent-rgb), 0.09)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
     transition: 'all 0.15s ease',
     display: 'flex',
     alignItems: 'center',
@@ -151,7 +152,7 @@ const S = {
     fontWeight: 700,
     padding: '2px 8px',
     borderRadius: 12,
-    background: `${color}18`,
+    background: `color-mix(in srgb, ${color} 9%, transparent)`,
     color,
   }),
   sectionLabel: (color) => ({
@@ -159,38 +160,38 @@ const S = {
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 2,
-    color: color || '#F07825',
+    color: color || 'var(--accent)',
     padding: '8px 16px 2px',
   }),
   th: {
     fontSize: 8,
-    color: '#6B7186',
+    color: 'var(--text-muted)',
     textTransform: 'uppercase',
     letterSpacing: 1,
     padding: '10px 12px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     textAlign: 'left',
     fontWeight: 600,
   },
-  td: { fontSize: 10, padding: '8px 12px', borderBottom: '1px solid #2A292F22' },
+  td: { fontSize: 10, padding: '8px 12px', borderBottom: '1px solid color-mix(in srgb, var(--outline) 60%, transparent)' },
 };
 
 /* ─── ECharts base ─── */
-const ecBase = () => ({
+const ecBase = (ct) => ({
   backgroundColor: 'transparent',
-  textStyle: { color: '#A0A5B8', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 },
+  textStyle: { color: ct.textSecondary, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 },
   grid: { top: 44, right: 24, bottom: 38, left: 56, containLabel: false },
   tooltip: {
     trigger: 'axis',
-    backgroundColor: 'rgba(22,22,27,0.96)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: ct.elevated,
+    borderColor: ct.outline,
     borderWidth: 1,
-    textStyle: { color: '#f0f2f8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
-    extraCssText: 'box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-radius: 8px; padding: 8px 12px;',
+    textStyle: { color: ct.text, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
+    extraCssText: 'box-shadow: 0 8px 24px rgba(var(--shadow-rgb), 0.4); border-radius: 8px; padding: 8px 12px;',
     confine: true,
   },
   legend: {
-    textStyle: { color: '#A0A5B8', fontSize: 9 },
+    textStyle: { color: ct.textSecondary, fontSize: 9 },
     top: 4,
     right: 8,
     itemWidth: 12,
@@ -198,15 +199,15 @@ const ecBase = () => ({
   },
   xAxis: {
     type: 'category',
-    axisLine: { lineStyle: { color: '#2A292F' } },
-    axisLabel: { color: '#6B7186', fontSize: 9 },
+    axisLine: { lineStyle: { color: ct.outline } },
+    axisLabel: { color: ct.textMuted, fontSize: 9 },
     splitLine: { show: false },
   },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
-    axisLabel: { color: '#6B7186', fontSize: 9 },
-    splitLine: { lineStyle: { color: '#2A292F', type: 'dashed', opacity: 0.3 } },
+    axisLabel: { color: ct.textMuted, fontSize: 9 },
+    splitLine: { lineStyle: { color: ct.outline, type: 'dashed', opacity: 0.6 } },
   },
 });
 
@@ -227,6 +228,7 @@ export default function OptimizerPage({
 }) {
   const [activeTab, setActiveTab] = useState('window');
   const [windowOverlayPanel, setWindowOverlayPanel] = useState(null);
+  const ct = useChartTokens();
   const dateStr = effectiveDate || dayAheadData?.metadata?.effective_date || '--';
 
   /* ─── Computed Data ─── */
@@ -395,35 +397,35 @@ export default function OptimizerPage({
       signals.push({
         label: 'Lowest MAPE',
         value: `${bestWindow}D at ${fmt(bestMape)}%`,
-        tone: '#34D399',
+        tone: 'var(--success)',
       });
     }
     if (topClusterLabel !== '--') {
       signals.push({
         label: 'Near-optimal band',
         value: `${nearOptimalRows.length} windows in ${topClusterLabel}`,
-        tone: '#FBBF24',
+        tone: 'var(--warning)',
       });
     }
     if (currentRank != null) {
       signals.push({
         label: 'Current rank',
         value: `#${currentRank} of ${windowRows.length}`,
-        tone: currentRank <= 3 ? '#34D399' : '#F87171',
+        tone: currentRank <= 3 ? 'var(--success)' : 'var(--danger)',
       });
     }
     if (stabilitySpread != null) {
       signals.push({
         label: 'Spread across windows',
         value: `${fmt(stabilitySpread)}%`,
-        tone: isStable ? '#34D399' : '#FBBF24',
+        tone: isStable ? 'var(--success)' : 'var(--warning)',
       });
     }
     if (currentVsMedian != null) {
       signals.push({
         label: 'Current vs median',
         value: `${currentVsMedian > 0 ? '+' : ''}${fmt(currentVsMedian)}%`,
-        tone: currentVsMedian <= 0 ? '#34D399' : '#F87171',
+        tone: currentVsMedian <= 0 ? 'var(--success)' : 'var(--danger)',
       });
     }
     return signals;
@@ -519,9 +521,9 @@ export default function OptimizerPage({
       }
     });
     return {
-      ...ecBase(),
-      xAxis: { ...ecBase().xAxis, data: windows, name: 'Window (Days)' },
-      yAxis: { ...ecBase().yAxis, name: 'MAPE %' },
+      ...ecBase(ct),
+      xAxis: { ...ecBase(ct).xAxis, data: windows, name: 'Window (Days)' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MAPE %' },
       series: [
         {
           name: 'MAPE',
@@ -529,8 +531,8 @@ export default function OptimizerPage({
           data: mapes,
           smooth: true,
           symbolSize: 6,
-          lineStyle: { color: '#F07825', width: 2.5 },
-          itemStyle: { color: '#F07825' },
+          lineStyle: { color: ct.accent, width: 2.5 },
+          itemStyle: { color: ct.accent },
           areaStyle: {
             color: {
               type: 'linear',
@@ -539,7 +541,7 @@ export default function OptimizerPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: '#F0782520' },
+                { offset: 0, color: withAlpha(ct.accent, 0.13) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -550,11 +552,11 @@ export default function OptimizerPage({
                   {
                     coord: [windows[bIdx], bVal],
                     symbolSize: 12,
-                    itemStyle: { color: '#34D399' },
+                    itemStyle: { color: ct.success },
                     label: {
                       formatter: `Best: ${bVal.toFixed(2)}%`,
                       fontSize: 9,
-                      color: '#34D399',
+                      color: ct.success,
                     },
                   },
                 ],
@@ -565,8 +567,8 @@ export default function OptimizerPage({
                 data: [
                   {
                     xAxis: baselineDays,
-                    lineStyle: { color: '#F0782550', type: 'dashed' },
-                    label: { formatter: 'Current', fontSize: 8, color: '#F07825' },
+                    lineStyle: { color: withAlpha(ct.accent, 0.31), type: 'dashed' },
+                    label: { formatter: 'Current', fontSize: 8, color: ct.accent },
                   },
                 ],
                 symbol: 'none',
@@ -575,19 +577,19 @@ export default function OptimizerPage({
         },
       ],
     };
-  }, [baselineWindowMapes, baselineDays]);
+  }, [baselineWindowMapes, baselineDays, ct]);
 
   const windowGapOption = useMemo(() => {
     if (!windowRows.length || bestMape == null) return null;
     return {
-      ...ecBase(),
-      grid: { ...ecBase().grid, top: 28, right: 14, bottom: 28, left: 42, containLabel: true },
+      ...ecBase(ct),
+      grid: { ...ecBase(ct).grid, top: 28, right: 14, bottom: 28, left: 42, containLabel: true },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: windowRows.map((row) => `${row.window}D`),
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 0, rotate: 0, fontSize: 8 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 0, rotate: 0, fontSize: 8 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'Gap %' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'Gap %' },
       series: [
         {
           type: 'bar',
@@ -596,10 +598,10 @@ export default function OptimizerPage({
             itemStyle: {
               color:
                 row.window === Number(baselineDays)
-                  ? '#F07825'
+                  ? ct.accent
                   : row.rank <= 3
-                    ? '#34D39988'
-                    : '#6B718688',
+                    ? withAlpha(ct.success, 0.53)
+                    : withAlpha(ct.textMuted, 0.53),
               borderRadius: [3, 3, 0, 0],
             },
           })),
@@ -607,7 +609,7 @@ export default function OptimizerPage({
         },
       ],
     };
-  }, [windowRows, bestMape, baselineDays]);
+  }, [windowRows, bestMape, baselineDays, ct]);
 
   const patternFitOption = useMemo(() => {
     const blocks = dayAheadSeries?.blocks || [];
@@ -616,14 +618,14 @@ export default function OptimizerPage({
     if (!blocks.length) return null;
     const labels = blocks.map((b) => blockToTime(b));
     return {
-      ...ecBase(),
-      legend: { ...ecBase().legend, data: ['Actual', 'Baseline'] },
+      ...ecBase(ct),
+      legend: { ...ecBase(ct).legend, data: ['Actual', 'Baseline'] },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: labels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MW' },
       series: [
         {
           name: 'Actual',
@@ -631,8 +633,8 @@ export default function OptimizerPage({
           data: actual,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 2.5, color: '#34D399' },
-          itemStyle: { color: '#34D399' },
+          lineStyle: { width: 2.5, color: ct.success },
+          itemStyle: { color: ct.success },
           areaStyle: {
             color: {
               type: 'linear',
@@ -641,7 +643,7 @@ export default function OptimizerPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: '#34D39918' },
+                { offset: 0, color: withAlpha(ct.success, 0.09) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -651,10 +653,10 @@ export default function OptimizerPage({
               {
                 type: 'max',
                 symbolSize: 32,
-                label: { formatter: (p) => `${fmt(p.value, 0)} MW`, fontSize: 9, color: '#34D399' },
+                label: { formatter: (p) => `${fmt(p.value, 0)} MW`, fontSize: 9, color: ct.success },
               },
             ],
-            itemStyle: { color: '#34D399' },
+            itemStyle: { color: ct.success },
           },
         },
         {
@@ -663,32 +665,32 @@ export default function OptimizerPage({
           data: baseline,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 1.5, color: '#ECEEF330', type: 'dashed' },
-          itemStyle: { color: '#ECEEF330' },
+          lineStyle: { width: 1.5, color: withAlpha(ct.accent2, 0.75), type: 'dashed' },
+          itemStyle: { color: withAlpha(ct.accent2, 0.75) },
         },
       ],
     };
-  }, [dayAheadSeries]);
+  }, [dayAheadSeries, ct]);
 
   const residualBarOption = useMemo(() => {
     const blocks = dayAheadSeries?.blocks || [];
     if (!blocks.length || !residuals.length) return null;
     const labels = blocks.slice(0, residuals.length).map((b) => blockToTime(b));
     return {
-      ...ecBase(),
+      ...ecBase(ct),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: labels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW (Residual)' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MW (Residual)' },
       series: [
         {
           type: 'bar',
           data: residuals.map((v) => ({
             value: v,
             itemStyle: {
-              color: v != null && v > 0 ? '#34D39988' : '#F8717188',
+              color: v != null && v > 0 ? withAlpha(ct.success, 0.53) : withAlpha(ct.danger, 0.53),
               borderRadius: v != null && v > 0 ? [3, 3, 0, 0] : [0, 0, 3, 3],
             },
           })),
@@ -696,19 +698,19 @@ export default function OptimizerPage({
         },
       ],
     };
-  }, [dayAheadSeries, residuals]);
+  }, [dayAheadSeries, residuals, ct]);
 
   const rampCompareOption = useMemo(() => {
     if (!rampSeries) return null;
     return {
-      ...ecBase(),
-      legend: { ...ecBase().legend, data: ['Actual Ramp', 'Baseline Ramp'] },
+      ...ecBase(ct),
+      legend: { ...ecBase(ct).legend, data: ['Actual Ramp', 'Baseline Ramp'] },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: rampSeries.rampBlocks,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 7 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 7 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW/15m' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MW/15m' },
       series: [
         {
           name: 'Actual Ramp',
@@ -716,8 +718,8 @@ export default function OptimizerPage({
           data: rampSeries.actualRamp,
           smooth: true,
           symbol: 'none',
-          lineStyle: { color: '#34D399', width: 2 },
-          itemStyle: { color: '#34D399' },
+          lineStyle: { color: ct.success, width: 2 },
+          itemStyle: { color: ct.success },
         },
         {
           name: 'Baseline Ramp',
@@ -725,32 +727,32 @@ export default function OptimizerPage({
           data: rampSeries.baselineRamp,
           smooth: true,
           symbol: 'none',
-          lineStyle: { color: '#ECEEF330', width: 1.5, type: 'dashed' },
-          itemStyle: { color: '#ECEEF330' },
+          lineStyle: { color: withAlpha(ct.accent2, 0.75), width: 1.5, type: 'dashed' },
+          itemStyle: { color: withAlpha(ct.accent2, 0.75) },
         },
       ],
     };
-  }, [rampSeries]);
+  }, [rampSeries, ct]);
 
   const histogramOption = useMemo(() => {
     const hist = buildHistogram(residuals, 10);
     if (!hist) return null;
     return {
-      ...ecBase(),
-      xAxis: { ...ecBase().xAxis, data: hist.bins.map((b) => Math.round(b.mid).toString()) },
-      yAxis: { ...ecBase().yAxis, name: 'Count' },
+      ...ecBase(ct),
+      xAxis: { ...ecBase(ct).xAxis, data: hist.bins.map((b) => Math.round(b.mid).toString()) },
+      yAxis: { ...ecBase(ct).yAxis, name: 'Count' },
       series: [
         {
           type: 'bar',
           data: hist.bins.map((b) => ({
             value: b.count,
-            itemStyle: { color: '#F07825', borderRadius: [3, 3, 0, 0] },
+            itemStyle: { color: ct.accent, borderRadius: [3, 3, 0, 0] },
           })),
           barMaxWidth: 28,
         },
       ],
     };
-  }, [residuals]);
+  }, [residuals, ct]);
 
   const heatmapOption = useMemo(() => {
     const blocks = dayAheadSeries?.blocks || [];
@@ -761,17 +763,17 @@ export default function OptimizerPage({
     if (!data.length) return null;
     const maxV = Math.max(...data.map((r) => r[2]), 1);
     return {
-      ...ecBase(),
-      grid: { ...ecBase().grid, top: 20, bottom: 50 },
+      ...ecBase(ct),
+      grid: { ...ecBase(ct).grid, top: 20, bottom: 50 },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: blocks,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 5 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 5 },
       },
       yAxis: {
         type: 'category',
         data: ['Error'],
-        axisLabel: { color: '#6B7186', fontSize: 9 },
+        axisLabel: { color: ct.textMuted, fontSize: 9 },
         axisLine: { show: false },
       },
       visualMap: {
@@ -780,14 +782,14 @@ export default function OptimizerPage({
         orient: 'horizontal',
         left: 'center',
         bottom: 0,
-        inRange: { color: ['#1A191E', '#F07825', '#F87171'] },
-        textStyle: { color: '#6B7186', fontSize: 9 },
+        inRange: { color: [ct.surface, ct.warm, ct.danger] },
+        textStyle: { color: ct.textMuted, fontSize: 9 },
       },
       series: [
-        { type: 'heatmap', data, itemStyle: { borderColor: 'rgba(0,0,0,0.4)', borderWidth: 1 } },
+        { type: 'heatmap', data, itemStyle: { borderColor: ct.panel, borderWidth: 1 } },
       ],
     };
-  }, [dayAheadSeries, residuals]);
+  }, [dayAheadSeries, residuals, ct]);
 
   const peakBarOption = useMemo(() => {
     if (
@@ -797,52 +799,52 @@ export default function OptimizerPage({
     )
       return null;
     return {
-      ...ecBase(),
-      xAxis: { ...ecBase().xAxis, data: ['Baseline @ Peak', 'Actual Peak'] },
-      yAxis: { ...ecBase().yAxis, scale: true, name: 'MW' },
+      ...ecBase(ct),
+      xAxis: { ...ecBase(ct).xAxis, data: ['Baseline @ Peak', 'Actual Peak'] },
+      yAxis: { ...ecBase(ct).yAxis, scale: true, name: 'MW' },
       series: [
         {
           type: 'bar',
           data: [
             {
               value: peakError.baselineAtPeak,
-              itemStyle: { color: '#ECEEF320', borderRadius: [4, 4, 0, 0] },
+              itemStyle: { color: withAlpha(ct.accent2, 0.6), borderRadius: [4, 4, 0, 0] },
             },
             {
               value: peakError.actualPeak,
-              itemStyle: { color: '#34D399', borderRadius: [4, 4, 0, 0] },
+              itemStyle: { color: ct.success, borderRadius: [4, 4, 0, 0] },
             },
           ],
           barWidth: '40%',
         },
       ],
     };
-  }, [peakError]);
+  }, [peakError, ct]);
 
   const rampErrorOption = useMemo(() => {
     if (!rampSeries) return null;
     const absErr = rampSeries.rampError.map((v) => (Number.isFinite(v) ? Math.abs(v) : null));
     if (!absErr.some(Number.isFinite)) return null;
     return {
-      ...ecBase(),
+      ...ecBase(ct),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: rampSeries.rampBlocks,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 7 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 7 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MW' },
       series: [
         {
           type: 'bar',
           data: absErr.map((v) => ({
             value: v,
-            itemStyle: { color: '#F8717188', borderRadius: [3, 3, 0, 0] },
+            itemStyle: { color: withAlpha(ct.danger, 0.53), borderRadius: [3, 3, 0, 0] },
           })),
           barMaxWidth: 4,
         },
       ],
     };
-  }, [rampSeries]);
+  }, [rampSeries, ct]);
 
   const hasData = dayAheadSeries?.actual?.length > 0 || baselineWindowMapes.length > 0;
 
@@ -879,7 +881,7 @@ export default function OptimizerPage({
             </div>
             <div style={S.kpi}>
               <div style={S.kpiLabel}>Gap To Best</div>
-              <div style={S.kpiVal(mapeGap != null && mapeGap > 0.3 ? '#F87171' : '#34D399')}>
+              <div style={S.kpiVal(mapeGap != null && mapeGap > 0.3 ? 'var(--danger)' : 'var(--success)')}>
                 {mapeGap != null ? (mapeGap > 0 ? '+' : '') + fmt(mapeGap) : '--'}
                 <span style={S.kpiUnit}> %</span>
               </div>
@@ -894,10 +896,10 @@ export default function OptimizerPage({
               <div
                 style={S.kpiVal(
                   (residualStats?.mae ?? Infinity) <= 20
-                    ? '#34D399'
+                    ? 'var(--success)'
                     : (residualStats?.mae ?? Infinity) <= 35
-                      ? '#FBBF24'
-                      : '#F87171'
+                      ? 'var(--warning)'
+                      : 'var(--danger)'
                 )}
               >
                 {residualStats ? fmt(residualStats.mae) : '--'}
@@ -908,7 +910,7 @@ export default function OptimizerPage({
             <div style={S.kpi}>
               <div style={S.kpiLabel}>Peak Timing</div>
               <div
-                style={S.kpiVal(peakTimingOff != null && peakTimingOff > 4 ? '#F87171' : '#34D399')}
+                style={S.kpiVal(peakTimingOff != null && peakTimingOff > 4 ? 'var(--danger)' : 'var(--success)')}
               >
                 {peakTimingOff ?? '--'}
                 <span style={S.kpiUnit}> blks</span>
@@ -922,7 +924,7 @@ export default function OptimizerPage({
             <div style={S.kpi}>
               <div style={S.kpiLabel}>Error Grade</div>
               <div
-                style={S.kpiVal(grade === 'A' ? '#34D399' : grade === 'B' ? '#FBBF24' : '#F87171')}
+                style={S.kpiVal(grade === 'A' ? 'var(--success)' : grade === 'B' ? 'var(--warning)' : 'var(--danger)')}
               >
                 {grade}
               </div>
@@ -932,7 +934,7 @@ export default function OptimizerPage({
             </div>
             <div style={S.kpi}>
               <div style={S.kpiLabel}>Outlier Blocks</div>
-              <div style={S.kpiVal(outlierPct > 5 ? '#F87171' : '#34D399')}>
+              <div style={S.kpiVal(outlierPct > 5 ? 'var(--danger)' : 'var(--success)')}>
                 {outlierCount}
                 <span style={S.kpiUnit}> ({fmt(outlierPct)}%)</span>
               </div>
@@ -982,25 +984,25 @@ export default function OptimizerPage({
                     panel: 'rationale',
                     label: 'Selection Rationale',
                     sub: 'Why this window was chosen',
-                    color: '#F07825',
+                    color: 'var(--tone-warm)',
                   },
                   {
                     panel: 'signals',
                     label: 'Selection Signals',
                     sub: 'Load · Weather · Price signals',
-                    color: '#5B9FE4',
+                    color: 'var(--accent)',
                   },
                   {
                     panel: 'leaderboard',
                     label: 'Window Leaderboard',
                     sub: 'Ranked window candidates',
-                    color: '#34D399',
+                    color: 'var(--success)',
                   },
                   {
                     panel: 'gap',
                     label: 'Gap Profile',
                     sub: 'Supply-demand gap view',
-                    color: '#C084FC',
+                    color: 'var(--accent2)',
                   },
                 ].map(({ panel, label, sub, color }) => (
                   <button
@@ -1015,9 +1017,9 @@ export default function OptimizerPage({
                       minWidth: 130,
                       padding: '10px 14px',
                       borderRadius: 14,
-                      border: `1px solid ${windowOverlayPanel === panel ? `${color}66` : `${color}33`}`,
-                      background: windowOverlayPanel === panel ? `${color}18` : `${color}10`,
-                      color: '#ECEEF3',
+                      border: `1px solid ${windowOverlayPanel === panel ? `color-mix(in srgb, ${color} 40%, transparent)` : `color-mix(in srgb, ${color} 20%, transparent)`}`,
+                      background: windowOverlayPanel === panel ? `color-mix(in srgb, ${color} 9%, transparent)` : `color-mix(in srgb, ${color} 6%, transparent)`,
+                      color: 'var(--text)',
                       cursor: 'pointer',
                       fontFamily: 'inherit',
                       textAlign: 'left',
@@ -1029,7 +1031,7 @@ export default function OptimizerPage({
                         fontSize: 8,
                         letterSpacing: 1.1,
                         textTransform: 'uppercase',
-                        color: '#6B7186',
+                        color: 'var(--text-muted)',
                       }}
                     >
                       Quick panel
@@ -1043,7 +1045,7 @@ export default function OptimizerPage({
                     >
                       {label}
                     </span>
-                    <span style={{ fontSize: 9, color: '#6B7186' }}>{sub}</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{sub}</span>
                   </button>
                 ))}
               </div>
@@ -1095,7 +1097,7 @@ export default function OptimizerPage({
                         onChartReady={(chart) => { setTimeout(() => chart.resize(), 0); }}
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No accuracy data
                       </div>
                     )}
@@ -1129,7 +1131,7 @@ export default function OptimizerPage({
                                 style={{
                                   position: 'relative',
                                   height: 22,
-                                  background: '#2A292F',
+                                  background: 'var(--outline)',
                                   borderRadius: 999,
                                   marginBottom: 10,
                                 }}
@@ -1140,7 +1142,7 @@ export default function OptimizerPage({
                                     top: 3,
                                     height: 16,
                                     borderRadius: 999,
-                                    background: '#F0782540',
+                                    background: 'rgba(var(--accent-rgb), 0.25)',
                                     left: `${left}%`,
                                     width: `${width}%`,
                                   }}
@@ -1152,7 +1154,7 @@ export default function OptimizerPage({
                                     height: 22,
                                     width: 4,
                                     borderRadius: 999,
-                                    background: '#F07825',
+                                    background: 'var(--accent)',
                                     left: `${median}%`,
                                   }}
                                 />
@@ -1162,24 +1164,24 @@ export default function OptimizerPage({
                                   display: 'flex',
                                   justifyContent: 'space-between',
                                   fontSize: 10,
-                                  color: '#6B7186',
+                                  color: 'var(--text-muted)',
                                 }}
                               >
                                 <span>
                                   Min{' '}
-                                  <strong style={{ color: '#ECEEF3' }}>
+                                  <strong style={{ color: 'var(--text)' }}>
                                     {fmt(stability.min)}%
                                   </strong>
                                 </span>
                                 <span>
                                   Median{' '}
-                                  <strong style={{ color: '#F07825' }}>
+                                  <strong style={{ color: 'var(--accent)' }}>
                                     {fmt(stability.median)}%
                                   </strong>
                                 </span>
                                 <span>
                                   Max{' '}
-                                  <strong style={{ color: '#ECEEF3' }}>
+                                  <strong style={{ color: 'var(--text)' }}>
                                     {fmt(stability.max)}%
                                   </strong>
                                 </span>
@@ -1188,7 +1190,7 @@ export default function OptimizerPage({
                           );
                         })()
                       ) : (
-                        <div style={{ color: '#6B7186', fontSize: 10 }}>No stability data</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>No stability data</div>
                       )}
                     </div>
                   </div>
@@ -1215,7 +1217,7 @@ export default function OptimizerPage({
                           max="30"
                           value={baselineDays}
                           onChange={(e) => setBaselineDays(Number(e.target.value))}
-                          style={{ flex: 1, accentColor: '#F07825' }}
+                          style={{ flex: 1, accentColor: 'var(--accent)' }}
                         />
                         <span
                           style={{
@@ -1229,7 +1231,7 @@ export default function OptimizerPage({
                         </span>
                       </div>
                       {/* MAPE label */}
-                      <div style={{ fontSize: 10, color: '#6B7186', marginTop: -4 }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: -4 }}>
                         {currentMape != null
                           ? `Current MAPE: ${fmt(currentMape)}%`
                           : 'Select window to evaluate'}
@@ -1246,8 +1248,8 @@ export default function OptimizerPage({
                       >
                         <div
                           style={{
-                            background: '#201F25',
-                            border: '1px solid #2A292F',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--outline)',
                             borderRadius: 12,
                             padding: '10px 12px',
                             display: 'flex',
@@ -1260,21 +1262,21 @@ export default function OptimizerPage({
                               fontSize: 8,
                               letterSpacing: 1.2,
                               textTransform: 'uppercase',
-                              color: '#6B7186',
+                              color: 'var(--text-muted)',
                               marginBottom: 6,
                             }}
                           >
                             Why it matters
                           </div>
-                          <div style={{ fontSize: 10, color: '#ECEEF3', lineHeight: 1.5 }}>
+                          <div style={{ fontSize: 10, color: 'var(--text)', lineHeight: 1.5 }}>
                             Selection balances lowest error, cluster stability, and how far the
                             current window sits from the best performer.
                           </div>
                         </div>
                         <div
                           style={{
-                            background: '#201F25',
-                            border: '1px solid #2A292F',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--outline)',
                             borderRadius: 12,
                             padding: '10px 12px',
                             display: 'flex',
@@ -1287,7 +1289,7 @@ export default function OptimizerPage({
                               fontSize: 8,
                               letterSpacing: 1.2,
                               textTransform: 'uppercase',
-                              color: '#6B7186',
+                              color: 'var(--text-muted)',
                               marginBottom: 6,
                             }}
                           >
@@ -1298,12 +1300,12 @@ export default function OptimizerPage({
                               fontSize: 14,
                               fontWeight: 700,
                               color:
-                                currentRank != null && currentRank <= 3 ? '#34D399' : '#FBBF24',
+                                currentRank != null && currentRank <= 3 ? 'var(--success)' : 'var(--warning)',
                             }}
                           >
                             {selectionConfidence}
                           </div>
-                          <div style={{ fontSize: 9, color: '#A0A5B8', marginTop: 4 }}>
+                          <div style={{ fontSize: 9, color: 'var(--text-secondary)', marginTop: 4 }}>
                             {windowAction}
                           </div>
                         </div>
@@ -1332,9 +1334,9 @@ export default function OptimizerPage({
                                 borderRadius: 999,
                                 cursor: 'pointer',
                                 fontFamily: 'inherit',
-                                border: `1px solid ${active ? '#F07825' : '#2A292F'}`,
-                                background: active ? '#F0782518' : 'transparent',
-                                color: active ? '#F07825' : '#6B7186',
+                                border: `1px solid ${active ? 'var(--accent)' : 'var(--outline)'}`,
+                                background: active ? 'rgba(var(--accent-rgb), 0.09)' : 'transparent',
+                                color: active ? 'var(--accent)' : 'var(--text-muted)',
                               }}
                             >
                               {Number.isFinite(wd) ? wd : row.window_days}D •{' '}
@@ -1394,7 +1396,7 @@ export default function OptimizerPage({
                         onChartReady={(chart) => { setTimeout(() => chart.resize(), 0); }}
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No pattern data
                       </div>
                     )}
@@ -1419,7 +1421,7 @@ export default function OptimizerPage({
                         onChartReady={(chart) => { setTimeout(() => chart.resize(), 0); }}
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No residual data
                       </div>
                     )}
@@ -1444,7 +1446,7 @@ export default function OptimizerPage({
                         notMerge
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No ramp data
                       </div>
                     )}
@@ -1476,7 +1478,7 @@ export default function OptimizerPage({
                         notMerge
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No residuals
                       </div>
                     )}
@@ -1492,7 +1494,7 @@ export default function OptimizerPage({
                         notMerge
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No heatmap data
                       </div>
                     )}
@@ -1517,7 +1519,7 @@ export default function OptimizerPage({
                         notMerge
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No peak data
                       </div>
                     )}
@@ -1533,7 +1535,7 @@ export default function OptimizerPage({
                         notMerge
                       />
                     ) : (
-                      <div style={{ padding: 48, textAlign: 'center', color: '#6B7186' }}>
+                      <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
                         No ramp error data
                       </div>
                     )}
@@ -1550,7 +1552,7 @@ export default function OptimizerPage({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(7, 7, 10, 0.56)',
+            background: 'rgba(var(--shadow-rgb), 0.56)',
             backdropFilter: 'blur(4px)',
             display: 'flex',
             justifyContent: 'center',
@@ -1562,8 +1564,8 @@ export default function OptimizerPage({
             style={{
               width: 'min(920px, 100%)',
               maxHeight: '85vh',
-              background: '#16161B',
-              border: '1px solid #2A292F',
+              background: 'var(--bg-panel)',
+              border: '1px solid var(--outline)',
               borderRadius: 16,
               overflow: 'hidden',
               display: 'flex',
@@ -1577,7 +1579,7 @@ export default function OptimizerPage({
                 justifyContent: 'space-between',
                 gap: 12,
                 padding: '16px 18px',
-                borderBottom: '1px solid #2A292F',
+                borderBottom: '1px solid var(--outline)',
               }}
             >
               <div>
@@ -1587,7 +1589,7 @@ export default function OptimizerPage({
                     fontWeight: 700,
                     letterSpacing: 1.5,
                     textTransform: 'uppercase',
-                    color: '#A0A5B8',
+                    color: 'var(--text-secondary)',
                   }}
                 >
                   {windowOverlayPanel === 'signals' && 'Selection Signals'}
@@ -1595,7 +1597,7 @@ export default function OptimizerPage({
                   {windowOverlayPanel === 'gap' && 'Gap Profile'}
                   {windowOverlayPanel === 'rationale' && 'Selection Rationale'}
                 </div>
-                <div style={{ fontSize: 11, color: '#6B7186', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                   {windowOverlayPanel === 'signals' &&
                     `Signals used to explain the ${baselineDays}D choice on ${dateStr}.`}
                   {windowOverlayPanel === 'leaderboard' &&
@@ -1613,9 +1615,9 @@ export default function OptimizerPage({
                   width: 30,
                   height: 30,
                   borderRadius: 999,
-                  border: '1px solid #2A292F',
-                  background: '#1A191E',
-                  color: '#A0A5B8',
+                  border: '1px solid var(--outline)',
+                  background: 'var(--bg-panel)',
+                  color: 'var(--text-secondary)',
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                 }}
@@ -1641,8 +1643,8 @@ export default function OptimizerPage({
                         <div
                           key={`signal-${signal.label}`}
                           style={{
-                            background: '#201F25',
-                            border: '1px solid #2A292F',
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--outline)',
                             borderRadius: 8,
                             padding: '10px 12px',
                           }}
@@ -1652,7 +1654,7 @@ export default function OptimizerPage({
                               fontSize: 8,
                               letterSpacing: 1.2,
                               textTransform: 'uppercase',
-                              color: '#6B7186',
+                              color: 'var(--text-muted)',
                               marginBottom: 6,
                             }}
                           >
@@ -1675,27 +1677,27 @@ export default function OptimizerPage({
                           flexDirection: 'column',
                           gap: 10,
                           fontSize: 10,
-                          color: '#A0A5B8',
+                          color: 'var(--text-secondary)',
                         }}
                       >
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Current selection:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Current selection:</strong>{' '}
                           {baselineDays}D
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Confidence:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Confidence:</strong>{' '}
                           {selectionConfidence}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Near-optimal band:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Near-optimal band:</strong>{' '}
                           {topClusterLabel}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Spread across windows:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Spread across windows:</strong>{' '}
                           {stabilitySpread != null ? `${fmt(stabilitySpread)}%` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Current vs median:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Current vs median:</strong>{' '}
                           {currentVsMedian != null
                             ? `${currentVsMedian > 0 ? '+' : ''}${fmt(currentVsMedian)}%`
                             : '--'}
@@ -1712,7 +1714,7 @@ export default function OptimizerPage({
                             notMerge
                           />
                         ) : (
-                          <div style={{ padding: 30, textAlign: 'center', color: '#6B7186' }}>
+                          <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>
                             No ranking data
                           </div>
                         )}
@@ -1756,7 +1758,7 @@ export default function OptimizerPage({
                                     ...S.td,
                                     fontWeight: 700,
                                     color:
-                                      row.window === Number(baselineDays) ? '#F07825' : '#ECEEF3',
+                                      row.window === Number(baselineDays) ? 'var(--accent)' : 'var(--text)',
                                   }}
                                 >
                                   {row.window}D
@@ -1767,8 +1769,8 @@ export default function OptimizerPage({
                                     ...S.td,
                                     color:
                                       row.rank === 1 || (gapToBest != null && gapToBest <= 0.2)
-                                        ? '#34D399'
-                                        : '#6B7186',
+                                        ? 'var(--success)'
+                                        : 'var(--text-muted)',
                                   }}
                                 >
                                   {gapToBest != null ? `+${fmt(gapToBest)}%` : '--'}
@@ -1778,10 +1780,10 @@ export default function OptimizerPage({
                                     ...S.td,
                                     color:
                                       status === 'Best'
-                                        ? '#34D399'
+                                        ? 'var(--success)'
                                         : status === 'Selected'
-                                          ? '#F07825'
-                                          : '#A0A5B8',
+                                          ? 'var(--accent)'
+                                          : 'var(--text-secondary)',
                                     fontWeight: 600,
                                   }}
                                 >
@@ -1804,31 +1806,31 @@ export default function OptimizerPage({
                           flexDirection: 'column',
                           gap: 10,
                           fontSize: 10,
-                          color: '#A0A5B8',
+                          color: 'var(--text-secondary)',
                         }}
                       >
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Current selection:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Current selection:</strong>{' '}
                           {baselineDays}D
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Current rank:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Current rank:</strong>{' '}
                           {currentRank != null ? `#${currentRank}` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>MAPE gap to best:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>MAPE gap to best:</strong>{' '}
                           {mapeGap != null ? `${mapeGap > 0 ? '+' : ''}${fmt(mapeGap)}%` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Near-optimal band:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Near-optimal band:</strong>{' '}
                           {topClusterLabel}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Stability spread:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Stability spread:</strong>{' '}
                           {stabilitySpread != null ? `${fmt(stabilitySpread)}%` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Decision:</strong> {windowAction}
+                          <strong style={{ color: 'var(--text)' }}>Decision:</strong> {windowAction}
                         </div>
                       </div>
                     </div>
@@ -1843,7 +1845,7 @@ export default function OptimizerPage({
                               notMerge
                             />
                           ) : (
-                            <div style={{ padding: 30, textAlign: 'center', color: '#6B7186' }}>
+                            <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>
                               No ranking data
                             </div>
                           )}
@@ -1868,7 +1870,7 @@ export default function OptimizerPage({
                           notMerge
                         />
                       ) : (
-                        <div style={{ padding: 30, textAlign: 'center', color: '#6B7186' }}>
+                        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}>
                           No ranking data
                         </div>
                       )}
@@ -1884,23 +1886,23 @@ export default function OptimizerPage({
                           flexDirection: 'column',
                           gap: 10,
                           fontSize: 10,
-                          color: '#A0A5B8',
+                          color: 'var(--text-secondary)',
                         }}
                       >
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Best window:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Best window:</strong>{' '}
                           {bestWindow != null ? `${bestWindow}D` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Selected window:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Selected window:</strong>{' '}
                           {baselineDays}D
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Gap to best:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Gap to best:</strong>{' '}
                           {mapeGap != null ? `${mapeGap > 0 ? '+' : ''}${fmt(mapeGap)}%` : '--'}
                         </div>
                         <div>
-                          <strong style={{ color: '#ECEEF3' }}>Cluster band:</strong>{' '}
+                          <strong style={{ color: 'var(--text)' }}>Cluster band:</strong>{' '}
                           {topClusterLabel}
                         </div>
                       </div>
@@ -1921,8 +1923,8 @@ export default function OptimizerPage({
                               fontSize: 10,
                             }}
                           >
-                            <span style={{ color: '#ECEEF3', fontWeight: 700 }}>{row.window}D</span>
-                            <span style={{ color: '#A0A5B8' }}>{fmt(row.mape)}%</span>
+                            <span style={{ color: 'var(--text)', fontWeight: 700 }}>{row.window}D</span>
+                            <span style={{ color: 'var(--text-secondary)' }}>{fmt(row.mape)}%</span>
                           </div>
                         ))}
                       </div>

@@ -11,6 +11,10 @@ services:
     env_file: .env
     environment:
       PORT: "8000"
+      # Django that issues user session tokens; FastAPI validates against /auth/me.
+      DJANGO_AUTH_BASE_URL: "http://django:8001"
+      # Immutable forecast records survive redeploys on the mounted exports volume.
+      FORECAST_RECORDS_DIR: "/app/exports/forecast_records"
     volumes:
       - ./backend/artifacts:/app/backend/artifacts
       - ./exports:/app/exports

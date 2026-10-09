@@ -1,0 +1,261 @@
+/*
+ * Design-system scope + glass chrome utilities.
+ *
+ * The legacy forecast shell (src/index.css) defines hex values for --accent,
+ * --success, --warning, --danger and --info, while the Tailwind/shadcn layer
+ * expects raw HSL channels (see tokens.css). Any subtree that renders shadcn
+ * components inside the legacy shell must carry `.ds-scope` so the HSL tokens
+ * resolve correctly. Radix portal content (dropdowns, popovers, tooltips) needs
+ * the class on the content element itself because portals leave the subtree.
+ */
+
+/* ── Dark theme: One Dark Pro ──────────────────────────────────────────────────
+ * Palette from the One Dark Pro editor theme. Contrast (WCAG 2.1) on elev1 #282C34:
+ *   fg #ABB2BF 6.6 · muted #9DA5B4 5.7 · faint 5.1 · accent #61AFEF 5.9
+ *   success #98C379 6.9 · warning #E5C07B 8.1 · danger 5.0 · info #56B6C2 5.9
+ * Stock faint #7F848E (3.7) and red #E06C75 (4.4) miss AA, so both are lifted
+ * slightly. White on blue is only 2.4:1, so accent fills carry dark #282C34 text.
+ */
+.ds-scope {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-base: 216 13% 15%; /* #21252B */
+  --bg-elev-1: 220 13% 18%; /* #282C34 */
+  --bg-elev-2: 219 14% 20%; /* #2C313A */
+  --bg-elev-3: 220 13% 23%; /* #333842 */
+
+  --border: 221 13% 28%; /* #3E4451 */
+  --ring: 220 100% 66%; /* #528BFF cursor */
+
+  /* Text */
+  --fg: 219 14% 71%; /* #ABB2BF */
+  --fg-muted: 219 13% 66%; /* #9DA5B4 */
+  --fg-faint: 220 8% 62%; /* #969CA6 */
+
+  /* Brand */
+  --accent: 207 82% 66%; /* #61AFEF blue */
+  --accent-fg: 220 13% 18%;
+  --accent-2: 286 60% 67%; /* #C678DD purple */
+  --accent-2-fg: 220 13% 18%;
+
+  /* Semantic */
+  --success: 95 38% 62%; /* #98C379 */
+  --warning: 39 67% 69%; /* #E5C07B */
+  --danger: 355 72% 69%; /* #E97781 */
+  --info: 187 47% 55%; /* #56B6C2 */
+
+  color: hsl(var(--fg));
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* ── Light theme (studio subtree only) ────────────────────────────────────────
+ * Contrast (WCAG 2.1, measured on elev1 #FFF / elev2 / own 15% tint):
+ *   fg 17.3 · muted 7.2 · faint 5.7 (4.7 on elev3) · accent 6.4 · accent-2 6.8
+ *   info 6.5 · success 6.0 · warning 5.8 · danger 7.0 · white-on-accent 5.7
+ */
+.ds-scope.theme-light {
+  color-scheme: light;
+
+  --bg-base: 220 20% 97%;
+  --bg-elev-1: 0 0% 100%;
+  --bg-elev-2: 220 16% 96%;
+  --bg-elev-3: 220 14% 92%;
+
+  --border: 220 13% 86%;
+  --ring: 221 83% 47%;
+
+  --fg: 224 30% 12%;
+  --fg-muted: 222 12% 36%;
+  --fg-faint: 222 10% 42%;
+
+  /* One Light hues (blue/purple), darkened for AA as text on white AND as a
+     fill under white text: accent 6.4:1, accent-2 6.8:1. */
+  --accent: 221 83% 47%;
+  --accent-fg: 0 0% 100%;
+  --accent-2: 286 55% 42%;
+  --accent-2-fg: 0 0% 100%;
+
+  --success: 152 72% 26%;
+  --warning: 32 95% 31%;
+  --danger: 0 72% 40%;
+  --info: 211 72% 38%;
+}
+
+.ds-scope .num,
+.ds-scope table,
+.ds-scope .font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Glass chrome ─────────────────────────────────────────────────────────────
+ * Use ONLY on elevated chrome (sticky toolbars, KPI cards, sheets, popovers).
+ * Charts and tables must sit on solid surfaces (bg-elev1) — never blur behind data.
+ */
+.glass-chrome {
+  background: linear-gradient(180deg, hsl(var(--bg-elev-1) / 0.72), hsl(var(--bg-elev-1) / 0.6));
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid hsl(0 0% 100% / 0.06);
+  box-shadow:
+    inset 0 1px 0 0 hsl(0 0% 100% / 0.05),
+    0 8px 24px -8px hsl(0 0% 0% / 0.45);
+}
+
+.glass-strong {
+  background: linear-gradient(180deg, hsl(var(--bg-elev-2) / 0.86), hsl(var(--bg-elev-1) / 0.78));
+  backdrop-filter: blur(32px) saturate(150%);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
+  border: 1px solid hsl(0 0% 100% / 0.08);
+  box-shadow:
+    inset 0 1px 0 0 hsl(0 0% 100% / 0.07),
+    0 16px 40px -12px hsl(0 0% 0% / 0.6);
+}
+
+/* Light glass: white 70–85%, hairline ink border, soft (non-black) shadows. */
+.theme-light.glass-chrome,
+.theme-light .glass-chrome {
+  background: linear-gradient(180deg, hsl(0 0% 100% / 0.85), hsl(0 0% 100% / 0.72));
+  border: 1px solid hsl(220 20% 20% / 0.08);
+  box-shadow:
+    inset 0 1px 0 0 hsl(0 0% 100% / 0.9),
+    0 1px 2px hsl(220 30% 20% / 0.04),
+    0 8px 24px -12px hsl(220 30% 20% / 0.12);
+}
+.theme-light.glass-strong,
+.theme-light .glass-strong {
+  background: linear-gradient(180deg, hsl(0 0% 100% / 0.85), hsl(220 20% 98% / 0.78));
+  border: 1px solid hsl(220 20% 20% / 0.08);
+  box-shadow:
+    inset 0 1px 0 0 hsl(0 0% 100% / 1),
+    0 1px 2px hsl(220 30% 20% / 0.05),
+    0 16px 40px -16px hsl(220 30% 20% / 0.18);
+}
+
+/* shadcn primitives use the dark `shadow-elev1`; soften it in light mode. */
+.theme-light.shadow-elev1,
+.theme-light .shadow-elev1 {
+  box-shadow:
+    0 1px 2px hsl(220 30% 20% / 0.06),
+    0 8px 24px -12px hsl(220 30% 20% / 0.16);
+}
+
+/* Solid fallback where backdrop-filter is unsupported — keeps contrast intact. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-chrome,
+  .theme-light .glass-chrome {
+    background: hsl(var(--bg-elev-1));
+  }
+  .glass-strong,
+  .theme-light .glass-strong {
+    background: hsl(var(--bg-elev-2));
+  }
+}
+
+/* Solid data surface — explicit opposite of glass, for charts and tables. */
+.data-surface {
+  background: hsl(var(--bg-elev-1));
+  border: 1px solid hsl(var(--border));
+}
+
+/* ── Legacy-CSS isolation ────────────────────────────────────────────────────
+ * src/index.css (legacy shell) ships hand-written `.border`, `.border-b`,
+ * `input[type=date]`, `input:focus`, `h1–h4` rules that load after Tailwind and
+ * repaint borders/inputs with its dark hex palette. Inside the studio we map the
+ * legacy variables onto our tokens and re-assert the colour utilities we use.
+ */
+.ds-scope {
+  --outline: hsl(var(--border));
+  --text: hsl(var(--fg));
+  --text-secondary: hsl(var(--fg-muted));
+  --text-muted: hsl(var(--fg-muted));
+}
+.ds-scope .border-border {
+  border-color: hsl(var(--border));
+}
+.ds-scope .border-border\/50 {
+  border-color: hsl(var(--border) / 0.5);
+}
+.ds-scope .border-border\/60 {
+  border-color: hsl(var(--border) / 0.6);
+}
+.ds-scope .border-accent\/40 {
+  border-color: hsl(var(--accent) / 0.4);
+}
+.ds-scope .border-danger\/40 {
+  border-color: hsl(var(--danger) / 0.4);
+}
+.ds-scope .border-danger\/50 {
+  border-color: hsl(var(--danger) / 0.5);
+}
+.ds-scope .border-info\/40 {
+  border-color: hsl(var(--info) / 0.4);
+}
+.ds-scope .border-success\/40 {
+  border-color: hsl(var(--success) / 0.4);
+}
+.ds-scope .border-warning\/40 {
+  border-color: hsl(var(--warning) / 0.4);
+}
+.ds-scope .border-warning\/45 {
+  border-color: hsl(var(--warning) / 0.45);
+}
+
+.ds-scope input[type='date']:not(.cs-date):not(.cs-date-input),
+.ds-scope input[type='text']:not(.cs-date),
+.ds-scope input[type='number'] {
+  background: hsl(var(--bg-elev-2));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  color: hsl(var(--fg));
+  padding: 4px 12px;
+  font-size: 14px;
+}
+.ds-scope input:focus {
+  border-color: hsl(var(--ring));
+  background: hsl(var(--bg-elev-2));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.35);
+}
+.ds-scope :focus-visible {
+  outline: 2px solid hsl(var(--ring) / 0.7);
+  outline-offset: 2px;
+}
+
+/* Native date input: match the active theme + keep the picker icon visible. */
+.ds-scope input[type='date'] {
+  color-scheme: dark;
+}
+.ds-scope.theme-light input[type='date'] {
+  color-scheme: light;
+}
+.ds-scope input[type='date']::-webkit-calendar-picker-indicator {
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-scope *,
+  .ds-scope *::before,
+  .ds-scope *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Menus float over controls: keep them near-opaque so text never competes with what is behind. */
+.theme-light.glass-strong[role='menu'],
+.theme-light.glass-strong[role='dialog'] {
+  background: hsl(0 0% 100% / 0.95);
+}
+.glass-strong[role='menu'],
+.glass-strong[role='dialog'] {
+  background: hsl(var(--bg-elev-2) / 0.96);
+}
+
+/* Legacy index.css gives <section> a bottom margin; studio layout spacing is gap-based. */
+.ds-scope section {
+  margin: 0;
+}
