@@ -1515,7 +1515,8 @@ export default function App({ authUser, onLogout, onHome }) {
   const _defaultFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
   const [regionDateRange, setRegionDateRange] = useState({ from: _defaultFrom, to: _today });
   const [viewDataOpen, setViewDataOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(true);
+  // Intelligence drawer is an overlay with a backdrop: start closed, open from the top bar.
+  const [contextOpen, setContextOpen] = useState(false);
   const [pipelineDate, setPipelineDate] = useState(null);
   const [pipelineJobId, setPipelineJobId] = useState(null);
 

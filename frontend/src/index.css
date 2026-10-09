@@ -678,8 +678,9 @@ body {
   grid-template-columns: 1fr 0;
   gap: 0;
   overflow: hidden; flex: 1; min-height: 0;
-  padding: 12px;
-  padding-top: 8px;
+  /* No side padding: the page panel shares the top bar's left/right edges.
+     Bottom 10px matches the sidebar's bottom margin. */
+  padding: 8px 0 10px;
 }
 .nexus-body.ctx-open { grid-template-columns: 1fr; gap: 0; }
 
@@ -3905,7 +3906,7 @@ table,
 
 /* ── Premium card surfaces (catches every page that names cards / panels) ─── */
 [class*="-card"]:not(.sb-link):not(.cs-action-btn):not(.fp-action-btn):not(.cs-btn):not([class*="chip"]):not([class*="badge"]),
-[class*="-panel"]:not(.cs-float),
+[class*="-panel"]:not(.cs-float):not(.context-panel):not(.context-panel-backdrop),
 [class*="-surface"],
 [class*="kpi-card"],
 [class*="metric-card"],
