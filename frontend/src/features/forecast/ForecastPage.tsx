@@ -28,16 +28,16 @@ const C = {
     green:    'var(--success)',
     red:      'var(--danger)',
     warn:     'var(--warning)',
-    _accent:  '#F07825',
-    _accent2: '#5B9FE4',
-    _text:    '#ECEEF3',
-    _sub:     '#A0A5B8',
-    _muted:   '#6B7186',
-    _border:  '#2A292F',
-    _card:    '#1A191E',
-    _green:   '#34D399',
-    _red:     '#F87171',
-    _warn:    '#FBBF24',
+    _accent:  'var(--accent)',
+    _accent2: 'var(--accent2)',
+    _text:    'var(--text)',
+    _sub:     'var(--text-secondary)',
+    _muted:   'var(--text-muted)',
+    _border:  'var(--outline)',
+    _card:    'var(--bg-panel)',
+    _green:   'var(--success)',
+    _red:     'var(--danger)',
+    _warn:    'var(--warning)',
 };
 
 interface ForecastPageProps {
@@ -87,7 +87,7 @@ function MetricCard({ label, value, unit, delta, deltaColor, sub, color, extra }
         <div style={{
             minHeight: 110,
             padding: '16px 18px',
-            background: 'linear-gradient(180deg, rgba(32,31,37,0.96), rgba(26,25,30,0.98))',
+            background: 'linear-gradient(180deg, var(--bg-elevated), var(--bg-panel))',
             borderRadius: 14,
             border: `1px solid ${C._border}`,
             display: 'flex',
@@ -155,7 +155,7 @@ function TabPill({ active, onClick, children }: { active: boolean; onClick: () =
                 fontWeight: 600,
                 letterSpacing: 0.5,
                 borderRadius: 999,
-                background: active ? `${C._accent}18` : 'transparent',
+                background: active ? `color-mix(in srgb, ${C._accent} 9%, transparent)` : 'transparent',
                 color: active ? C._accent : C._muted,
                 transition: 'all 0.15s',
             }}
@@ -196,7 +196,7 @@ function PanelBtn({ onClick, children, count, countColor }: {
                 <span style={{
                     fontSize: 9, fontWeight: 700,
                     padding: '1px 5px', borderRadius: 8,
-                    background: countColor ? `${countColor}20` : 'rgba(255,255,255,0.08)',
+                    background: countColor ? `color-mix(in srgb, ${countColor} 13%, transparent)` : 'rgba(var(--overlay-rgb), 0.08)',
                     color: countColor || C._muted,
                 }}>
                     {count}
@@ -299,7 +299,7 @@ export default function ForecastPage({
 
             {/* ── Reforecast alert ─────────────────────────────────────────── */}
             {health.consecutiveHigh >= 8 && (
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, padding:'8px 18px', background:'rgba(248,113,113,0.08)', borderBottom:`1px solid rgba(248,113,113,0.3)`, flexShrink:0 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16, padding:'8px 18px', background:'color-mix(in srgb, var(--danger) 8%, transparent)', borderBottom:`1px solid color-mix(in srgb, var(--danger) 30%, transparent)`, flexShrink:0 }}>
                     <span style={{ fontSize:12, color:C._red }}>⚠ Forecast drift above 5% for {health.consecutiveHigh} consecutive blocks — reforecast recommended.</span>
                     <button className="primary-btn" onClick={onRefresh} style={{ flexShrink:0 }}><Zap size={13}/> Reforecast</button>
                 </div>
@@ -391,7 +391,7 @@ export default function ForecastPage({
 
             {/* ── Quality banners ───────────────────────────────────────────── */}
             {forecastQuality?.degraded && (
-                <div style={{ padding:'5px 18px', background:'rgba(251,191,36,0.07)', borderBottom:`1px solid rgba(251,191,36,0.2)`, fontSize:11, color:C._warn, flexShrink:0, fontFamily:"'IBM Plex Mono',monospace" }}>
+                <div style={{ padding:'5px 18px', background:'color-mix(in srgb, var(--warning) 7%, transparent)', borderBottom:`1px solid color-mix(in srgb, var(--warning) 20%, transparent)`, fontSize:11, color:C._warn, flexShrink:0, fontFamily:"'IBM Plex Mono',monospace" }}>
                     ⚠ Statistical baseline only — AI engine unavailable
                 </div>
             )}
@@ -416,8 +416,8 @@ export default function ForecastPage({
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 16px 0', gap:12 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:16 }}>
                             {[
-                                { label:'Actual',      color:C._accent2 },
-                                { label:'Persistence', color:C._muted   },
+                                { label:'Actual',      color:C._green   },
+                                { label:'Persistence', color:C._accent2 },
                                 { label:'Forecast',    color:C._accent  },
                             ].map(({ label, color }) => (
                                 <span key={label} style={{ display:'flex', alignItems:'center', gap:5, fontSize:10, color:C._muted, fontFamily:"'IBM Plex Mono',monospace" }}>
@@ -435,7 +435,7 @@ export default function ForecastPage({
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 16px 10px', gap:14 }}>
 
                         {/* Tab pill container — same as weather page */}
-                        <div style={{ display:'inline-flex', gap:2, padding:4, background:'#1A191E', border:'1px solid #2A292F', borderRadius:999 }}>
+                        <div style={{ display:'inline-flex', gap:2, padding:4, background:'var(--bg-surface)', border:'1px solid var(--outline)', borderRadius:999 }}>
                             {[
                                 { label:'Live',        active:true,  action:onRefresh },
                                 { label:'Weather',     active:false, action:()=>setOverlay('weather') },
@@ -454,7 +454,7 @@ export default function ForecastPage({
                                         fontWeight:600,
                                         letterSpacing:0.4,
                                         borderRadius:999,
-                                        background: active ? `${C._accent}18` : 'transparent',
+                                        background: active ? `color-mix(in srgb, ${C._accent} 9%, transparent)` : 'transparent',
                                         color: active ? C._accent : C._muted,
                                         transition:'all 0.15s',
                                         whiteSpace:'nowrap',
@@ -499,7 +499,7 @@ export default function ForecastPage({
                                     <span style={{
                                         fontSize:9, fontWeight:700,
                                         padding:'1px 5px', borderRadius:6,
-                                        background: color ? `${color}20` : 'rgba(255,255,255,0.07)',
+                                        background: color ? `color-mix(in srgb, ${color} 13%, transparent)` : 'rgba(var(--overlay-rgb), 0.07)',
                                         color: color || C._muted,
                                     }}>
                                         {count}

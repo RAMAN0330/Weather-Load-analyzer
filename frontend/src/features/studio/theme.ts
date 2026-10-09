@@ -1,5 +1,5 @@
 /**
- * App-wide theme state: Light, Dark (One Dark Pro) or System.
+ * App-wide theme state (every page, incl. login and landing): Light, Dark (One Dark Pro) or System.
  *
  * - `mode` persists to localStorage ('vp-theme'); default 'dark'.
  * - The resolved theme is written to <html> as `data-theme` plus a

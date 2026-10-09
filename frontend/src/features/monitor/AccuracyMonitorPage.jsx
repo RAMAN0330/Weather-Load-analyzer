@@ -12,20 +12,20 @@ const blockTime = (b) => {
 };
 
 const devColor = (ape) => {
-  if (ape == null) return '#3A3D4E';
-  if (ape > 10) return '#EF4444';
-  if (ape > 5) return '#F59E0B';
-  if (ape > 2) return '#34D399';
-  return '#22C55E';
+  if (ape == null) return 'var(--outline-light)';
+  if (ape > 10) return 'var(--danger)';
+  if (ape > 5) return 'var(--warning)';
+  if (ape > 2) return 'color-mix(in srgb, var(--success) 55%, var(--warning))';
+  return 'var(--success)';
 };
 
 const devBg = (ape, isSettled) => {
-  if (!isSettled) return '#2A293066';
-  if (ape == null) return '#2A2930';
-  if (ape > 10) return '#EF444430';
-  if (ape > 5) return '#F59E0B30';
-  if (ape > 2) return '#34D39920';
-  return '#22C55E18';
+  if (!isSettled) return 'color-mix(in srgb, var(--outline) 40%, transparent)';
+  if (ape == null) return 'var(--outline)';
+  if (ape > 10) return 'color-mix(in srgb, var(--danger) 19%, transparent)';
+  if (ape > 5) return 'color-mix(in srgb, var(--warning) 19%, transparent)';
+  if (ape > 2) return 'color-mix(in srgb, var(--success) 13%, transparent)';
+  return 'color-mix(in srgb, var(--success) 9%, transparent)';
 };
 
 export default function AccuracyMonitorPage({
@@ -128,11 +128,11 @@ export default function AccuracyMonitorPage({
   const worst3 = accuracyData?.worst_3_blocks || [];
 
   const statusColor = currentMape == null
-    ? '#8A90A6'
-    : currentMape < 2 ? '#22C55E'
-    : currentMape < 4 ? '#34D399'
-    : currentMape < 6 ? '#F59E0B'
-    : '#EF4444';
+    ? 'var(--text-muted)'
+    : currentMape < 2 ? 'var(--success)'
+    : currentMape < 4 ? 'color-mix(in srgb, var(--success) 55%, var(--warning))'
+    : currentMape < 6 ? 'var(--warning)'
+    : 'var(--danger)';
 
   const statusLabel = currentMape == null
     ? 'NO DATA'
@@ -228,7 +228,7 @@ export default function AccuracyMonitorPage({
         {worst3[0] && (
           <div className="am-kpi">
             <span className="am-kpi__label">Worst Block</span>
-            <span className="am-kpi__value" style={{ color: '#EF4444' }}>
+            <span className="am-kpi__value" style={{ color: 'var(--danger)' }}>
               B{worst3[0].block} ({worst3[0].ape?.toFixed(1)}%)
             </span>
           </div>
@@ -248,7 +248,7 @@ export default function AccuracyMonitorPage({
             <span className="am-block__num">{block}</span>
             <span
               className="am-block__dot"
-              style={{ background: isSettled ? devColor(ape) : '#3A3D4E' }}
+              style={{ background: isSettled ? devColor(ape) : 'var(--outline-light)' }}
             />
             {ape != null && (
               <span className="am-block__ape" style={{ color: devColor(ape) }}>
@@ -262,13 +262,13 @@ export default function AccuracyMonitorPage({
       {/* Legend */}
       <div className="am-legend">
         <span>APE %:</span>
-        {[['≤2%', '#22C55E'], ['2–5%', '#34D399'], ['5–10%', '#F59E0B'], ['>10%', '#EF4444']].map(([label, color]) => (
+        {[['≤2%', 'var(--success)'], ['2–5%', 'color-mix(in srgb, var(--success) 55%, var(--warning))'], ['5–10%', 'var(--warning)'], ['>10%', 'var(--danger)']].map(([label, color]) => (
           <span key={label} className="am-legend__item">
             <span style={{ width: 10, height: 10, borderRadius: 2, background: color, display: 'inline-block', marginRight: 4 }} />
             {label}
           </span>
         ))}
-        <span className="am-legend__item"><span style={{ width: 10, height: 10, borderRadius: 2, background: '#3A3D4E', display: 'inline-block', marginRight: 4 }} /> Forecast (unsettled)</span>
+        <span className="am-legend__item"><span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--outline-light)', display: 'inline-block', marginRight: 4 }} /> Forecast (unsettled)</span>
       </div>
 
       {/* Worst blocks table */}

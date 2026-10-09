@@ -4,6 +4,7 @@ import {
   PageShell as VpPageShell,
   EmptyState as VpEmptyState,
 } from '../../components/page/PagePrimitives.jsx';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 
 /* ─── Spearman ─── */
 function computeSpearmanRho(xArr, yArr) {
@@ -44,12 +45,12 @@ function computeSpearmanRho(xArr, yArr) {
 
 /* ─── TOD Definitions ─── */
 const TOD_DEFS = [
-  { name: 'Off-Peak Night', start: 0, end: 23, color: '#7B8CDE' },
-  { name: 'Morning Ramp', start: 24, end: 35, color: '#F09844' },
-  { name: 'Morning Peak', start: 36, end: 47, color: '#F87171' },
-  { name: 'Afternoon Shoulder', start: 48, end: 67, color: '#FBBF24' },
-  { name: 'Evening Peak', start: 68, end: 83, color: '#C084FC' },
-  { name: 'Late Shoulder', start: 84, end: 95, color: '#34D399' },
+  { name: 'Off-Peak Night', start: 0, end: 23, color: 'var(--info)', tk: 'info' },
+  { name: 'Morning Ramp', start: 24, end: 35, color: 'var(--tone-warm)', tk: 'warm' },
+  { name: 'Morning Peak', start: 36, end: 47, color: 'var(--danger)', tk: 'danger' },
+  { name: 'Afternoon Shoulder', start: 48, end: 67, color: 'var(--warning)', tk: 'warning' },
+  { name: 'Evening Peak', start: 68, end: 83, color: 'var(--accent2)', tk: 'accent2' },
+  { name: 'Late Shoulder', start: 84, end: 95, color: 'var(--success)', tk: 'success' },
 ];
 
 function getTod(idx) {
@@ -72,7 +73,7 @@ const fmt = (v, d = 0) =>
 const S = {
   page: {
     fontFamily: "'IBM Plex Mono', monospace",
-    color: '#ECEEF3',
+    color: 'var(--text)',
     minHeight: 0,
     height: '100%',
     overflow: 'hidden',
@@ -90,53 +91,53 @@ const S = {
   kpi: (accent) => ({
     minHeight: 132,
     padding: '16px 18px',
-    background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+    background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.98))',
     borderRadius: 14,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     position: 'relative',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'space-between',
     gap: 8,
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.18)',
     ...(accent
-      ? { boxShadow: `inset 0 0 0 1px ${accent}22, 0 18px 40px rgba(0, 0, 0, 0.18)` }
+      ? { boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accent} 13%, transparent), 0 18px 40px rgba(var(--shadow-rgb), 0.18)` }
       : {}),
   }),
   kpiLabel: {
     fontSize: 11,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    color: '#8A90A6',
+    color: 'var(--text-muted)',
     marginBottom: 4,
   },
-  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || '#F0F2F8', lineHeight: 1.08 }),
-  kpiUnit: { fontSize: 12, fontWeight: 500, color: '#8A90A6' },
-  kpiSub: { fontSize: 11, color: '#8A90A6', marginTop: 3, lineHeight: 1.45 },
+  kpiVal: (c) => ({ fontSize: 30, fontWeight: 700, color: c || 'var(--text)', lineHeight: 1.08 }),
+  kpiUnit: { fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' },
+  kpiSub: { fontSize: 11, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.45 },
   kpiSpark: { position: 'absolute', bottom: 8, right: 12, opacity: 0.25 },
   workspace: {
     margin: '10px 16px 16px',
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.96))',
     borderRadius: 16,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    boxShadow: '0 18px 40px rgba(var(--shadow-rgb), 0.18)',
     flex: 1,
     minHeight: 0,
   },
   workspaceHeader: {
     padding: '18px 20px 14px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
   },
   tabBar: {
     display: 'inline-flex',
     gap: 4,
     padding: 5,
-    background: '#141419',
-    border: '1px solid #2A292F',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 999,
     flexWrap: 'wrap',
   },
@@ -150,8 +151,8 @@ const S = {
     border: '1px solid transparent',
     fontFamily: 'inherit',
     borderRadius: 999,
-    background: active ? '#F0782518' : 'transparent',
-    color: active ? '#F07825' : '#B8BDCC',
+    background: active ? 'rgba(var(--accent-rgb), 0.09)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
     transition: 'all 0.15s',
   }),
   pill: (active) => ({
@@ -160,9 +161,9 @@ const S = {
     borderRadius: 999,
     cursor: 'pointer',
     fontFamily: 'inherit',
-    border: `1px solid ${active ? '#F07825' : '#2A292F'}`,
-    background: active ? '#F0782518' : '#1A191E',
-    color: active ? '#F07825' : '#8A90A6',
+    border: `1px solid ${active ? 'var(--accent)' : 'var(--outline)'}`,
+    background: active ? 'rgba(var(--accent-rgb), 0.09)' : 'var(--bg-panel)',
+    color: active ? 'var(--accent)' : 'var(--text-muted)',
     textTransform: 'capitalize',
   }),
   badge: (color) => ({
@@ -170,18 +171,18 @@ const S = {
     fontWeight: 700,
     padding: '5px 10px',
     borderRadius: 999,
-    background: `${color}18`,
+    background: `color-mix(in srgb, ${color} 9%, transparent)`,
     color,
-    border: `1px solid ${color}33`,
+    border: `1px solid color-mix(in srgb, ${color} 20%, transparent)`,
   }),
   actionBtn: {
     fontSize: 12,
     fontWeight: 700,
     padding: '8px 14px',
     borderRadius: 999,
-    border: '1px solid #2A292F',
-    background: '#1A191E',
-    color: '#F0F2F8',
+    border: '1px solid var(--outline)',
+    background: 'var(--bg-panel)',
+    color: 'var(--text)',
     cursor: 'pointer',
     fontFamily: 'inherit',
   },
@@ -196,16 +197,16 @@ const S = {
     overflow: 'hidden',
   },
   card: {
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
+    background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.96))',
     borderRadius: 14,
-    border: '1px solid #2A292F',
+    border: '1px solid var(--outline)',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
   },
   cardHeader: {
     padding: '14px 16px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -217,7 +218,7 @@ const S = {
     fontWeight: 700,
     letterSpacing: 0.7,
     textTransform: 'uppercase',
-    color: '#B8BDCC',
+    color: 'var(--text-secondary)',
   },
   weatherGrid: {
     display: 'grid',
@@ -227,35 +228,35 @@ const S = {
   },
   th: {
     fontSize: 11,
-    color: '#8A90A6',
+    color: 'var(--text-muted)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     padding: '8px 10px',
-    borderBottom: '1px solid #2A292F',
+    borderBottom: '1px solid var(--outline)',
     textAlign: 'left',
     fontWeight: 600,
   },
-  td: { fontSize: 12, padding: '6px 10px', borderBottom: '1px solid #2A292F22', color: '#F0F2F8' },
-  miniLabel: { fontSize: 11, color: '#8A90A6', letterSpacing: 0.6, textTransform: 'uppercase' },
+  td: { fontSize: 12, padding: '6px 10px', borderBottom: '1px solid color-mix(in srgb, var(--outline) 60%, transparent)', color: 'var(--text)' },
+  miniLabel: { fontSize: 11, color: 'var(--text-muted)', letterSpacing: 0.6, textTransform: 'uppercase' },
 };
 
 /* ─── ECharts base ─── */
-const ecBase = () => ({
+const ecBase = (ct) => ({
   animation: false,
   backgroundColor: 'transparent',
-  textStyle: { color: '#B8BDCC', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 },
+  textStyle: { color: ct.textSecondary, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 },
   grid: { top: 36, right: 20, bottom: 32, left: 50, containLabel: false },
   tooltip: {
     trigger: 'axis',
-    backgroundColor: 'rgba(22,22,27,0.96)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: ct.elevated,
+    borderColor: ct.outline,
     borderWidth: 1,
-    textStyle: { color: '#f0f2f8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
-    extraCssText: 'box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-radius: 8px; padding: 8px 12px;',
+    textStyle: { color: ct.text, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
+    extraCssText: 'box-shadow: 0 8px 24px rgba(var(--shadow-rgb), 0.4); border-radius: 8px; padding: 8px 12px;',
     confine: true,
   },
   legend: {
-    textStyle: { color: '#B8BDCC', fontSize: 12 },
+    textStyle: { color: ct.textSecondary, fontSize: 12 },
     top: 4,
     right: 8,
     itemWidth: 12,
@@ -263,20 +264,21 @@ const ecBase = () => ({
   },
   xAxis: {
     type: 'category',
-    axisLine: { lineStyle: { color: '#2A292F' } },
-    axisLabel: { color: '#8A90A6', fontSize: 11 },
+    axisLine: { lineStyle: { color: ct.outline } },
+    axisLabel: { color: ct.textMuted, fontSize: 11 },
     splitLine: { show: false },
   },
   yAxis: {
     type: 'value',
     axisLine: { show: false },
-    axisLabel: { color: '#8A90A6', fontSize: 11 },
-    splitLine: { lineStyle: { color: '#2A292F', type: 'dashed', opacity: 0.3 } },
+    axisLabel: { color: ct.textMuted, fontSize: 11 },
+    splitLine: { lineStyle: { color: ct.outline, type: 'dashed', opacity: 0.6 } },
   },
 });
 
 /* ─── Sparkline SVG ─── */
-function Sparkline({ data, color = '#F07825', w = 60, h = 22 }) {
+function Sparkline({ data, color, w = 60, h = 22 }) {
+  const ct = useChartTokens();
   if (!data || data.length < 2) return null;
   const max = Math.max(...data),
     min = Math.min(...data),
@@ -286,7 +288,7 @@ function Sparkline({ data, color = '#F07825', w = 60, h = 22 }) {
     .join(' ');
   return (
     <svg width={w} height={h}>
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" />
+      <polyline points={pts} fill="none" stroke={color || ct.accent} strokeWidth="1.5" />
     </svg>
   );
 }
@@ -296,11 +298,12 @@ function LoadFactorRing({ value, size = 72 }) {
   const pct = Math.min(100, Math.max(0, value));
   const r = (size - 8) / 2,
     circ = 2 * Math.PI * r;
-  const color = pct >= 75 ? '#34D399' : pct >= 60 ? '#FBBF24' : '#F87171';
+  const ct = useChartTokens();
+  const color = pct >= 75 ? ct.success : pct >= 60 ? ct.warning : ct.danger;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <svg width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#2A292F" strokeWidth="5" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={ct.outline} strokeWidth="5" />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -318,7 +321,7 @@ function LoadFactorRing({ value, size = 72 }) {
           x={size / 2}
           y={size / 2 + 5}
           textAnchor="middle"
-          fill="#fff"
+          fill={ct.text}
           fontSize="14"
           fontWeight="700"
           fontFamily="'IBM Plex Mono',monospace"
@@ -328,7 +331,7 @@ function LoadFactorRing({ value, size = 72 }) {
       </svg>
       <div>
         <div
-          style={{ fontSize: 11, color: '#8A90A6', textTransform: 'uppercase', letterSpacing: 0.5 }}
+          style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}
         >
           Load Factor
         </div>
@@ -339,19 +342,20 @@ function LoadFactorRing({ value, size = 72 }) {
 
 /* ─── Weather Icon ─── */
 function WeatherIcon({ condition, size = 36 }) {
+  const ct = useChartTokens();
   const s = size;
   if (condition === 'Heavy Rain')
     return (
       <svg width={s} height={s} viewBox="0 0 36 36">
-        <circle cx="18" cy="14" r="8" fill="#636e72" opacity="0.7" />
-        <circle cx="12" cy="12" r="6" fill="#636e72" opacity="0.8" />
-        <circle cx="24" cy="13" r="5" fill="#636e72" opacity="0.6" />
+        <circle cx="18" cy="14" r="8" fill={ct.textMuted} opacity="0.7" />
+        <circle cx="12" cy="12" r="6" fill={ct.textMuted} opacity="0.8" />
+        <circle cx="24" cy="13" r="5" fill={ct.textMuted} opacity="0.6" />
         <line
           x1="12"
           y1="24"
           x2="10"
           y2="30"
-          stroke="#45b7d1"
+          stroke={ct.info}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -360,7 +364,7 @@ function WeatherIcon({ condition, size = 36 }) {
           y1="24"
           x2="16"
           y2="30"
-          stroke="#45b7d1"
+          stroke={ct.info}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -369,7 +373,7 @@ function WeatherIcon({ condition, size = 36 }) {
           y1="24"
           x2="22"
           y2="30"
-          stroke="#45b7d1"
+          stroke={ct.info}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -378,15 +382,15 @@ function WeatherIcon({ condition, size = 36 }) {
   if (condition === 'Rainy')
     return (
       <svg width={s} height={s} viewBox="0 0 36 36">
-        <circle cx="18" cy="14" r="8" fill="#636e72" opacity="0.6" />
-        <circle cx="12" cy="12" r="6" fill="#636e72" opacity="0.7" />
-        <circle cx="24" cy="13" r="5" fill="#636e72" opacity="0.5" />
+        <circle cx="18" cy="14" r="8" fill={ct.textMuted} opacity="0.6" />
+        <circle cx="12" cy="12" r="6" fill={ct.textMuted} opacity="0.7" />
+        <circle cx="24" cy="13" r="5" fill={ct.textMuted} opacity="0.5" />
         <line
           x1="14"
           y1="24"
           x2="13"
           y2="29"
-          stroke="#45b7d1"
+          stroke={ct.info}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -395,7 +399,7 @@ function WeatherIcon({ condition, size = 36 }) {
           y1="24"
           x2="21"
           y2="29"
-          stroke="#45b7d1"
+          stroke={ct.info}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -404,24 +408,24 @@ function WeatherIcon({ condition, size = 36 }) {
   if (condition === 'Cloudy')
     return (
       <svg width={s} height={s} viewBox="0 0 36 36">
-        <circle cx="18" cy="16" r="9" fill="#636e72" opacity="0.6" />
-        <circle cx="11" cy="14" r="7" fill="#636e72" opacity="0.7" />
-        <circle cx="25" cy="15" r="6" fill="#636e72" opacity="0.5" />
+        <circle cx="18" cy="16" r="9" fill={ct.textMuted} opacity="0.6" />
+        <circle cx="11" cy="14" r="7" fill={ct.textMuted} opacity="0.7" />
+        <circle cx="25" cy="15" r="6" fill={ct.textMuted} opacity="0.5" />
       </svg>
     );
   if (condition === 'Partly Cloudy')
     return (
       <svg width={s} height={s} viewBox="0 0 36 36">
-        <circle cx="14" cy="14" r="8" fill="#FBBF24" opacity="0.8" />
-        <circle cx="22" cy="18" r="7" fill="#636e72" opacity="0.6" />
-        <circle cx="16" cy="17" r="5" fill="#636e72" opacity="0.7" />
-        <circle cx="27" cy="19" r="4" fill="#636e72" opacity="0.5" />
+        <circle cx="14" cy="14" r="8" fill={ct.warning} opacity="0.8" />
+        <circle cx="22" cy="18" r="7" fill={ct.textMuted} opacity="0.6" />
+        <circle cx="16" cy="17" r="5" fill={ct.textMuted} opacity="0.7" />
+        <circle cx="27" cy="19" r="4" fill={ct.textMuted} opacity="0.5" />
       </svg>
     );
   // Clear / default — sun
   return (
     <svg width={s} height={s} viewBox="0 0 36 36">
-      <circle cx="18" cy="18" r="7" fill="#FBBF24" opacity="0.9" />
+      <circle cx="18" cy="18" r="7" fill={ct.warning} opacity="0.9" />
       {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
         <line
           key={a}
@@ -429,7 +433,7 @@ function WeatherIcon({ condition, size = 36 }) {
           y1={18 + 10 * Math.sin((a * Math.PI) / 180)}
           x2={18 + 13 * Math.cos((a * Math.PI) / 180)}
           y2={18 + 13 * Math.sin((a * Math.PI) / 180)}
-          stroke="#FBBF24"
+          stroke={ct.warning}
           strokeWidth="1.5"
           strokeLinecap="round"
         />
@@ -442,7 +446,8 @@ function WeatherIcon({ condition, size = 36 }) {
 function ArcGauge({ value, sublabel, size = 90 }) {
   const pct = Math.max(0, Math.min(1, (value + 1) / 2));
   const abs = Math.abs(value);
-  const color = abs > 0.6 ? '#34D399' : abs > 0.3 ? '#FBBF24' : '#F87171';
+  const ct = useChartTokens();
+  const color = abs > 0.6 ? ct.success : abs > 0.3 ? ct.warning : ct.danger;
   const strength = abs > 0.7 ? 'Strong' : abs > 0.4 ? 'Moderate' : abs > 0.2 ? 'Weak' : 'Very Weak';
   const dir = value > 0.05 ? 'Positive' : value < -0.05 ? 'Negative' : 'None';
   const cx = size / 2,
@@ -464,7 +469,7 @@ function ArcGauge({ value, sublabel, size = 90 }) {
         <div
           style={{
             fontSize: 7,
-            color: '#6B7186',
+            color: 'var(--text-muted)',
             letterSpacing: 1,
             textTransform: 'uppercase',
             marginBottom: 1,
@@ -477,7 +482,7 @@ function ArcGauge({ value, sublabel, size = 90 }) {
         <path
           d={arc(Math.PI, 0)}
           fill="none"
-          stroke="rgba(255,255,255,0.06)"
+          stroke={ct.outline}
           strokeWidth="5"
           strokeLinecap="round"
         />
@@ -490,12 +495,12 @@ function ArcGauge({ value, sublabel, size = 90 }) {
           opacity="0.85"
         />
         <circle cx={nx} cy={ny} r="4" fill={color} />
-        <circle cx={nx} cy={ny} r="1.5" fill="#fff" />
+        <circle cx={nx} cy={ny} r="1.5" fill={ct.panel} />
         <text
           x={cx}
           y={cy + 2}
           textAnchor="middle"
-          fill="#fff"
+          fill={ct.text}
           fontSize="12"
           fontWeight="700"
           fontFamily="'IBM Plex Mono',monospace"
@@ -515,7 +520,7 @@ const KpiCard = ({
   title,
   value,
   unit,
-  tone = '#ECEEF3',
+  tone = 'var(--text)',
   detail,
   footer,
   sparkline,
@@ -528,7 +533,7 @@ const KpiCard = ({
       gap: 8,
       minHeight: 132,
       justifyContent: 'space-between',
-      background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
+      background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.98))',
       position: 'relative',
       overflow: 'hidden',
     }}
@@ -544,19 +549,19 @@ const KpiCard = ({
     ) : (
       <>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#A0A5B8', marginBottom: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
             {title}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 30, lineHeight: 1, fontWeight: 700, color: tone }}>
               {value}
             </span>
-            {unit ? <span style={{ fontSize: 11, color: '#6B7186' }}>{unit}</span> : null}
+            {unit ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{unit}</span> : null}
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {detail ? <div style={{ fontSize: 12, color: '#F0F2F8' }}>{detail}</div> : null}
-          {footer ? <div style={{ fontSize: 11, color: '#8A90A6' }}>{footer}</div> : null}
+          {detail ? <div style={{ fontSize: 12, color: 'var(--text)' }}>{detail}</div> : null}
+          {footer ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{footer}</div> : null}
         </div>
       </>
     )}
@@ -610,6 +615,7 @@ export default function AnalysisPage({
   const [chartTab, setChartTab] = useState('load_curve');
   const [weatherOverlay, setWeatherOverlay] = useState('temperature');
   const [activePanel, setActivePanel] = useState(null);
+  const ct = useChartTokens();
   // Pipeline DB state
 
   useEffect(() => {
@@ -670,12 +676,12 @@ export default function AnalysisPage({
   const healthPct = regionCapacity && peakLoad > 0 ? (peakLoad / regionCapacity) * 100 : null;
   const healthBadge =
     healthPct == null
-      ? { l: 'N/A', c: '#6B7186' }
+      ? { l: 'N/A', c: 'var(--text-muted)' }
       : healthPct > 85
-        ? { l: 'RED', c: '#F87171' }
+        ? { l: 'RED', c: 'var(--danger)' }
         : healthPct > 70
-          ? { l: 'AMBER', c: '#FBBF24' }
-          : { l: 'GREEN', c: '#34D399' };
+          ? { l: 'AMBER', c: 'var(--warning)' }
+          : { l: 'GREEN', c: 'var(--success)' };
 
   // Advanced statistics
   const sortedLoads = useMemo(() => [...loads].filter((v) => v > 0).sort((a, b) => a - b), [loads]);
@@ -743,10 +749,10 @@ export default function AnalysisPage({
   const rhoRain = rhoPrecip; // precipitation and rain share the same series
   const strongestWeatherSignal = useMemo(() => {
     const signals = [
-      { label: 'Temperature', value: rhoTemp, color: '#F07825' },
-      { label: 'Humidity', value: rhoHum, color: '#45b7d1' },
-      { label: 'Cloud', value: rhoCloud, color: '#636e72' },
-      { label: 'Precip', value: rhoPrecip, color: '#C084FC' },
+      { label: 'Temperature', value: rhoTemp, color: 'var(--tone-warm)' },
+      { label: 'Humidity', value: rhoHum, color: 'var(--info)' },
+      { label: 'Cloud', value: rhoCloud, color: 'var(--text-dim)' },
+      { label: 'Precip', value: rhoPrecip, color: 'var(--accent2)' },
     ];
     return signals.sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0];
   }, [rhoTemp, rhoHum, rhoCloud, rhoPrecip]);
@@ -767,10 +773,10 @@ export default function AnalysisPage({
   }, [temps, hums, precips, clouds, rhoTemp, rhoHum, rhoPrecip, rhoCloud]);
   const correlationHighlights = useMemo(() => {
     const loadLinks = [
-      { label: 'Temperature', value: rhoTemp, color: '#F07825' },
-      { label: 'Humidity', value: rhoHum, color: '#45b7d1' },
-      { label: 'Precipitation', value: rhoPrecip, color: '#C084FC' },
-      { label: 'Cloud', value: rhoCloud, color: '#7B8CDE' },
+      { label: 'Temperature', value: rhoTemp, color: 'var(--tone-warm)' },
+      { label: 'Humidity', value: rhoHum, color: 'var(--info)' },
+      { label: 'Precipitation', value: rhoPrecip, color: 'var(--accent2)' },
+      { label: 'Cloud', value: rhoCloud, color: 'var(--accent)' },
     ];
     const strongestPositive =
       loadLinks.filter((item) => item.value > 0).sort((a, b) => b.value - a.value)[0] ||
@@ -900,10 +906,10 @@ export default function AnalysisPage({
       {
         name: t.name,
         xAxis: blockToTime(t.start),
-        itemStyle: { color: `${t.color}10` },
+        itemStyle: { color: withAlpha(ct[t.tk], 0.06) },
         label: {
           show: true,
-          color: '#F07825',
+          color: ct.accent,
           fontSize: 10,
           fontWeight: 600,
           fontFamily: "'IBM Plex Mono', monospace",
@@ -913,18 +919,18 @@ export default function AnalysisPage({
       { xAxis: blockToTime(t.end) },
     ]);
     return {
-      ...ecBase(),
+      ...ecBase(ct),
       legend: {
-        ...ecBase().legend,
+        ...ecBase(ct).legend,
         data: ['Today', 'Yesterday'],
         formatter: (n) => (n === 'Today' ? 'Solid: Today' : 'Dashed: Yesterday'),
       },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: 'MW' },
+      yAxis: { ...ecBase(ct).yAxis, name: 'MW' },
       series: [
         {
           name: 'Today',
@@ -932,8 +938,8 @@ export default function AnalysisPage({
           data: loads,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 2.5, color: '#F07825' },
-          itemStyle: { color: '#F07825' },
+          lineStyle: { width: 2.5, color: ct.accent },
+          itemStyle: { color: ct.accent },
           areaStyle: {
             color: {
               type: 'linear',
@@ -942,7 +948,7 @@ export default function AnalysisPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: '#F0782520' },
+                { offset: 0, color: withAlpha(ct.accent, 0.13) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -956,17 +962,17 @@ export default function AnalysisPage({
                   formatter: (p) => `${fmt(p.value)} MW`,
                   fontSize: 12,
                   fontWeight: 700,
-                  color: '#F07825',
+                  color: ct.accent,
                 },
               },
               {
                 type: 'min',
                 symbolSize: 28,
-                label: { formatter: (p) => `${fmt(p.value)} MW`, fontSize: 12, color: '#34D399' },
-                itemStyle: { color: '#34D399' },
+                label: { formatter: (p) => `${fmt(p.value)} MW`, fontSize: 12, color: ct.success },
+                itemStyle: { color: ct.success },
               },
             ],
-            itemStyle: { color: '#F07825' },
+            itemStyle: { color: ct.accent },
           },
           markArea: { silent: true, data: todAreas },
           markLine: {
@@ -975,8 +981,8 @@ export default function AnalysisPage({
             data: [
               {
                 xAxis: blockToTime(currentBlock),
-                lineStyle: { color: '#F87171', type: 'dashed', width: 1.5 },
-                label: { formatter: 'NOW', fontSize: 12, color: '#F87171' },
+                lineStyle: { color: ct.danger, type: 'dashed', width: 1.5 },
+                label: { formatter: 'NOW', fontSize: 12, color: ct.danger },
               },
             ],
           },
@@ -987,8 +993,8 @@ export default function AnalysisPage({
           data: yLoads,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 1.5, color: '#ECEEF330', type: 'dashed' },
-          itemStyle: { color: '#ECEEF330' },
+          lineStyle: { width: 1.5, color: withAlpha(ct.accent2, 0.75), type: 'dashed' },
+          itemStyle: { color: withAlpha(ct.accent2, 0.75) },
         },
       ],
     };
@@ -996,33 +1002,33 @@ export default function AnalysisPage({
 
   const weatherOverlayOption = () => {
     const map = {
-      temperature: { d: temps, c: '#F07825', u: '°C' },
-      humidity: { d: hums, c: '#45b7d1', u: '%' },
-      cloud: { d: clouds, c: '#636e72', u: '%' },
-      precipitation: { d: precips, c: '#C084FC', u: 'mm' },
+      temperature: { d: temps, c: ct.warm, u: '°C' },
+      humidity: { d: hums, c: ct.success, u: '%' },
+      cloud: { d: clouds, c: ct.textMuted, u: '%' },
+      precipitation: { d: precips, c: ct.accent2, u: 'mm' },
     };
     const ov = map[weatherOverlay] || map.temperature;
     const rho = computeSpearmanRho(ov.d, loads);
     return {
-      ...ecBase(),
+      ...ecBase(ct),
       title: {
         text: `ρ = ${rho.toFixed(2)}`,
         right: 12,
         top: 6,
         textStyle: {
-          color: Math.abs(rho) > 0.5 ? '#34D399' : '#FBBF24',
+          color: Math.abs(rho) > 0.5 ? ct.success : ct.warning,
           fontSize: 12,
           fontWeight: 700,
         },
       },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(ct).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 11 },
       },
       yAxis: [
-        { ...ecBase().yAxis, name: ov.u },
-        { ...ecBase().yAxis, name: 'MW', position: 'right' },
+        { ...ecBase(ct).yAxis, name: ov.u },
+        { ...ecBase(ct).yAxis, name: 'MW', position: 'right' },
       ],
       series: [
         {
@@ -1041,7 +1047,7 @@ export default function AnalysisPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: `${ov.c}18` },
+                { offset: 0, color: withAlpha(ov.c, 0.09) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -1054,8 +1060,8 @@ export default function AnalysisPage({
           data: loads,
           smooth: true,
           symbol: 'none',
-          lineStyle: { width: 2, color: '#F07825' },
-          itemStyle: { color: '#F07825' },
+          lineStyle: { width: 2, color: ct.accent },
+          itemStyle: { color: ct.accent },
         },
       ],
     };
@@ -1064,7 +1070,7 @@ export default function AnalysisPage({
   const loadDistOption = () => {
     const binSize = 200;
     const valid = loads.filter((v) => v > 0);
-    if (!valid.length) return ecBase();
+    if (!valid.length) return ecBase(ct);
     const lo = Math.floor(Math.min(...valid) / binSize) * binSize;
     const hi = Math.ceil(Math.max(...valid) / binSize) * binSize;
     const bins = [];
@@ -1074,15 +1080,15 @@ export default function AnalysisPage({
         c: valid.filter((v) => v >= b && v < b + binSize).length,
       });
     return {
-      ...ecBase(),
-      xAxis: { ...ecBase().xAxis, data: bins.map((b) => b.r) },
-      yAxis: { ...ecBase().yAxis, name: 'Blocks' },
+      ...ecBase(ct),
+      xAxis: { ...ecBase(ct).xAxis, data: bins.map((b) => b.r) },
+      yAxis: { ...ecBase(ct).yAxis, name: 'Blocks' },
       series: [
         {
           type: 'bar',
           data: bins.map((b) => ({
             value: b.c,
-            itemStyle: { color: '#F07825', borderRadius: [3, 3, 0, 0] },
+            itemStyle: { color: ct.accent, borderRadius: [3, 3, 0, 0] },
           })),
           barMaxWidth: 24,
         },
@@ -1091,20 +1097,20 @@ export default function AnalysisPage({
   };
 
   const rampOption = () => ({
-    ...ecBase(),
+    ...ecBase(ct),
     xAxis: {
-      ...ecBase().xAxis,
+      ...ecBase(ct).xAxis,
       data: timeLabels.slice(1),
-      axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+      axisLabel: { ...ecBase(ct).xAxis.axisLabel, interval: 11 },
     },
-    yAxis: { ...ecBase().yAxis, name: 'MW/15m' },
+    yAxis: { ...ecBase(ct).yAxis, name: 'MW/15m' },
     series: [
       {
         type: 'bar',
         data: ramps.map((v) => ({
           value: v,
           itemStyle: {
-            color: v > 100 ? '#F87171' : v > 50 ? '#FBBF24' : '#F0782588',
+            color: v > 100 ? ct.danger : v > 50 ? ct.warning : withAlpha(ct.accent, 0.53),
             borderRadius: [2, 2, 0, 0],
           },
         })),
@@ -1140,7 +1146,7 @@ export default function AnalysisPage({
               title="Day Energy"
               value={fmt(dayEnergy, 0)}
               unit="MWh"
-              tone="#F07825"
+              tone="var(--accent)"
               detail={`${dayEnergy - yEnergy >= 0 ? '▲' : '▼'} ${fmt(Math.abs(dayEnergy - yEnergy), 0)} MWh vs yesterday`}
               footer="Total 24h consumption"
               sparkline={<Sparkline data={loads.filter((_, i) => i % 4 === 0)} />}
@@ -1150,7 +1156,7 @@ export default function AnalysisPage({
               title="Peak Demand"
               value={fmt(peakLoad)}
               unit="MW"
-              tone="#F87171"
+              tone="var(--danger)"
               detail={`Observed at ${blockToTime(peakIdx)}`}
               footer={healthPct != null ? `${healthPct.toFixed(1)}% of system capacity` : 'System capacity not configured'}
             />
@@ -1159,7 +1165,7 @@ export default function AnalysisPage({
               title="Min Demand"
               value={fmt(minLoad)}
               unit="MW"
-              tone="#34D399"
+              tone="var(--success)"
               detail={`Observed at ${blockToTime(minIdx)}`}
               footer="Structural baseload reference"
             />
@@ -1169,7 +1175,7 @@ export default function AnalysisPage({
               title="IQR Spread"
               value={fmt(iqrLoad, 0)}
               unit="MW"
-              tone="#ECEEF3"
+              tone="var(--text)"
               detail={`Median ${fmt(medianLoad, 0)} MW`}
               footer="Interquartile range"
             />
@@ -1178,7 +1184,7 @@ export default function AnalysisPage({
                 eyebrow="Stats Profile"
                 title="Kurtosis"
                 value={kurtosis.toFixed(2)}
-                tone={kurtosis > 3 ? '#FBBF24' : '#ECEEF3'}
+                tone={kurtosis > 3 ? 'var(--warning)' : 'var(--text)'}
                 detail={kurtosis > 3 ? 'Fat-tailed — error spikes likely' : 'Normal distribution'}
                 footer="Tailedness of load profile"
               />
@@ -1227,20 +1233,20 @@ export default function AnalysisPage({
                   </button>
                 ))}
               <span style={S.badge(currentTod.color)}>{currentTod.name}</span>
-              <span style={S.badge('#5B9FE4')}>{shiftLabel}</span>
-              <span style={S.badge('#F07825')}>{timeLeft} left</span>
+              <span style={S.badge('var(--accent)')}>{shiftLabel}</span>
+              <span style={S.badge('var(--tone-warm)')}>{timeLeft} left</span>
               {[
                 {
                   label: 'Weather',
                   sub: 'Temp · Humidity · Cloud',
                   panel: 'weather',
-                  color: '#5B9FE4',
+                  color: 'var(--accent)',
                 },
                 {
                   label: 'Correlations',
                   sub: 'Spearman · Load vs Weather',
                   panel: 'correlations',
-                  color: '#34D399',
+                  color: 'var(--success)',
                 },
                 ...(anomalies.length > 0
                   ? [
@@ -1248,7 +1254,7 @@ export default function AnalysisPage({
                         label: 'Anomalies',
                         sub: `${anomalies.length} detected`,
                         panel: 'anomalies',
-                        color: '#F87171',
+                        color: 'var(--danger)',
                       },
                     ]
                   : []),
@@ -1265,9 +1271,9 @@ export default function AnalysisPage({
                     minWidth: 172,
                     padding: '12px 16px',
                     borderRadius: 14,
-                    border: `1px solid ${activePanel === panel ? `${color}66` : '#2A292F'}`,
-                    background: activePanel === panel ? `${color}18` : 'rgba(255,255,255,0.02)',
-                    color: activePanel === panel ? color : '#ECEEF3',
+                    border: `1px solid ${activePanel === panel ? `color-mix(in srgb, ${color} 40%, transparent)` : 'var(--outline)'}`,
+                    background: activePanel === panel ? `color-mix(in srgb, ${color} 9%, transparent)` : 'rgba(var(--overlay-rgb), 0.02)',
+                    color: activePanel === panel ? color : 'var(--text)',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     textAlign: 'left',
@@ -1279,7 +1285,7 @@ export default function AnalysisPage({
                       fontSize: 11,
                       letterSpacing: 0.5,
                       textTransform: 'uppercase',
-                      color: activePanel === panel ? color : '#8A90A6',
+                      color: activePanel === panel ? color : 'var(--text-muted)',
                     }}
                   >
                     Quick panel
@@ -1288,7 +1294,7 @@ export default function AnalysisPage({
                   <span
                     style={{
                       fontSize: 12,
-                      color: activePanel === panel ? `${color}cc` : '#8A90A6',
+                      color: activePanel === panel ? `color-mix(in srgb, ${color} 80%, transparent)` : 'var(--text-muted)',
                     }}
                   >
                     {sub}
@@ -1306,7 +1312,7 @@ export default function AnalysisPage({
                   <div>
                     <div style={S.cardTitle}>Analysis Curve</div>
                   </div>
-                  <div style={{ fontSize: 10, color: '#A0A5B8' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
                     Solid: Today | Dashed: Yesterday
                   </div>
                 </div>
@@ -1354,7 +1360,7 @@ export default function AnalysisPage({
                           return (
                             <tr
                               key={t.name}
-                              style={{ background: isCur ? '#F0782508' : 'transparent' }}
+                              style={{ background: isCur ? 'rgba(var(--accent-rgb), 0.03)' : 'transparent' }}
                             >
                               <td
                                 style={{
@@ -1375,7 +1381,7 @@ export default function AnalysisPage({
                               <td style={rowTd}>{fmt(t.energy)}</td>
                               <td style={rowTd}>
                                 <span
-                                  style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}
+                                  style={S.badge(t.status === 'On Track' ? 'var(--success)' : 'var(--warning)')}
                                 >
                                   {t.status}
                                 </span>
@@ -1386,7 +1392,7 @@ export default function AnalysisPage({
                       </tbody>
                     </table>
                   </div>
-                  <div style={{ padding: '10px 12px 12px', borderTop: '1px solid #2A292F' }}>
+                  <div style={{ padding: '10px 12px 12px', borderTop: '1px solid var(--outline)' }}>
                     <div style={S.miniLabel}>TOD Energy Share</div>
                     <div
                       style={{
@@ -1415,7 +1421,7 @@ export default function AnalysisPage({
                   <div style={{ ...S.card, flexShrink: 0 }}>
                     <div style={S.cardHeader}>
                       <div style={S.cardTitle}>Anomalies</div>
-                      <span style={S.badge('#F87171')}>{anomalies.length} flagged</span>
+                      <span style={S.badge('var(--danger)')}>{anomalies.length} flagged</span>
                     </div>
                     <div style={{ overflow: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1435,11 +1441,11 @@ export default function AnalysisPage({
                                 {a.block}
                               </td>
                               <td style={{ ...S.td, padding: '6px 10px' }}>{fmt(a.load)}</td>
-                              <td style={{ ...S.td, color: '#B8BDCC', padding: '6px 10px' }}>
+                              <td style={{ ...S.td, color: 'var(--text-secondary)', padding: '6px 10px' }}>
                                 {a.reason}
                               </td>
                               <td style={{ ...S.td, padding: '6px 10px' }}>
-                                <span style={S.badge('#F87171')}>{a.severity}</span>
+                                <span style={S.badge('var(--danger)')}>{a.severity}</span>
                               </td>
                             </tr>
                           ))}
@@ -1475,7 +1481,7 @@ export default function AnalysisPage({
               {todGroups.map((t) => {
                 const isCur = t.name === currentTod.name;
                 return (
-                  <tr key={t.name} style={{ background: isCur ? '#F0782508' : 'transparent' }}>
+                  <tr key={t.name} style={{ background: isCur ? 'rgba(var(--accent-rgb), 0.03)' : 'transparent' }}>
                     <td
                       style={{
                         ...S.td,
@@ -1492,7 +1498,7 @@ export default function AnalysisPage({
                     <td style={S.td}>{fmt(t.peakMw)}</td>
                     <td style={S.td}>{fmt(t.energy)}</td>
                     <td style={S.td}>
-                      <span style={S.badge(t.status === 'On Track' ? '#34D399' : '#FBBF24')}>
+                      <span style={S.badge(t.status === 'On Track' ? 'var(--success)' : 'var(--warning)')}>
                         {t.status}
                       </span>
                     </td>
@@ -1550,9 +1556,9 @@ export default function AnalysisPage({
                   <tr key={i}>
                     <td style={{ ...S.td, fontWeight: 600 }}>{a.block}</td>
                     <td style={S.td}>{fmt(a.load)}</td>
-                    <td style={{ ...S.td, color: '#A0A5B8' }}>{a.reason}</td>
+                    <td style={{ ...S.td, color: 'var(--text-secondary)' }}>{a.reason}</td>
                     <td style={S.td}>
-                      <span style={S.badge('#F87171')}>{a.severity}</span>
+                      <span style={S.badge('var(--danger)')}>{a.severity}</span>
                     </td>
                   </tr>
                 ))}
@@ -1560,7 +1566,7 @@ export default function AnalysisPage({
             </table>
           </div>
         ) : (
-          <div style={{ color: '#6B7186', fontSize: 12 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
             No anomalies detected for the current day.
           </div>
         )}
@@ -1587,20 +1593,20 @@ export default function AnalysisPage({
             >
               <WeatherIcon condition={weatherCond} size={48} />
               <div style={{ fontSize: 14, fontWeight: 700 }}>{weatherCond}</div>
-              <div style={{ fontSize: 11, color: '#6B7186' }}>{dateStr}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{dateStr}</div>
             </div>
           </div>
           <div style={{ ...S.card, minHeight: 220 }}>
             <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
-                { l: 'Temperature', v: `${weatherAgg.tempNow.toFixed(1)}°C`, c: '#F07825' },
-                { l: 'Feels Like', v: `${feelsLike.toFixed(1)}°C`, c: '#F07825' },
+                { l: 'Temperature', v: `${weatherAgg.tempNow.toFixed(1)}°C`, c: 'var(--tone-warm)' },
+                { l: 'Feels Like', v: `${feelsLike.toFixed(1)}°C`, c: 'var(--tone-warm)' },
                 {
                   l: 'Temp Range',
                   v: `${weatherAgg.tempMin.toFixed(1)}–${weatherAgg.tempMax.toFixed(1)}°C`,
-                  c: '#F07825',
+                  c: 'var(--tone-warm)',
                 },
-                { l: 'Humidity', v: `${weatherAgg.humNow.toFixed(1)}%`, c: '#45b7d1' },
+                { l: 'Humidity', v: `${weatherAgg.humNow.toFixed(1)}%`, c: 'var(--info)' },
                 {
                   l: 'Precipitation',
                   v:
@@ -1608,7 +1614,7 @@ export default function AnalysisPage({
                       const p = weatherAgg.precipNow;
                       return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2);
                     })() + ' mm',
-                  c: '#C084FC',
+                  c: 'var(--accent2)',
                 },
                 {
                   l: 'Rain (Total)',
@@ -1617,16 +1623,16 @@ export default function AnalysisPage({
                       const p = weatherAgg.precipTotal;
                       return p > 0 && p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2);
                     })() + ' mm',
-                  c: '#C084FC',
+                  c: 'var(--accent2)',
                 },
-                { l: 'Cloud', v: `${weatherAgg.cloudNow.toFixed(0)}%`, c: '#636e72' },
-                { l: 'Avg Humidity', v: `${weatherAgg.humAvg.toFixed(1)}%`, c: '#45b7d1' },
+                { l: 'Cloud', v: `${weatherAgg.cloudNow.toFixed(0)}%`, c: 'var(--text-dim)' },
+                { l: 'Avg Humidity', v: `${weatherAgg.humAvg.toFixed(1)}%`, c: 'var(--info)' },
               ].map((r, i) => (
                 <div
                   key={i}
                   style={{
-                    background: '#201F25',
-                    border: '1px solid #2A292F',
+                    background: 'var(--bg-surface)',
+                    border: '1px solid var(--outline)',
                     borderRadius: 12,
                     padding: '12px 14px',
                   }}
@@ -1662,11 +1668,11 @@ export default function AnalysisPage({
             <div
               style={{
                 background:
-                  'linear-gradient(180deg, rgba(33, 32, 39, 0.96), rgba(24, 23, 28, 0.96))',
-                border: '1px solid #2A292F',
+                  'linear-gradient(180deg, rgba(var(--panel-rgb), 0.96), rgba(var(--panel-rgb), 0.96))',
+                border: '1px solid var(--outline)',
                 borderRadius: 16,
                 padding: '16px 18px',
-                boxShadow: '0 18px 36px rgba(0,0,0,0.18)',
+                boxShadow: '0 18px 36px rgba(var(--shadow-rgb), 0.18)',
               }}
             >
               <div style={S.miniLabel}>Strongest Positive</div>
@@ -1680,43 +1686,43 @@ export default function AnalysisPage({
               >
                 {correlationHighlights.strongestPositive.label}
               </div>
-              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
                 ρ +{Math.abs(correlationHighlights.strongestPositive.value).toFixed(2)} with load
               </div>
             </div>
             <div
               style={{
                 background:
-                  'linear-gradient(180deg, rgba(33, 32, 39, 0.96), rgba(24, 23, 28, 0.96))',
-                border: '1px solid #2A292F',
+                  'linear-gradient(180deg, rgba(var(--panel-rgb), 0.96), rgba(var(--panel-rgb), 0.96))',
+                border: '1px solid var(--outline)',
                 borderRadius: 16,
                 padding: '16px 18px',
-                boxShadow: '0 18px 36px rgba(0,0,0,0.18)',
+                boxShadow: '0 18px 36px rgba(var(--shadow-rgb), 0.18)',
               }}
             >
               <div style={S.miniLabel}>Strongest Negative</div>
-              <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, color: '#F87171' }}>
+              <div style={{ marginTop: 10, fontSize: 22, fontWeight: 700, color: 'var(--danger)' }}>
                 {correlationHighlights.strongestNegative.label}
               </div>
-              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
                 ρ {correlationHighlights.strongestNegative.value.toFixed(2)} with load
               </div>
             </div>
             <div
               style={{
                 background:
-                  'radial-gradient(circle at top right, rgba(240, 120, 37, 0.14), transparent 50%), linear-gradient(180deg, rgba(33, 32, 39, 0.98), rgba(24, 23, 28, 0.96))',
-                border: '1px solid #2A292F',
+                  'radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.14), transparent 50%), linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.96))',
+                border: '1px solid var(--outline)',
                 borderRadius: 16,
                 padding: '16px 18px',
-                boxShadow: '0 18px 36px rgba(0,0,0,0.22)',
+                boxShadow: '0 18px 36px rgba(var(--shadow-rgb), 0.22)',
               }}
             >
               <div style={S.miniLabel}>Dominant Pair</div>
-              <div style={{ marginTop: 10, fontSize: 20, fontWeight: 700, color: '#ECEEF3' }}>
+              <div style={{ marginTop: 10, fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
                 {correlationHighlights.strongestPair?.pair || '--'}
               </div>
-              <div style={{ marginTop: 6, fontSize: 12, color: '#A0A5B8' }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
                 Absolute ρ {Math.abs(correlationHighlights.strongestPair?.value || 0).toFixed(2)}{' '}
                 across the matrix
               </div>
@@ -1726,20 +1732,20 @@ export default function AnalysisPage({
             style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 12 }}
           >
             {[
-              { key: 'temp', label: 'Temp → Load', value: rhoTemp, color: '#F07825' },
-              { key: 'hum', label: 'Hum → Load', value: rhoHum, color: '#45b7d1' },
-              { key: 'cloud', label: 'Cloud → Load', value: rhoCloud, color: '#7B8CDE' },
-              { key: 'precip', label: 'Precip → Load', value: rhoPrecip, color: '#C084FC' },
+              { key: 'temp', label: 'Temp → Load', value: rhoTemp, color: 'var(--tone-warm)' },
+              { key: 'hum', label: 'Hum → Load', value: rhoHum, color: 'var(--info)' },
+              { key: 'cloud', label: 'Cloud → Load', value: rhoCloud, color: 'var(--accent)' },
+              { key: 'precip', label: 'Precip → Load', value: rhoPrecip, color: 'var(--accent2)' },
             ].map((item) => (
               <div
                 key={item.key}
                 style={{
                   background:
-                    'linear-gradient(180deg, rgba(31, 30, 36, 0.96), rgba(23, 22, 27, 0.96))',
-                  border: '1px solid #2A292F',
+                    'linear-gradient(180deg, rgba(var(--panel-rgb), 0.96), rgba(var(--panel-rgb), 0.96))',
+                  border: '1px solid var(--outline)',
                   borderRadius: 16,
                   padding: '14px 12px 10px',
-                  boxShadow: '0 14px 28px rgba(0,0,0,0.14)',
+                  boxShadow: '0 14px 28px rgba(var(--shadow-rgb), 0.14)',
                 }}
               >
                 <ArcGauge value={item.value} sublabel={item.label} size={92} />
@@ -1748,11 +1754,11 @@ export default function AnalysisPage({
           </div>
           <div
             style={{
-              background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(21, 20, 26, 0.98))',
-              border: '1px solid #2A292F',
+              background: 'linear-gradient(180deg, rgba(var(--panel-rgb), 0.98), rgba(var(--panel-rgb), 0.98))',
+              border: '1px solid var(--outline)',
               borderRadius: 18,
               padding: 16,
-              boxShadow: '0 22px 42px rgba(0,0,0,0.2)',
+              boxShadow: '0 22px 42px rgba(var(--shadow-rgb), 0.2)',
             }}
           >
             <div
@@ -1768,8 +1774,8 @@ export default function AnalysisPage({
               <span
                 style={S.badge(
                   Math.abs(correlationHighlights.strongestPair?.value || 0) > 0.7
-                    ? '#34D399'
-                    : '#FBBF24'
+                    ? 'var(--success)'
+                    : 'var(--warning)'
                 )}
               >
                 Matrix View
@@ -1791,7 +1797,7 @@ export default function AnalysisPage({
                         key={h}
                         style={{
                           padding: '8px 10px',
-                          color: '#8A90A6',
+                          color: 'var(--text-muted)',
                           fontWeight: 700,
                           textAlign: 'center',
                           letterSpacing: 0.5,
@@ -1806,18 +1812,23 @@ export default function AnalysisPage({
                 <tbody>
                   {correlationMatrix.map((row, ri) => (
                     <tr key={ri}>
-                      <td style={{ padding: '10px 10px', fontWeight: 700, color: '#AEB3C5' }}>
+                      <td style={{ padding: '10px 10px', fontWeight: 700, color: 'var(--text-secondary)' }}>
                         {row.l}
                       </td>
                       {row.vals.map((v, ci) => {
                         const abs = Math.abs(v);
                         const bg =
                           v === 1
-                            ? 'rgba(240, 120, 37, 0.16)'
+                            ? 'rgba(var(--accent-rgb), 0.16)'
                             : v > 0
-                              ? `rgba(52, 211, 153, ${Math.min(0.1 + abs * 0.22, 0.3)})`
-                              : `rgba(248, 113, 113, ${Math.min(0.08 + abs * 0.22, 0.28)})`;
-                        const color = v === 1 ? '#F3B27B' : v > 0 ? '#BDF4DC' : '#FFC0BA';
+                              ? `color-mix(in srgb, var(--success) ${Math.min(0.1 + abs * 0.22, 0.3) * 100}%, transparent)`
+                              : `color-mix(in srgb, var(--danger) ${Math.min(0.08 + abs * 0.22, 0.28) * 100}%, transparent)`;
+                        const color =
+                          v === 1
+                            ? 'color-mix(in srgb, var(--accent) 60%, var(--text))'
+                            : v > 0
+                              ? 'color-mix(in srgb, var(--success) 60%, var(--text))'
+                              : 'color-mix(in srgb, var(--danger) 60%, var(--text))';
                         return (
                           <td
                             key={ci}
@@ -1826,9 +1837,9 @@ export default function AnalysisPage({
                               textAlign: 'center',
                               color,
                               background: bg,
-                              border: '1px solid rgba(255,255,255,0.04)',
+                              border: '1px solid rgba(var(--overlay-rgb), 0.04)',
                               borderRadius: 12,
-                              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
+                              boxShadow: 'inset 0 1px 0 rgba(var(--overlay-rgb), 0.02)',
                             }}
                           >
                             <div style={{ fontSize: 17, fontWeight: 700 }}>{v.toFixed(2)}</div>

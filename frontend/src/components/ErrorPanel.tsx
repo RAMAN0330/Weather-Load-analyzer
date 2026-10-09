@@ -62,7 +62,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
     }
   }
 
-  const accent = kind === 'weather' ? '#60A5FA' : kind === 'network' ? '#FBBF24' : '#F87171'
+  const accent = kind === 'weather' ? 'var(--info)' : kind === 'network' ? 'var(--warning)' : 'var(--danger)'
   const label = title || LABEL_FOR_KIND[kind]
   const icon = ICON_FOR_KIND[kind]
 
@@ -72,7 +72,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(8,8,12,0.72)',
+        background: 'rgba(var(--shadow-rgb), 0.6)',
         backdropFilter: 'blur(6px)',
         WebkitBackdropFilter: 'blur(6px)',
         display: 'flex',
@@ -86,11 +86,11 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'min(460px, 92vw)',
-          background: 'linear-gradient(180deg, rgba(30,29,35,0.99) 0%, rgba(20,20,24,0.99) 100%)',
-          border: `1px solid ${accent}33`,
+          background: 'linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-panel) 100%)',
+          border: `1px solid color-mix(in srgb, ${accent} 20%, transparent)`,
           borderRadius: 14,
           padding: 0,
-          boxShadow: `0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px ${accent}15, 0 0 40px ${accent}20`,
+          boxShadow: `0 20px 60px rgba(var(--shadow-rgb), 0.5), 0 0 0 1px color-mix(in srgb, ${accent} 8%, transparent), 0 0 40px color-mix(in srgb, ${accent} 13%, transparent)`,
           animation: 'errPanelSlideIn 220ms cubic-bezier(0.2, 0.9, 0.3, 1.1)',
           fontFamily: "'Manrope', system-ui, sans-serif",
           overflow: 'hidden',
@@ -106,8 +106,8 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
               width: 42,
               height: 42,
               borderRadius: 10,
-              background: `${accent}14`,
-              border: `1px solid ${accent}33`,
+              background: `color-mix(in srgb, ${accent} 8%, transparent)`,
+              border: `1px solid color-mix(in srgb, ${accent} 20%, transparent)`,
               color: accent,
               display: 'flex',
               alignItems: 'center',
@@ -124,7 +124,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                 style={{
                   fontSize: 15,
                   fontWeight: 700,
-                  color: '#F0F2F8',
+                  color: 'var(--text)',
                   letterSpacing: '-0.2px',
                   lineHeight: 1.2,
                 }}
@@ -141,8 +141,8 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                     height: 26,
                     borderRadius: 6,
                     background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: '#8a90a6',
+                    border: '1px solid rgba(var(--overlay-rgb), 0.08)',
+                    color: 'var(--text-muted)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
@@ -151,12 +151,12 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                     flexShrink: 0,
                   }}
                   onMouseEnter={(e) => {
-                    ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'
-                    ;(e.currentTarget as HTMLElement).style.color = '#F0F2F8'
+                    ;(e.currentTarget as HTMLElement).style.background = 'rgba(var(--overlay-rgb), 0.06)'
+                    ;(e.currentTarget as HTMLElement).style.color = 'var(--text)'
                   }}
                   onMouseLeave={(e) => {
                     ;(e.currentTarget as HTMLElement).style.background = 'transparent'
-                    ;(e.currentTarget as HTMLElement).style.color = '#8a90a6'
+                    ;(e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'
                   }}
                 >
                   <X size={14} />
@@ -166,7 +166,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
             <div
               style={{
                 fontSize: 12,
-                color: '#9aa0b4',
+                color: 'var(--text-secondary)',
                 marginTop: 6,
                 lineHeight: 1.55,
                 fontFamily: "'IBM Plex Mono', monospace",
@@ -182,8 +182,8 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
           style={{
             margin: '0 24px',
             padding: '10px 12px',
-            background: `${accent}08`,
-            border: `1px solid ${accent}22`,
+            background: `color-mix(in srgb, ${accent} 5%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${accent} 13%, transparent)`,
             borderRadius: 8,
             fontSize: 11,
             color: accent,
@@ -207,7 +207,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#6c7187',
+                color: 'var(--text-muted)',
                 fontSize: 11,
                 fontFamily: "'IBM Plex Mono', monospace",
                 cursor: 'pointer',
@@ -222,11 +222,11 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                 style={{
                   marginTop: 8,
                   padding: '8px 10px',
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid rgba(255,255,255,0.05)',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid rgba(var(--overlay-rgb), 0.05)',
                   borderRadius: 6,
                   fontSize: 10,
-                  color: '#8a90a6',
+                  color: 'var(--text-muted)',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                   maxHeight: 120,
@@ -257,9 +257,9 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
               style={{
                 padding: '8px 16px',
                 borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
+                border: '1px solid var(--outline)',
                 background: 'transparent',
-                color: '#c5c9d6',
+                color: 'var(--text-secondary)',
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -267,7 +267,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
-                ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'
+                ;(e.currentTarget as HTMLElement).style.background = 'rgba(var(--overlay-rgb), 0.04)'
               }}
               onMouseLeave={(e) => {
                 ;(e.currentTarget as HTMLElement).style.background = 'transparent'
@@ -285,8 +285,8 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                 padding: '8px 18px',
                 borderRadius: 8,
                 border: 'none',
-                background: retrying ? `${accent}66` : accent,
-                color: '#0a0a0f',
+                background: retrying ? `color-mix(in srgb, ${accent} 40%, transparent)` : accent,
+                color: 'var(--accent-fg)',
                 fontSize: 12,
                 fontWeight: 700,
                 cursor: retrying ? 'wait' : 'pointer',
@@ -295,7 +295,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                boxShadow: `0 4px 14px ${accent}44`,
+                boxShadow: `0 4px 14px color-mix(in srgb, ${accent} 27%, transparent)`,
               }}
               onMouseEnter={(e) => {
                 if (!retrying) (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)'
@@ -326,8 +326,8 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
           to   { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes errPanelIconPulse {
-          0%, 100% { box-shadow: 0 0 0 0 ${accent}00; }
-          50%      { box-shadow: 0 0 0 6px ${accent}22; }
+          0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, ${accent} 0%, transparent); }
+          50%      { box-shadow: 0 0 0 6px color-mix(in srgb, ${accent} 13%, transparent); }
         }
         @keyframes errPanelSpin {
           to { transform: rotate(360deg); }

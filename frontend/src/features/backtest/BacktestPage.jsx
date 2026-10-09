@@ -13,11 +13,11 @@ const fmtDate = (iso) => {
 };
 
 const mapeColor = (v) => {
-  if (v == null) return '#8A90A6';
-  if (v < 2) return '#22C55E';
-  if (v < 4) return '#34D399';
-  if (v < 6) return '#F59E0B';
-  return '#EF4444';
+  if (v == null) return 'var(--text-muted)';
+  if (v < 2) return 'var(--success)';
+  if (v < 4) return 'color-mix(in srgb, var(--success) 55%, var(--warning))';
+  if (v < 6) return 'var(--warning)';
+  return 'var(--danger)';
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -145,13 +145,13 @@ export default function BacktestPage({ selectedRegion }) {
           </div>
           <div className="bt-sum-kpi">
             <span className="bt-sum-label">Days ≥98% T+1</span>
-            <span className="bt-sum-value" style={{ color: '#22C55E' }}>
+            <span className="bt-sum-value" style={{ color: 'var(--success)' }}>
               {summary.t1_above_98}/{summary.days}
             </span>
           </div>
           <div className="bt-sum-kpi">
             <span className="bt-sum-label">Days ≥96% T+2</span>
-            <span className="bt-sum-value" style={{ color: '#34D399' }}>
+            <span className="bt-sum-value" style={{ color: 'var(--success)' }}>
               {summary.t2_above_96}/{summary.days}
             </span>
           </div>
@@ -160,7 +160,7 @@ export default function BacktestPage({ selectedRegion }) {
 
       {/* Target gap */}
       {summary?.t1_avg_mape != null && (
-        <div className="bt-target-gap" style={{ color: summary.t1_avg_mape < 2 ? '#22C55E' : '#F59E0B' }}>
+        <div className="bt-target-gap" style={{ color: summary.t1_avg_mape < 2 ? 'var(--success)' : 'var(--warning)' }}>
           {summary.t1_avg_mape < 2
             ? '✓ T+1 target achieved (MAPE < 2%)'
             : `T+1 target gap: ${(summary.t1_avg_mape - 2).toFixed(2)}% above 2% target`}
@@ -200,7 +200,7 @@ export default function BacktestPage({ selectedRegion }) {
                   <span style={{ color: mapeColor(row.t2_mape) }}>
                     {row.t2_mape != null ? `${(100 - row.t2_mape).toFixed(2)}%` : '—'}
                   </span>
-                  <span style={{ color: row.worst_block_ape > 10 ? '#EF4444' : '#8A90A6' }}>
+                  <span style={{ color: row.worst_block_ape > 10 ? 'var(--danger)' : 'var(--text-muted)' }}>
                     {row.worst_block != null ? `B${row.worst_block} (${row.worst_block_ape?.toFixed(1)}%)` : '—'}
                   </span>
                   <span className="bt-weather-flag">{row.weather_flag || '—'}</span>
@@ -231,11 +231,11 @@ export default function BacktestPage({ selectedRegion }) {
             <div className="bt-target-line" style={{ bottom: '20%' }} title="2% MAPE target" />
           </div>
           <div className="bt-chart-legend">
-            <span style={{ color: '#22C55E' }}>■ ≤2%</span>
-            <span style={{ color: '#34D399' }}>■ 2–4%</span>
-            <span style={{ color: '#F59E0B' }}>■ 4–6%</span>
-            <span style={{ color: '#EF4444' }}>■ &gt;6%</span>
-            <span style={{ color: '#8A90A6', marginLeft: 8 }}>— 2% target</span>
+            <span style={{ color: 'var(--success)' }}>■ ≤2%</span>
+            <span style={{ color: 'color-mix(in srgb, var(--success) 55%, var(--warning))' }}>■ 2–4%</span>
+            <span style={{ color: 'var(--warning)' }}>■ 4–6%</span>
+            <span style={{ color: 'var(--danger)' }}>■ &gt;6%</span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>— 2% target</span>
           </div>
         </>
       )}

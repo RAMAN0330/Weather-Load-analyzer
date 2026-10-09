@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 import axios from 'axios';
 import HorizonToggle from '../../components/HorizonToggle';
 import ContextPanel from '../../components/ContextPanel';
@@ -31,21 +32,8 @@ const C = {
   red: 'var(--danger)',
   warn: 'var(--warning)',
   info: 'var(--info)',
-  // Raw hex for ECharts (can't use CSS vars)
-  _accent: '#F07825',
-  _accent2: '#5B9FE4',
-  _text: '#ECEEF3',
-  _sub: '#A0A5B8',
-  _muted: '#6B7186',
-  _border: '#2A292F',
-  _card: '#1A191E',
-  _surface: '#201F25',
-  _green: '#34D399',
-  _red: '#F87171',
-  _warn: '#FBBF24',
-  _cyan: '#45b7d1',
-  _purple: '#C084FC',
-  _pink: '#F472B6',
+  warm: 'var(--tone-warm)',
+  // Charts (canvas) can't use CSS vars — they use useChartTokens() instead.
 };
 
 const blockToTime = (b) => {
@@ -141,30 +129,30 @@ const MW_COEFS = {
 
 /* ─── Regime classifier ─── */
 const classifyRegime = (tempAvg, hum, rain, cloud) => {
-  if (tempAvg > 42) return { name: 'Extreme Heat', color: '#ff4444', badge: 'bg-danger' };
-  if (rain > 10 && cloud > 70) return { name: 'Rainy', color: C._purple, badge: 'bg-info' };
-  if (tempAvg > 38 && hum < 35) return { name: 'Hot & Dry', color: '#e17055', badge: 'bg-warn' };
-  if (tempAvg > 35 && hum > 65) return { name: 'Hot & Humid', color: C._red, badge: 'bg-danger' };
+  if (tempAvg > 42) return { name: 'Extreme Heat', color: C.red, badge: 'bg-danger' };
+  if (rain > 10 && cloud > 70) return { name: 'Rainy', color: C.accent2, badge: 'bg-info' };
+  if (tempAvg > 38 && hum < 35) return { name: 'Hot & Dry', color: C.warm, badge: 'bg-warn' };
+  if (tempAvg > 35 && hum > 65) return { name: 'Hot & Humid', color: C.red, badge: 'bg-danger' };
   if (tempAvg < 28 && cloud > 60)
-    return { name: 'Cool & Cloudy', color: '#74b9ff', badge: 'bg-info' };
-  return { name: 'Normal', color: C._green, badge: 'bg-ok' };
+    return { name: 'Cool & Cloudy', color: C.info, badge: 'bg-info' };
+  return { name: 'Normal', color: C.green, badge: 'bg-ok' };
 };
 
 /* ─── ECharts base theme ─── */
-const ecBase = () => ({
+const ecBase = (tk) => ({
   backgroundColor: 'transparent',
-  textStyle: { color: C._sub, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 },
+  textStyle: { color: tk.textSecondary, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 },
   grid: { top: 62, right: 28, bottom: 72, left: 56, containLabel: true },
   tooltip: {
     trigger: 'axis',
-    backgroundColor: 'rgba(22,22,27,0.96)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: tk.elevated,
+    borderColor: tk.outline,
     borderWidth: 1,
-    textStyle: { color: '#f0f2f8', fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
-    extraCssText: 'box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-radius: 8px; padding: 8px 12px;',
+    textStyle: { color: tk.text, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" },
+    extraCssText: 'box-shadow: 0 8px 24px rgba(var(--shadow-rgb), 0.25); border-radius: 8px; padding: 8px 12px;',
   },
   legend: {
-    textStyle: { color: C._sub, fontSize: 10 },
+    textStyle: { color: tk.textSecondary, fontSize: 10 },
     top: 10,
     left: 'center',
     itemWidth: 14,
@@ -172,16 +160,16 @@ const ecBase = () => ({
   },
   xAxis: {
     type: 'category',
-    axisLine: { lineStyle: { color: C._border } },
-    axisLabel: { color: C._muted, fontSize: 9, margin: 16 },
+    axisLine: { lineStyle: { color: tk.outline } },
+    axisLabel: { color: tk.textMuted, fontSize: 9, margin: 16 },
     splitLine: { show: false },
   },
   yAxis: {
     type: 'value',
     nameGap: 22,
     axisLine: { show: false },
-    axisLabel: { color: C._muted, fontSize: 9 },
-    splitLine: { lineStyle: { color: C._border, type: 'dashed', opacity: 0.3 } },
+    axisLabel: { color: tk.textMuted, fontSize: 9 },
+    splitLine: { lineStyle: { color: tk.outline, type: 'dashed', opacity: 0.3 } },
   },
 });
 
@@ -243,7 +231,7 @@ function MetricCard({ label, value, unit, sub, delta, color, wide }) {
         minWidth: 180,
         minHeight: 124,
         padding: '16px 18px',
-        background: 'linear-gradient(180deg, rgba(32, 31, 37, 0.96), rgba(26, 25, 30, 0.98))',
+        background: 'linear-gradient(180deg, var(--bg-panel), var(--bg-surface))',
         borderRadius: 14,
         border: `1px solid var(--outline)`,
         display: 'flex',
@@ -287,7 +275,7 @@ function DetailOverlay({ open, title, subtitle, onClose, children }) {
             style={{
               background: 'none',
               border: 'none',
-              color: C._muted,
+              color: C.muted,
               cursor: 'pointer',
               fontSize: 18,
             }}
@@ -303,9 +291,10 @@ function DetailOverlay({ open, title, subtitle, onClose, children }) {
 
 /* ─── Gauge SVG ─── */
 function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
+  const tk = useChartTokens();
   const pct = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
   const absVal = Math.abs(value);
-  const color = absVal > 0.6 ? C._green : absVal > 0.3 ? C._warn : C._red;
+  const color = absVal > 0.6 ? tk.success : absVal > 0.3 ? tk.warning : tk.danger;
   const strength =
     absVal > 0.7 ? 'Strong' : absVal > 0.4 ? 'Moderate' : absVal > 0.2 ? 'Weak' : 'Very Weak';
   const dir = value > 0.05 ? 'Positive' : value < -0.05 ? 'Negative' : 'None';
@@ -328,7 +317,7 @@ function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
         <div
           style={{
             fontSize: 8,
-            color: C._muted,
+            color: C.muted,
             letterSpacing: 1.2,
             textTransform: 'uppercase',
             marginBottom: 2,
@@ -341,7 +330,7 @@ function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
         <path
           d={arc(Math.PI, 0)}
           fill="none"
-          stroke="rgba(255,255,255,0.06)"
+          stroke={withAlpha(tk.textMuted, 0.15)}
           strokeWidth="6"
           strokeLinecap="round"
         />
@@ -354,12 +343,12 @@ function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
           opacity="0.85"
         />
         <circle cx={nx} cy={ny} r="4.5" fill={color} />
-        <circle cx={nx} cy={ny} r="2" fill="#fff" />
+        <circle cx={nx} cy={ny} r="2" fill={tk.panel} />
         <text
           x={cx}
           y={cy + 3}
           textAnchor="middle"
-          fill="#fff"
+          fill={tk.text}
           fontSize="14"
           fontWeight="700"
           fontFamily="'IBM Plex Mono',monospace"
@@ -370,7 +359,7 @@ function ArcGauge({ value, min = -1, max = 1, label, sublabel, size = 110 }) {
       <div style={{ fontSize: 9, color, fontWeight: 600 }}>
         {strength} {dir}
       </div>
-      {label && <div style={{ fontSize: 8, color: C._muted, marginTop: 1 }}>{label}</div>}
+      {label && <div style={{ fontSize: 8, color: C.muted, marginTop: 1 }}>{label}</div>}
     </div>
   );
 }
@@ -403,6 +392,7 @@ export default function WeatherDeepPage({
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [fallbackError, setFallbackError] = useState('');
   const [hasTriedFallback, setHasTriedFallback] = useState(false);
+  const tk = useChartTokens();
   // Pipeline DB weather state
 
   const loadWeatherFallback = useCallback(async () => {
@@ -518,11 +508,11 @@ export default function WeatherDeepPage({
 
   // ─── Available weather features ───
   const WEATHER_FEATURES = [
-    { key: 'temperature', label: 'Temperature', unit: '°C', color: C._accent },
-    { key: 'humidity', label: 'Humidity', unit: '%', color: C._cyan },
-    { key: 'precipitation', label: 'Precipitation', unit: 'mm', color: C._purple },
-    { key: 'cloud_cover', label: 'Cloud Cover', unit: '%', color: '#636e72' },
-    { key: 'solar_radiation', label: 'Solar Radiation', unit: 'W/m²', color: C._warn },
+    { key: 'temperature', label: 'Temperature', unit: '°C', color: tk.warm },
+    { key: 'humidity', label: 'Humidity', unit: '%', color: tk.info },
+    { key: 'precipitation', label: 'Precipitation', unit: 'mm', color: tk.accent2 },
+    { key: 'cloud_cover', label: 'Cloud Cover', unit: '%', color: tk.textMuted },
+    { key: 'solar_radiation', label: 'Solar Radiation', unit: 'W/m²', color: tk.warning },
   ];
 
   // ─── Intraday arrays ───
@@ -747,11 +737,11 @@ export default function WeatherDeepPage({
     const normal = getIntra(weatherFeature, 'normal');
     const delta = getIntra(weatherFeature, 'delta');
     const opt = {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
     };
     opt.series = [
@@ -770,7 +760,7 @@ export default function WeatherDeepPage({
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: `${feat?.color}30` },
+              { offset: 0, color: withAlpha(feat?.color, 0.19) },
               { offset: 1, color: 'transparent' },
             ],
           },
@@ -784,19 +774,19 @@ export default function WeatherDeepPage({
         type: 'line',
         data: normal,
         smooth: true,
-        lineStyle: { width: 1.5, color: C._muted, type: 'dashed' },
-        itemStyle: { color: C._muted },
+        lineStyle: { width: 1.5, color: tk.textMuted, type: 'dashed' },
+        itemStyle: { color: tk.textMuted },
         symbol: 'none',
       });
     }
     if (showLoad && loadActual.length) {
       opt.yAxis = [
-        { ...ecBase().yAxis, name: feat?.unit },
+        { ...ecBase(tk).yAxis, name: feat?.unit },
         {
-          ...ecBase().yAxis,
+          ...ecBase(tk).yAxis,
           name: 'MW',
           position: 'right',
-          axisLine: { show: true, lineStyle: { color: C._accent2 } },
+          axisLine: { show: true, lineStyle: { color: tk.success } },
         },
       ];
       opt.series.push({
@@ -805,8 +795,8 @@ export default function WeatherDeepPage({
         yAxisIndex: 1,
         data: loadActual,
         smooth: true,
-        lineStyle: { width: 1.5, color: C._accent2 },
-        itemStyle: { color: C._accent2 },
+        lineStyle: { width: 1.5, color: tk.success },
+        itemStyle: { color: tk.success },
         symbol: 'none',
         areaStyle: {
           color: {
@@ -816,14 +806,14 @@ export default function WeatherDeepPage({
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: `${C._accent2}15` },
+              { offset: 0, color: withAlpha(tk.success, 0.08) },
               { offset: 1, color: 'transparent' },
             ],
           },
         },
       });
     }
-    opt.tooltip.axisPointer = { type: 'cross', crossStyle: { color: C._muted } };
+    opt.tooltip.axisPointer = { type: 'cross', crossStyle: { color: tk.textMuted } };
     return opt;
   };
 
@@ -831,13 +821,13 @@ export default function WeatherDeepPage({
     const delta = getIntra(weatherFeature, 'delta');
     const feat = WEATHER_FEATURES.find((f) => f.key === weatherFeature);
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: `Δ ${feat?.unit || ''}` },
+      yAxis: { ...ecBase(tk).yAxis, name: `Δ ${feat?.unit || ''}` },
       series: [
         {
           name: `${feat?.label} Δ from Normal`,
@@ -845,17 +835,17 @@ export default function WeatherDeepPage({
           data: delta.map((v) => ({
             value: v,
             itemStyle: {
-              color: v >= 0 ? C._red : C._green,
+              color: v >= 0 ? tk.danger : tk.success,
               borderRadius: v >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3],
             },
           })),
         },
       ],
       tooltip: {
-        ...ecBase().tooltip,
+        ...ecBase(tk).tooltip,
         formatter: (p) => {
           const v = p[0]?.value;
-          return `<b>${p[0]?.axisValue}</b><br/>Δ: <span style="color:${v >= 0 ? C._red : C._green};font-weight:700">${v >= 0 ? '+' : ''}${v?.toFixed(2)} ${feat?.unit}</span>`;
+          return `<b>${p[0]?.axisValue}</b><br/>Δ: <span style="color:${v >= 0 ? tk.danger : tk.success};font-weight:700">${v >= 0 ? '+' : ''}${v?.toFixed(2)} ${feat?.unit}</span>`;
         },
       },
     };
@@ -872,15 +862,15 @@ export default function WeatherDeepPage({
       ? weatherImpactPct
       : impactData.map((v) => (avgBase > 0 ? (v / avgBase) * 100 : 0));
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
       yAxis: [
-        { ...ecBase().yAxis, name: 'MW Impact' },
-        { ...ecBase().yAxis, name: '% of Base', position: 'right' },
+        { ...ecBase(tk).yAxis, name: 'MW Impact' },
+        { ...ecBase(tk).yAxis, name: '% of Base', position: 'right' },
       ],
       series: [
         {
@@ -889,7 +879,7 @@ export default function WeatherDeepPage({
           data: impactData.map((v) => ({
             value: Number(v) || 0,
             itemStyle: {
-              color: v >= 0 ? `${C._red}aa` : `${C._green}aa`,
+              color: v >= 0 ? withAlpha(tk.danger, 0.67) : withAlpha(tk.success, 0.67),
               borderRadius: v >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3],
             },
           })),
@@ -901,8 +891,8 @@ export default function WeatherDeepPage({
           yAxisIndex: 1,
           data: pctData,
           smooth: true,
-          lineStyle: { color: C._warn, width: 1.5 },
-          itemStyle: { color: C._warn },
+          lineStyle: { color: tk.warning, width: 1.5 },
+          itemStyle: { color: tk.warning },
           symbol: 'none',
         },
       ],
@@ -914,25 +904,25 @@ export default function WeatherDeepPage({
     const weatherData = getIntra(weatherFeature);
     const rho = spearman(weatherData, loadActual);
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       title: {
         text: `ρ = ${rho.toFixed(3)}`,
         right: 16,
         top: 8,
         textStyle: {
-          color: Math.abs(rho) > 0.5 ? C._green : C._warn,
+          color: Math.abs(rho) > 0.5 ? tk.success : tk.warning,
           fontSize: 14,
           fontWeight: 700,
         },
       },
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
       yAxis: [
-        { ...ecBase().yAxis, name: feat?.unit },
-        { ...ecBase().yAxis, name: 'MW', position: 'right' },
+        { ...ecBase(tk).yAxis, name: feat?.unit },
+        { ...ecBase(tk).yAxis, name: 'MW', position: 'right' },
       ],
       series: [
         {
@@ -951,7 +941,7 @@ export default function WeatherDeepPage({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: `${feat?.color}20` },
+                { offset: 0, color: withAlpha(feat?.color, 0.13) },
                 { offset: 1, color: 'transparent' },
               ],
             },
@@ -963,8 +953,8 @@ export default function WeatherDeepPage({
           yAxisIndex: 1,
           data: loadActual,
           smooth: true,
-          lineStyle: { width: 2, color: C._text },
-          itemStyle: { color: C._text },
+          lineStyle: { width: 2, color: tk.text },
+          itemStyle: { color: tk.text },
           symbol: 'none',
         },
       ],
@@ -978,15 +968,15 @@ export default function WeatherDeepPage({
       Number.isFinite(a) && Number.isFinite(loadForecast[i]) ? a - loadForecast[i] : null
     );
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
       yAxis: [
-        { ...ecBase().yAxis, name: 'Error (MW)' },
-        { ...ecBase().yAxis, name: feat?.unit, position: 'right' },
+        { ...ecBase(tk).yAxis, name: 'Error (MW)' },
+        { ...ecBase(tk).yAxis, name: feat?.unit, position: 'right' },
       ],
       series: [
         {
@@ -998,7 +988,7 @@ export default function WeatherDeepPage({
               : {
                   value: v,
                   itemStyle: {
-                    color: Math.abs(v) > 100 ? C._red : `${C._accent}88`,
+                    color: Math.abs(v) > 100 ? tk.danger : withAlpha(tk.accent, 0.53),
                     borderRadius: v >= 0 ? [2, 2, 0, 0] : [0, 0, 2, 2],
                   },
                 }
@@ -1017,8 +1007,8 @@ export default function WeatherDeepPage({
       ],
       markLine: {
         data: [
-          { yAxis: 100, lineStyle: { color: C._red, type: 'dashed' } },
-          { yAxis: -100, lineStyle: { color: C._red, type: 'dashed' } },
+          { yAxis: 100, lineStyle: { color: tk.danger, type: 'dashed' } },
+          { yAxis: -100, lineStyle: { color: tk.danger, type: 'dashed' } },
         ],
       },
     };
@@ -1027,14 +1017,14 @@ export default function WeatherDeepPage({
   const dodChartOption = () => {
     const feat = WEATHER_FEATURES.find((f) => f.key === weatherFeature);
     const dateColors = [
-      '#5B9FE4',
-      '#34D399',
-      '#FBBF24',
-      '#C084FC',
-      '#F472B6',
-      '#00cec9',
-      '#e17055',
-      '#74b9ff',
+      tk.accent,
+      tk.success,
+      tk.warning,
+      tk.accent2,
+      tk.danger,
+      tk.info,
+      tk.warm,
+      tk.textSecondary,
     ];
     const seriesList = [];
     // Current date (primary)
@@ -1045,8 +1035,8 @@ export default function WeatherDeepPage({
         type: 'line',
         data: currentData,
         smooth: true,
-        lineStyle: { width: 2.5, color: feat?.color || C._accent },
-        itemStyle: { color: feat?.color || C._accent },
+        lineStyle: { width: 2.5, color: feat?.color || tk.accent },
+        itemStyle: { color: feat?.color || tk.accent },
         symbol: 'none',
         areaStyle: {
           color: {
@@ -1056,7 +1046,7 @@ export default function WeatherDeepPage({
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: `${feat?.color || C._accent}20` },
+              { offset: 0, color: withAlpha(feat?.color || tk.accent, 0.13) },
               { offset: 1, color: 'transparent' },
             ],
           },
@@ -1081,13 +1071,13 @@ export default function WeatherDeepPage({
       }
     });
     return {
-      ...ecBase(),
+      ...ecBase(tk),
       xAxis: {
-        ...ecBase().xAxis,
+        ...ecBase(tk).xAxis,
         data: timeLabels,
-        axisLabel: { ...ecBase().xAxis.axisLabel, interval: 11 },
+        axisLabel: { ...ecBase(tk).xAxis.axisLabel, interval: 11 },
       },
-      yAxis: { ...ecBase().yAxis, name: feat?.unit || '' },
+      yAxis: { ...ecBase(tk).yAxis, name: feat?.unit || '' },
       series: seriesList,
     };
   };
@@ -1173,7 +1163,7 @@ export default function WeatherDeepPage({
                         key={h}
                         style={{
                           fontSize: 9,
-                          color: C._muted,
+                          color: C.muted,
                           textTransform: 'uppercase',
                           letterSpacing: 1,
                           padding: '10px 12px',
@@ -1194,7 +1184,7 @@ export default function WeatherDeepPage({
                       onClick={() => setExpandedFactor(expandedFactor === r.id ? null : r.id)}
                       style={{
                         cursor: 'pointer',
-                        background: expandedFactor === r.id ? `${C._accent}08` : 'transparent',
+                        background: expandedFactor === r.id ? `color-mix(in srgb, ${C.accent} 3%, transparent)` : 'transparent',
                         transition: 'background 0.15s',
                       }}
                     >
@@ -1203,7 +1193,7 @@ export default function WeatherDeepPage({
                           fontSize: 11,
                           fontWeight: 600,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
                         }}
                       >
                         {r.name}
@@ -1212,7 +1202,7 @@ export default function WeatherDeepPage({
                         style={{
                           fontSize: 11,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
                         }}
                       >
                         {fmt(r.val, r.val > 0 && r.val < 0.01 ? 4 : r.val < 1 ? 3 : 1)} {r.unit}
@@ -1221,8 +1211,8 @@ export default function WeatherDeepPage({
                         style={{
                           fontSize: 10,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
-                          color: C._muted,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
+                          color: C.muted,
                         }}
                       >
                         {r.thresh}
@@ -1231,9 +1221,9 @@ export default function WeatherDeepPage({
                         style={{
                           fontSize: 12,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
                           fontWeight: 700,
-                          color: r.mw >= 0 ? C._red : C._green,
+                          color: r.mw >= 0 ? C.red : C.green,
                         }}
                       >
                         {sgn(r.mw)} MW
@@ -1242,7 +1232,7 @@ export default function WeatherDeepPage({
                         style={{
                           fontSize: 11,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
                         }}
                       >
                         {((r.mw / base) * 100).toFixed(2)}%
@@ -1251,8 +1241,8 @@ export default function WeatherDeepPage({
                         style={{
                           fontSize: 10,
                           padding: '10px 12px',
-                          borderBottom: `1px solid ${C._border}22`,
-                          color: C._accent,
+                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 13%, transparent)`,
+                          color: C.accent,
                         }}
                       >
                         {expandedFactor === r.id ? '▼ hide blocks' : '▶ per block'}
@@ -1265,7 +1255,7 @@ export default function WeatherDeepPage({
                             style={{
                               maxHeight: 300,
                               overflowY: 'auto',
-                              background: `${C._border}11`,
+                              background: `color-mix(in srgb, ${C.border} 7%, transparent)`,
                             }}
                           >
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1276,15 +1266,15 @@ export default function WeatherDeepPage({
                                       key={h}
                                       style={{
                                         fontSize: 8,
-                                        color: C._muted,
+                                        color: C.muted,
                                         textTransform: 'uppercase',
                                         letterSpacing: 1,
                                         padding: '5px 10px',
-                                        borderBottom: `1px solid ${C._border}33`,
+                                        borderBottom: `1px solid color-mix(in srgb, ${C.border} 20%, transparent)`,
                                         textAlign: 'left',
                                         position: 'sticky',
                                         top: 0,
-                                        background: C._surface,
+                                        background: C.surface,
                                       }}
                                     >
                                       {h}
@@ -1301,7 +1291,7 @@ export default function WeatherDeepPage({
                                         style={{
                                           fontSize: 10,
                                           padding: '3px 10px',
-                                          borderBottom: `1px solid ${C._border}11`,
+                                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 7%, transparent)`,
                                         }}
                                       >
                                         {bm.block}
@@ -1310,7 +1300,7 @@ export default function WeatherDeepPage({
                                         style={{
                                           fontSize: 10,
                                           padding: '3px 10px',
-                                          borderBottom: `1px solid ${C._border}11`,
+                                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 7%, transparent)`,
                                         }}
                                       >
                                         {bm.time}
@@ -1319,7 +1309,7 @@ export default function WeatherDeepPage({
                                         style={{
                                           fontSize: 10,
                                           padding: '3px 10px',
-                                          borderBottom: `1px solid ${C._border}11`,
+                                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 7%, transparent)`,
                                         }}
                                       >
                                         {fmt(
@@ -1336,9 +1326,9 @@ export default function WeatherDeepPage({
                                         style={{
                                           fontSize: 10,
                                           padding: '3px 10px',
-                                          borderBottom: `1px solid ${C._border}11`,
+                                          borderBottom: `1px solid color-mix(in srgb, ${C.border} 7%, transparent)`,
                                           fontWeight: 600,
-                                          color: bm[r.blockKey] >= 0 ? C._red : C._green,
+                                          color: bm[r.blockKey] >= 0 ? C.red : C.green,
                                         }}
                                       >
                                         {sgn(bm[r.blockKey])} MW
@@ -1362,8 +1352,8 @@ export default function WeatherDeepPage({
                       fontSize: 11,
                       fontWeight: 700,
                       padding: '10px 12px',
-                      borderTop: `2px solid ${C._accent}`,
-                      color: C._accent,
+                      borderTop: `2px solid ${C.accent}`,
+                      color: C.accent,
                     }}
                   >
                     NET
@@ -1376,8 +1366,8 @@ export default function WeatherDeepPage({
                       fontSize: 14,
                       fontWeight: 700,
                       padding: '10px 12px',
-                      borderTop: `2px solid ${C._accent}`,
-                      color: computed.netMW >= 0 ? C._red : C._green,
+                      borderTop: `2px solid ${C.accent}`,
+                      color: computed.netMW >= 0 ? C.red : C.green,
                     }}
                   >
                     {sgn(computed.netMW)} MW
@@ -1388,8 +1378,8 @@ export default function WeatherDeepPage({
                       fontSize: 11,
                       fontWeight: 700,
                       padding: '10px 12px',
-                      borderTop: `2px solid ${C._accent}`,
-                      color: C._accent,
+                      borderTop: `2px solid ${C.accent}`,
+                      color: C.accent,
                     }}
                   >
                     {((computed.netMW / base) * 100).toFixed(2)}%
@@ -1417,7 +1407,7 @@ export default function WeatherDeepPage({
             fontSize: 9,
             textTransform: 'uppercase',
             letterSpacing: 2,
-            color: C._accent,
+            color: C.accent,
             fontWeight: 700,
           }}
         >
@@ -1439,9 +1429,9 @@ export default function WeatherDeepPage({
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
           {[
-            { label: 'P10', mult: 0.7, color: C._green },
-            { label: 'P50', mult: 1.0, color: C._accent },
-            { label: 'P90', mult: 1.4, color: C._red },
+            { label: 'P10', mult: 0.7, color: C.green },
+            { label: 'P50', mult: 1.0, color: C.accent },
+            { label: 'P90', mult: 1.4, color: C.red },
           ].map((b, i) => (
             <div
               key={i}
@@ -1449,15 +1439,15 @@ export default function WeatherDeepPage({
                 textAlign: 'center',
                 flex: 1,
                 padding: '8px 4px',
-                background: `${b.color}10`,
+                background: `color-mix(in srgb, ${b.color} 6%, transparent)`,
                 borderRadius: 8,
-                border: `1px solid ${b.color}22`,
+                border: `1px solid color-mix(in srgb, ${b.color} 13%, transparent)`,
               }}
             >
               <div
                 style={{
                   fontSize: 8,
-                  color: C._muted,
+                  color: C.muted,
                   textTransform: 'uppercase',
                   letterSpacing: 1,
                 }}
@@ -1480,10 +1470,10 @@ export default function WeatherDeepPage({
                   fontSize: 10,
                   padding: '4px 10px',
                   marginBottom: 4,
-                  background: `${C._red}12`,
-                  border: `1px solid ${C._red}22`,
+                  background: `color-mix(in srgb, ${C.red} 7%, transparent)`,
+                  border: `1px solid color-mix(in srgb, ${C.red} 13%, transparent)`,
                   borderRadius: 6,
-                  color: C._red,
+                  color: C.red,
                 }}
               >
                 {c.name} ×{c.mult} — {c.desc}
@@ -1493,22 +1483,22 @@ export default function WeatherDeepPage({
         )}
 
         {sensitivity && (
-          <div style={{ marginTop: 4, fontSize: 10, color: C._muted }}>
+          <div style={{ marginTop: 4, fontSize: 10, color: C.muted }}>
             <div>
               Cooling:{' '}
-              <span style={{ color: C._text, fontWeight: 600 }}>
+              <span style={{ color: C.text, fontWeight: 600 }}>
                 {fmt(sensitivity.cooling_sensitivity)} MW/°C
               </span>
             </div>
             <div>
               Heating:{' '}
-              <span style={{ color: C._text, fontWeight: 600 }}>
+              <span style={{ color: C.text, fontWeight: 600 }}>
                 {fmt(sensitivity.heating_sensitivity)} MW/°C
               </span>
             </div>
             <div>
               Humidity amp:{' '}
-              <span style={{ color: C._text, fontWeight: 600 }}>
+              <span style={{ color: C.text, fontWeight: 600 }}>
                 {fmt(sensitivity.humidity_amplification)}×
               </span>
             </div>
@@ -1523,7 +1513,7 @@ export default function WeatherDeepPage({
       {Object.entries(peakWindows).map(([name, data]) => {
         const stress = data.stress_status;
         const stressColor =
-          stress === 'Heat Stress' ? C._red : stress === 'Cold Stress' ? C._cyan : C._green;
+          stress === 'Heat Stress' ? C.red : stress === 'Cold Stress' ? C.info : C.green;
         return (
           <div
             key={name}
@@ -1549,7 +1539,7 @@ export default function WeatherDeepPage({
                   fontWeight: 700,
                   padding: '2px 10px',
                   borderRadius: 20,
-                  background: `${stressColor}18`,
+                  background: `color-mix(in srgb, ${stressColor} 9%, transparent)`,
                   color: stressColor,
                 }}
               >
@@ -1558,27 +1548,27 @@ export default function WeatherDeepPage({
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
               <div>
-                <span style={{ color: C._muted }}>Temp</span>{' '}
+                <span style={{ color: C.muted }}>Temp</span>{' '}
                 <span style={{ fontWeight: 600 }}>{fmt(data.temp_avg)}°C</span>
               </div>
               <div>
-                <span style={{ color: C._muted }}>Δ</span>{' '}
-                <span style={{ color: data.temp_delta > 0 ? C._red : C._green, fontWeight: 600 }}>
+                <span style={{ color: C.muted }}>Δ</span>{' '}
+                <span style={{ color: data.temp_delta > 0 ? C.red : C.green, fontWeight: 600 }}>
                   {sgn(data.temp_delta)}°C
                 </span>
               </div>
               <div>
-                <span style={{ color: C._muted }}>Hum</span>{' '}
+                <span style={{ color: C.muted }}>Hum</span>{' '}
                 <span style={{ fontWeight: 600 }}>{fmt(data.hum_avg, 0)}%</span>
               </div>
               <div>
-                <span style={{ color: C._muted }}>Δ</span>{' '}
-                <span style={{ color: data.hum_delta > 0 ? C._red : C._green, fontWeight: 600 }}>
+                <span style={{ color: C.muted }}>Δ</span>{' '}
+                <span style={{ color: data.hum_delta > 0 ? C.red : C.green, fontWeight: 600 }}>
                   {sgn(data.hum_delta)}%
                 </span>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <span style={{ color: C._muted }}>Precip</span>{' '}
+                <span style={{ color: C.muted }}>Precip</span>{' '}
                 <span style={{ fontWeight: 600 }}>{fmt(data.precip_total)} mm</span>
               </div>
             </div>
@@ -1587,7 +1577,7 @@ export default function WeatherDeepPage({
       })}
     </div>
   ) : (
-    <div style={{ color: C._muted, fontSize: 12 }}>No peak stress analysis available.</div>
+    <div style={{ color: C.muted, fontSize: 12 }}>No peak stress analysis available.</div>
   );
 
   const rainPanel = rainMetrics ? (
@@ -1596,29 +1586,29 @@ export default function WeatherDeepPage({
         label="Total Rainfall"
         value={fmt(rainMetrics.total_mm)}
         unit="mm"
-        color={C._purple}
+        color={C.accent2}
       />
       <MetricCard
         label="Max Intensity"
         value={fmt(rainMetrics.max_intensity)}
         unit="mm/15m"
-        color={C._cyan}
+        color={C.info}
       />
       <MetricCard
         label="Rain Duration"
         value={fmt(rainMetrics.rain_hours, 0)}
         unit="hours"
-        color={C._accent2}
+        color={C.info}
       />
       <MetricCard
         label="Load Impact"
         value={fmt(rainMetrics.load_impact_mw, 0)}
         unit="MW"
-        color={rainMetrics.load_impact_mw < 0 ? C._green : C._red}
+        color={rainMetrics.load_impact_mw < 0 ? C.green : C.red}
       />
     </div>
   ) : (
-    <div style={{ color: C._muted, fontSize: 12 }}>No rain and cloud intelligence available.</div>
+    <div style={{ color: C.muted, fontSize: 12 }}>No rain and cloud intelligence available.</div>
   );
 
   /* ═══════════════════════════════════════════════════════════════
@@ -1654,7 +1644,7 @@ export default function WeatherDeepPage({
           label="Avg Temperature"
           value={fmt(computed.avgTemp)}
           unit="°C"
-          color={C._accent}
+          color={C.warm}
           delta={dodMaxTemp?.change}
           sub={`Range: ${fmt(computed.minTemp)} – ${fmt(computed.maxTemp)}°C`}
         />
@@ -1662,7 +1652,7 @@ export default function WeatherDeepPage({
           label="Avg Humidity"
           value={`${fmt(computed.avgHum, 0)}`}
           unit="%"
-          color={C._cyan}
+          color={C.info}
           delta={dodHum?.change}
         />
         {(() => {
@@ -1674,7 +1664,7 @@ export default function WeatherDeepPage({
               label="Total Precipitation"
               value={fmt(rainVal, decimals)}
               unit="mm"
-              color={C._purple}
+              color={C.accent2}
               sub={
                 rainMetrics
                   ? `${rainMetrics.rain_hours || 0}h duration • max ${fmt(rainMetrics.max_intensity, 4)} mm/15m`
@@ -1687,14 +1677,14 @@ export default function WeatherDeepPage({
           label="CDD"
           value={fmt(computed.cdd)}
           unit="deg-day"
-          color={C._accent}
+          color={C.warm}
           sub={`≈ ${sgn(computed.cdd * 20)} MW cooling load`}
         />
         <MetricCard
           label="HDD"
           value={fmt(computed.hdd)}
           unit="deg-day"
-          color={C._cyan || '#5B9FE4'}
+          color={C.info}
           sub={`≈ ${sgn(computed.hdd * 18)} MW heating load`}
         />
       </div>
@@ -1795,7 +1785,8 @@ export default function WeatherDeepPage({
                           width: 14,
                           height: 14,
                           borderRadius: '50%',
-                          background: '#fff',
+                          background: 'var(--bg-elevated)',
+                          boxShadow: '0 1px 2px rgba(var(--shadow-rgb), 0.35)',
                           position: 'absolute',
                           top: 2,
                           left: t.val ? 18 : 2,
@@ -1825,9 +1816,9 @@ export default function WeatherDeepPage({
                     fontWeight: 700,
                     padding: '5px 12px',
                     borderRadius: 20,
-                    background: `${computed.regime.color}18`,
+                    background: `color-mix(in srgb, ${computed.regime.color} 9%, transparent)`,
                     color: computed.regime.color,
-                    border: `1px solid ${computed.regime.color}33`,
+                    border: `1px solid color-mix(in srgb, ${computed.regime.color} 20%, transparent)`,
                   }}
                 >
                   {computed.regime.name}
@@ -1863,8 +1854,8 @@ export default function WeatherDeepPage({
                   display: 'inline-flex',
                   gap: 3,
                   padding: '5px',
-                  background: '#1A191E',
-                  border: '1px solid #2A292F',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--outline)',
                   borderRadius: 999,
                   flexWrap: 'wrap',
                 }}
@@ -1883,8 +1874,8 @@ export default function WeatherDeepPage({
                       fontWeight: 600,
                       letterSpacing: 0.5,
                       borderRadius: 999,
-                      background: chartTab === t.id ? '#F0782518' : 'transparent',
-                      color: chartTab === t.id ? '#F07825' : C.muted,
+                      background: chartTab === t.id ? 'rgba(var(--accent-rgb), 0.09)' : 'transparent',
+                      color: chartTab === t.id ? 'var(--accent)' : C.muted,
                       transition: 'all 0.15s',
                     }}
                   >
@@ -1910,9 +1901,9 @@ export default function WeatherDeepPage({
                       e.target.value = '';
                     }}
                     style={{
-                      background: C._surface,
-                      border: `1px solid ${C._border}`,
-                      color: C._text,
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      color: C.text,
                       fontSize: 11,
                       padding: '8px 12px',
                       borderRadius: 999,
@@ -1920,16 +1911,16 @@ export default function WeatherDeepPage({
                       cursor: 'pointer',
                     }}
                   />
-                  {dodLoading && <span style={{ fontSize: 10, color: C._accent }}>Loading...</span>}
+                  {dodLoading && <span style={{ fontSize: 10, color: C.accent }}>Loading...</span>}
                   <span
                     style={{
                       fontSize: 10,
                       fontWeight: 600,
                       padding: '5px 10px',
                       borderRadius: 20,
-                      background: `${C._accent}20`,
-                      color: C._accent,
-                      border: `1px solid ${C._accent}33`,
+                      background: `color-mix(in srgb, ${C.accent} 13%, transparent)`,
+                      color: C.accent,
+                      border: `1px solid color-mix(in srgb, ${C.accent} 20%, transparent)`,
                     }}
                   >
                     {effectiveDate || 'Current'} (primary)
@@ -1942,9 +1933,9 @@ export default function WeatherDeepPage({
                         fontWeight: 600,
                         padding: '5px 10px',
                         borderRadius: 20,
-                        background: `${C._accent2}15`,
-                        color: C._accent2,
-                        border: `1px solid ${C._accent2}33`,
+                        background: `color-mix(in srgb, ${C.accent2} 8%, transparent)`,
+                        color: C.accent2,
+                        border: `1px solid color-mix(in srgb, ${C.accent2} 20%, transparent)`,
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 6,
@@ -1952,14 +1943,14 @@ export default function WeatherDeepPage({
                     >
                       {d}
                       {!dodDateData[d] && (
-                        <span style={{ color: C._warn, fontSize: 9 }}>(loading)</span>
+                        <span style={{ color: C.warn, fontSize: 9 }}>(loading)</span>
                       )}
                       <button
                         onClick={() => removeDodDate(d)}
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: C._red,
+                          color: C.red,
                           cursor: 'pointer',
                           fontFamily: 'inherit',
                           fontSize: 12,
@@ -1979,8 +1970,8 @@ export default function WeatherDeepPage({
                       style={{
                         fontSize: 9,
                         background: 'transparent',
-                        border: `1px solid ${C._border}`,
-                        color: C._muted,
+                        border: `1px solid ${C.border}`,
+                        color: C.muted,
                         padding: '5px 10px',
                         borderRadius: 999,
                         cursor: 'pointer',
@@ -2008,7 +1999,7 @@ export default function WeatherDeepPage({
                   fontSize: 9,
                   textTransform: 'uppercase',
                   letterSpacing: 1.5,
-                  color: C._muted,
+                  color: C.muted,
                 }}
               >
                 Detail Panels
@@ -2020,9 +2011,9 @@ export default function WeatherDeepPage({
                   fontWeight: 600,
                   padding: '7px 12px',
                   borderRadius: 999,
-                  border: `1px solid ${C._border}`,
-                  background: C._surface,
-                  color: C._text,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.text,
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                 }}
@@ -2036,9 +2027,9 @@ export default function WeatherDeepPage({
                   fontWeight: 600,
                   padding: '7px 12px',
                   borderRadius: 999,
-                  border: `1px solid ${C._border}`,
-                  background: `${C._accent}10`,
-                  color: C._text,
+                  border: `1px solid ${C.border}`,
+                  background: `color-mix(in srgb, ${C.accent} 6%, transparent)`,
+                  color: C.text,
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                 }}
@@ -2052,9 +2043,9 @@ export default function WeatherDeepPage({
                   fontWeight: 600,
                   padding: '7px 12px',
                   borderRadius: 999,
-                  border: `1px solid ${C._border}`,
-                  background: C._surface,
-                  color: C._text,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.text,
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                 }}
@@ -2068,9 +2059,9 @@ export default function WeatherDeepPage({
                   fontWeight: 600,
                   padding: '7px 12px',
                   borderRadius: 999,
-                  border: `1px solid ${C._border}`,
-                  background: C._surface,
-                  color: C._text,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.text,
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                 }}
@@ -2084,7 +2075,7 @@ export default function WeatherDeepPage({
         <div
           style={{
             padding: '10px 12px 16px',
-            background: 'linear-gradient(180deg, rgba(32, 31, 37, 0.96), rgba(26, 25, 30, 0.96))',
+            background: 'linear-gradient(180deg, var(--bg-panel), var(--bg-surface))',
             flex: 1,
             minHeight: 0,
             display: 'flex',
@@ -2092,11 +2083,11 @@ export default function WeatherDeepPage({
         >
           <div
             style={{
-              background: 'rgba(36, 35, 42, 0.9)',
-              border: `1px solid ${C._border}`,
+              background: 'rgba(var(--panel-rgb), 0.9)',
+              border: `1px solid ${C.border}`,
               borderRadius: 14,
               padding: '10px 10px 18px',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
+              boxShadow: 'inset 0 1px 0 rgba(var(--overlay-rgb), 0.02)',
               display: 'flex',
               flex: 1,
               minHeight: 0,
@@ -2142,16 +2133,16 @@ export default function WeatherDeepPage({
               <div
                 key={key}
                 style={{
-                  background: '#0E0D12',
+                  background: 'var(--bg)',
                   borderRadius: 10,
                   padding: '12px 16px',
-                  border: '1px solid #2A292F',
+                  border: '1px solid var(--outline)',
                 }}
               >
                 <div
                   style={{
                     fontSize: 9,
-                    color: C._muted,
+                    color: C.muted,
                     textTransform: 'uppercase',
                     letterSpacing: 1,
                   }}
@@ -2162,14 +2153,14 @@ export default function WeatherDeepPage({
                   style={{
                     fontSize: 15,
                     fontWeight: 700,
-                    color: mwValue >= 0 ? C._red : C._green,
+                    color: mwValue >= 0 ? C.red : C.green,
                     marginTop: 4,
                   }}
                 >
                   {mwValue >= 0 ? '+' : ''}
                   {fmt(mwValue, 0)} MW
                 </div>
-                <div style={{ fontSize: 9, color: C._muted, marginTop: 4 }}>
+                <div style={{ fontSize: 9, color: C.muted, marginTop: 4 }}>
                   {def.coef > 0 ? '+' : ''}
                   {def.coef} {def.unit}
                   {def.threshold ? ` above ${def.threshold}` : ''}
@@ -2179,14 +2170,14 @@ export default function WeatherDeepPage({
           })}
           <div
             style={{
-              background: '#0E0D12',
+              background: 'var(--bg)',
               borderRadius: 10,
               padding: '12px 16px',
-              border: `1px solid ${C._accent}44`,
+              border: `1px solid color-mix(in srgb, ${C.accent} 27%, transparent)`,
             }}
           >
             <div
-              style={{ fontSize: 9, color: C._muted, textTransform: 'uppercase', letterSpacing: 1 }}
+              style={{ fontSize: 9, color: C.muted, textTransform: 'uppercase', letterSpacing: 1 }}
             >
               Total Weather MW
             </div>
@@ -2194,7 +2185,7 @@ export default function WeatherDeepPage({
               style={{
                 fontSize: 18,
                 fontWeight: 800,
-                color: computed.totalMW >= 0 ? C._red : C._green,
+                color: computed.totalMW >= 0 ? C.red : C.green,
                 marginTop: 4,
               }}
             >
@@ -2202,7 +2193,7 @@ export default function WeatherDeepPage({
               {fmt(computed.totalMW, 0)} MW
             </div>
             {computed.compoundMult !== 1.0 && (
-              <div style={{ fontSize: 9, color: C._accent, marginTop: 4 }}>
+              <div style={{ fontSize: 9, color: C.accent, marginTop: 4 }}>
                 ×{computed.compoundMult.toFixed(2)} compound effect
               </div>
             )}

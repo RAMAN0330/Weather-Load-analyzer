@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { ForecastResponse } from '../../types/api';
 import { blockToTime } from '../../lib/utils';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 
 interface Props {
   data: ForecastResponse | undefined;
@@ -23,6 +24,7 @@ export function ForecastChart({
   onBlockHover,
   showActual = true,
 }: Props) {
+  const t = useChartTokens();
   const option = useMemo(() => {
     const blocks = Array.from({ length: 96 }, (_, i) => i + 1);
     const xLabels = blocks.map(blockToTime);
@@ -65,7 +67,7 @@ export function ForecastChart({
           stack: 'confidence',
           showSymbol: false,
           lineStyle: { opacity: 0 },
-          areaStyle: { color: 'hsl(22 87% 55% / 0.12)' },
+          areaStyle: { color: withAlpha(t.accent, 0.12) },
           tooltip: { show: false },
           z: 1,
         }
@@ -79,7 +81,7 @@ export function ForecastChart({
         data: baseline,
         showSymbol: false,
         smooth: true,
-        lineStyle: { color: 'hsl(228 11% 60%)', width: 1.2, type: 'dashed' },
+        lineStyle: { color: t.accent2, width: 1.2, type: 'dashed' },
         emphasis: { disabled: true },
         z: 2,
       });
@@ -92,7 +94,7 @@ export function ForecastChart({
         data: compareSeries,
         showSymbol: false,
         smooth: true,
-        lineStyle: { color: 'hsl(211 71% 62%)', width: 1.6, opacity: 0.85 },
+        lineStyle: { color: t.info, width: 1.6, opacity: 0.85 },
         z: 3,
       });
     }
@@ -103,7 +105,7 @@ export function ForecastChart({
       data: forecast,
       showSymbol: false,
       smooth: true,
-      lineStyle: { color: 'hsl(22 87% 55%)', width: 2.6, shadowColor: 'hsl(22 87% 55% / 0.5)', shadowBlur: 8 },
+      lineStyle: { color: t.accent, width: 2.6, shadowColor: withAlpha(t.accent, 0.5), shadowBlur: 8 },
       areaStyle: {
         color: {
           type: 'linear',
@@ -112,8 +114,8 @@ export function ForecastChart({
           x2: 0,
           y2: 1,
           colorStops: [
-            { offset: 0, color: 'hsl(22 87% 55% / 0.18)' },
-            { offset: 1, color: 'hsl(22 87% 55% / 0)' },
+            { offset: 0, color: withAlpha(t.accent, 0.18) },
+            { offset: 1, color: withAlpha(t.accent, 0) },
           ],
         },
       },
@@ -128,7 +130,7 @@ export function ForecastChart({
         showSymbol: false,
         smooth: false,
         connectNulls: false,
-        lineStyle: { color: 'hsl(230 14% 92%)', width: 1.6 },
+        lineStyle: { color: t.success, width: 1.6 },
         z: 5,
       });
     }
@@ -137,11 +139,11 @@ export function ForecastChart({
       grid: { top: 24, right: 16, bottom: 36, left: 56 },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'hsl(226 14% 13%)',
-        borderColor: 'hsl(226 10% 22%)',
+        backgroundColor: t.elevated,
+        borderColor: t.outline,
         borderWidth: 1,
-        textStyle: { color: 'hsl(230 14% 92%)', fontSize: 12 },
-        axisPointer: { lineStyle: { color: 'hsl(22 87% 55% / 0.7)', type: 'solid' } },
+        textStyle: { color: t.text, fontSize: 12 },
+        axisPointer: { lineStyle: { color: withAlpha(t.accent, 0.7), type: 'solid' } },
         formatter: (items: any[]) => {
           if (!items?.length) return '';
           const blockIdx = items[0].dataIndex;
@@ -153,12 +155,12 @@ export function ForecastChart({
               return `<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:${it.color}">●</span><span>${it.seriesName}</span><span style="font-family:'IBM Plex Mono',monospace;font-weight:600">${valStr}</span></div>`;
             })
             .join('');
-          return `<div style="font-size:11px"><div style="margin-bottom:4px;color:hsl(228 11% 60%);text-transform:uppercase;letter-spacing:0.08em;font-size:10px">Block ${blockIdx + 1} · ${time}</div>${rows}</div>`;
+          return `<div style="font-size:11px"><div style="margin-bottom:4px;color:${t.textMuted};text-transform:uppercase;letter-spacing:0.08em;font-size:10px">Block ${blockIdx + 1} · ${time}</div>${rows}</div>`;
         },
       },
       legend: {
         bottom: 4,
-        textStyle: { color: 'hsl(228 11% 60%)', fontSize: 11 },
+        textStyle: { color: t.textMuted, fontSize: 11 },
         itemWidth: 10,
         itemHeight: 10,
         icon: 'roundRect',
@@ -174,12 +176,12 @@ export function ForecastChart({
         type: 'category',
         data: xLabels,
         axisLabel: {
-          color: 'hsl(228 11% 60%)',
+          color: t.textMuted,
           fontSize: 10,
           interval: 11,
           formatter: (v: string) => v,
         },
-        axisLine: { lineStyle: { color: 'hsl(226 10% 22%)' } },
+        axisLine: { lineStyle: { color: t.outline } },
         axisTick: { show: false },
         boundaryGap: false,
       },
@@ -187,12 +189,12 @@ export function ForecastChart({
         type: 'value',
         scale: true,
         axisLabel: {
-          color: 'hsl(228 11% 60%)',
+          color: t.textMuted,
           fontSize: 10,
           formatter: (v: number) =>
             Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${v.toFixed(0)}`,
         },
-        splitLine: { lineStyle: { color: 'hsl(226 10% 22% / 0.6)', type: 'dashed' } },
+        splitLine: { lineStyle: { color: withAlpha(t.outline, 0.6), type: 'dashed' } },
         axisLine: { show: false },
         axisTick: { show: false },
       },
@@ -201,7 +203,7 @@ export function ForecastChart({
       animationDuration: 320,
       animationEasing: 'cubicOut',
     };
-  }, [data, compare, compareLabel, showActual]);
+  }, [data, compare, compareLabel, showActual, t]);
 
   const onEvents = useMemo(
     () =>

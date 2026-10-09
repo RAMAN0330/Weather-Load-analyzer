@@ -15,43 +15,38 @@ import {
   buildTimeAxis,
 } from './pipelineApi';
 import HorizonToggle from '../../components/HorizonToggle';
+import { useChartTokens, withAlpha } from '../../lib/chartTheme';
 
-const COLORS = [
-  '#F07825',
-  '#5B9FE4',
-  '#34D399',
-  '#F87171',
-  '#FBBF24',
-  '#C084FC',
-  '#45b7d1',
-  '#F472B6',
-];
+// Chart theme — resolved from CSS tokens (see docs/theming-guide.md).
+function chartTheme(tk) {
+  return {
+    COLORS: [tk.warm, tk.accent, tk.success, tk.danger, tk.warning, tk.accent2, tk.info, tk.textSecondary],
+    TARGET_COLOR: tk.danger,
+    DARK_TOOLTIP: {
+      trigger: 'axis',
+      backgroundColor: tk.elevated,
+      borderColor: tk.outline,
+      borderWidth: 1,
+      textStyle: { color: tk.text, fontSize: 13 },
+    },
+    DARK_LEGEND: {
+      type: 'scroll',
+      bottom: 0,
+      icon: 'roundRect',
+      itemWidth: 14,
+      itemHeight: 8,
+      textStyle: { fontSize: 12, color: tk.textSecondary },
+    },
+    DARK_AXIS: {
+      axisLine: { lineStyle: { color: tk.outline } },
+      axisTick: { lineStyle: { color: tk.outline } },
+      axisLabel: { color: tk.textSecondary, fontSize: 12 },
+      splitLine: { lineStyle: { color: withAlpha(tk.outline, 0.6), type: 'dashed' } },
+    },
+  };
+}
 
-const DARK_TOOLTIP = {
-  trigger: 'axis',
-  backgroundColor: 'rgba(20,19,26,0.95)',
-  borderColor: 'rgba(255,255,255,0.1)',
-  borderWidth: 1,
-  textStyle: { color: '#F0F2F8', fontSize: 13 },
-};
-
-const DARK_LEGEND = {
-  type: 'scroll',
-  bottom: 0,
-  icon: 'roundRect',
-  itemWidth: 14,
-  itemHeight: 8,
-  textStyle: { fontSize: 12, color: '#B8BDCC' },
-};
-
-const DARK_AXIS = {
-  axisLine: { lineStyle: { color: 'rgba(255,255,255,0.2)' } },
-  axisTick: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
-  axisLabel: { color: '#B8BDCC', fontSize: 12 },
-  splitLine: { lineStyle: { color: 'rgba(255,255,255,0.07)', type: 'dashed' } },
-};
-
-const DAY_BADGE_COLOR = { working: '#34D399', sunday: '#FBBF24', holiday: '#F87171' };
+const DAY_BADGE_COLOR = { working: 'var(--success)', sunday: 'var(--warning)', holiday: 'var(--danger)' };
 
 function fmt(v, d = 3) {
   if (v === null || v === undefined || isNaN(v)) return '—';
@@ -87,7 +82,7 @@ const S = {
   },
   btn: {
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-fg)',
     border: 'none',
     borderRadius: 6,
     padding: '5px 14px',
@@ -130,7 +125,7 @@ const S = {
   },
   td: {
     padding: '5px 8px',
-    borderBottom: '1px solid rgba(255,255,255,0.04)',
+    borderBottom: '1px solid rgba(var(--overlay-rgb),0.04)',
     color: 'var(--text)',
     fontSize: 13,
   },
@@ -140,9 +135,9 @@ const S = {
     borderRadius: 10,
     fontSize: 11,
     fontWeight: 600,
-    background: (DAY_BADGE_COLOR[cat] || '#aaa') + '22',
-    color: DAY_BADGE_COLOR[cat] || '#aaa',
-    border: `1px solid ${DAY_BADGE_COLOR[cat] || '#aaa'}55`,
+    background: `color-mix(in srgb, ${DAY_BADGE_COLOR[cat] || 'var(--text-muted)'} 13%, transparent)`,
+    color: DAY_BADGE_COLOR[cat] || 'var(--text-muted)',
+    border: `1px solid color-mix(in srgb, ${DAY_BADGE_COLOR[cat] || 'var(--text-muted)'} 33%, transparent)`,
   }),
   tabBar: {
     display: 'flex',
@@ -310,6 +305,8 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
   };
 
   const timeAxis = useMemo(() => buildTimeAxis(), []);
+  const tk = useChartTokens();
+  const { COLORS, TARGET_COLOR, DARK_TOOLTIP, DARK_LEGEND, DARK_AXIS } = useMemo(() => chartTheme(tk), [tk]);
 
   const weatherSubplotOption = useMemo(() => {
     if (!result || !selectedSimilar.length) return null;
@@ -330,10 +327,10 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
             data: profiles[d][key] || [],
             lineStyle: {
               width: isTarget ? 3 : 1.5,
-              color: isTarget ? '#F87171' : COLORS[i % COLORS.length],
+              color: isTarget ? TARGET_COLOR : COLORS[i % COLORS.length],
               type: isTarget ? 'solid' : 'dashed',
             },
-            itemStyle: { color: isTarget ? '#F87171' : COLORS[i % COLORS.length] },
+            itemStyle: { color: isTarget ? TARGET_COLOR : COLORS[i % COLORS.length] },
           };
         });
     const maxLen = Math.max(
@@ -394,21 +391,21 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
           type: 'value',
           name: 'Temp (°C)',
           gridIndex: 0,
-          nameTextStyle: { fontSize: 12, color: '#B8BDCC' },
+          nameTextStyle: { fontSize: 12, color: tk.textSecondary },
           ...axisStyle,
         },
         {
           type: 'value',
           name: 'Humidity (%)',
           gridIndex: 1,
-          nameTextStyle: { fontSize: 12, color: '#B8BDCC' },
+          nameTextStyle: { fontSize: 12, color: tk.textSecondary },
           ...axisStyle,
         },
         {
           type: 'value',
           name: 'Precip (mm)',
           gridIndex: 2,
-          nameTextStyle: { fontSize: 12, color: '#B8BDCC' },
+          nameTextStyle: { fontSize: 12, color: tk.textSecondary },
           ...axisStyle,
         },
       ],
@@ -418,7 +415,7 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
         ...makeSeries('precip', 2, 2),
       ],
     };
-  }, [result, selectedSimilar]);
+  }, [result, selectedSimilar, tk]);
 
   const loadOverlayOption = useMemo(() => {
     if (!result || !selectedSimilar.length) return null;
@@ -444,10 +441,10 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
         data,
         lineStyle: {
           width: isTarget ? 3 : 1.5,
-          color: isTarget ? '#F87171' : COLORS[i % COLORS.length],
+          color: isTarget ? TARGET_COLOR : COLORS[i % COLORS.length],
           type: isTarget ? 'solid' : 'dashed',
         },
-        itemStyle: { color: isTarget ? '#F87171' : COLORS[i % COLORS.length] },
+        itemStyle: { color: isTarget ? TARGET_COLOR : COLORS[i % COLORS.length] },
       };
     });
     const maxLen = Math.max(
@@ -470,12 +467,12 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
       yAxis: {
         type: 'value',
         name: 'MW',
-        nameTextStyle: { color: '#B8BDCC', fontSize: 12 },
+        nameTextStyle: { color: tk.textSecondary, fontSize: 12 },
         ...DARK_AXIS,
       },
       series,
     };
-  }, [result, selectedSimilar, loadData, horizon, t1Forecast]);
+  }, [result, selectedSimilar, loadData, horizon, t1Forecast, tk]);
 
   const loadChangeTable = useMemo(() => {
     if (!result) return [];
@@ -545,7 +542,7 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
         >
           {running ? 'Searching…' : 'Find Similar Days'}
         </button>
-        {runError && <span style={{ fontSize: 11, color: '#F87171' }}>{runError}</span>}
+        {runError && <span style={{ fontSize: 11, color: 'var(--danger)' }}>{runError}</span>}
         {setHorizon && (
           <HorizonToggle
             horizon={horizon}
@@ -559,21 +556,21 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
       {/* Metrics row */}
       <div style={S.metricsRow}>
         {[
-          { label: 'Target Date', value: targetDate || '—', color: '#5B9FE4' },
+          { label: 'Target Date', value: targetDate || '—', color: 'var(--accent)' },
           {
             label: 'Candidate Days',
             value: uniqueWeatherDates.length.toLocaleString(),
-            color: '#34D399',
+            color: 'var(--success)',
           },
           {
             label: 'Best Match',
             value: bestMatch ? bestMatch.date : 'Run search',
-            color: '#FBBF24',
+            color: 'var(--warning)',
           },
           {
             label: 'Best Distance',
             value: bestMatch ? fmt(bestMatch.distance) : '—',
-            color: '#C084FC',
+            color: 'var(--accent2)',
           },
         ].map((m) => (
           <div key={m.label} style={S.metricCard(m.color)}>

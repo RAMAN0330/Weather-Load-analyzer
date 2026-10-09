@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
+import { useChartTokens, themedEcBase } from '../../lib/chartTheme';
 
 export default function PeakWindowStress({ data, intraday }) {
+  const t = useChartTokens();
   if (!data) return null;
 
   const windows = ['Morning', 'Midday', 'Evening', 'Night'];
@@ -20,38 +22,38 @@ export default function PeakWindowStress({ data, intraday }) {
       title: {
         text: 'Window Comparison',
         left: 'center',
-        textStyle: { color: '#ccc', fontSize: 14 },
+        textStyle: { color: t.textSecondary, fontSize: 14 },
       },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: { top: 20, textStyle: { color: '#aaa' } },
+      tooltip: { ...themedEcBase(t).tooltip, trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { top: 20, textStyle: { color: t.textMuted } },
       grid: { left: 40, right: 20, bottom: 20 },
       xAxis: {
         type: 'category',
         data: windows,
-        axisLabel: { color: '#aaa' },
+        axisLabel: { color: t.textMuted },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: '#333' } },
+        axisLabel: { color: t.textMuted },
+        splitLine: { lineStyle: { color: t.outline } },
       },
       series: [
         {
           name: 'Temp Delta',
           type: 'bar',
           data: tempDeltas,
-          itemStyle: { color: '#ef4444' },
+          itemStyle: { color: t.warm },
         },
         {
           name: 'Hum Delta',
           type: 'bar',
           data: humDeltas,
-          itemStyle: { color: '#3b82f6' },
+          itemStyle: { color: t.info },
         },
       ],
     };
-  }, [data]);
+  }, [data, t]);
 
   const gaugeOption = useMemo(() => {
     const maxDelta = Math.max(...windows.map((w) => Math.abs(data[w]?.temp_delta || 0)));
@@ -61,7 +63,7 @@ export default function PeakWindowStress({ data, intraday }) {
         text: 'Peak Heat Stress',
         left: 'center',
         top: 10,
-        textStyle: { color: '#ccc', fontSize: 14 },
+        textStyle: { color: t.textSecondary, fontSize: 14 },
       },
       series: [
         {
@@ -71,16 +73,16 @@ export default function PeakWindowStress({ data, intraday }) {
           min: 0,
           max: 10,
           splitNumber: 5,
-          itemStyle: { color: '#ef4444' },
+          itemStyle: { color: t.danger },
           progress: { show: true, width: 10 },
           pointer: { show: false },
           axisLine: {
             lineStyle: {
               width: 10,
               color: [
-                [0.3, '#10b981'],
-                [0.7, '#f59e0b'],
-                [1, '#ef4444'],
+                [0.3, t.success],
+                [0.7, t.warning],
+                [1, t.danger],
               ],
             },
           },
@@ -98,7 +100,7 @@ export default function PeakWindowStress({ data, intraday }) {
         },
       ],
     };
-  }, [data]);
+  }, [data, t]);
 
   const peakShift = useMemo(() => {
     if (!intraday) return null;
@@ -145,30 +147,30 @@ export default function PeakWindowStress({ data, intraday }) {
       title: {
         text: 'Peak Window Impact',
         left: 'center',
-        textStyle: { color: '#ccc', fontSize: 13 },
+        textStyle: { color: t.textSecondary, fontSize: 13 },
       },
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: '{b}: {c} MW' },
+      tooltip: { ...themedEcBase(t).tooltip, trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: '{b}: {c} MW' },
       grid: { left: 45, right: 20, top: 35, bottom: 20 },
       xAxis: {
         type: 'category',
         data: windows,
-        axisLabel: { color: '#aaa' },
+        axisLabel: { color: t.textMuted },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: '#333' } },
+        axisLabel: { color: t.textMuted },
+        splitLine: { lineStyle: { color: t.outline } },
       },
       series: [
         {
           type: 'bar',
           data: impactIndex,
-          itemStyle: { color: '#f59e0b' },
+          itemStyle: { color: t.warning },
         },
       ],
     };
-  }, [data]);
+  }, [data, t]);
 
   const rampOption = useMemo(() => {
     const deltaSeries = intraday?.temperature?.delta || [];
@@ -181,48 +183,48 @@ export default function PeakWindowStress({ data, intraday }) {
       title: {
         text: 'Ramp Acceleration',
         left: 'center',
-        textStyle: { color: '#ccc', fontSize: 13 },
+        textStyle: { color: t.textSecondary, fontSize: 13 },
       },
-      tooltip: { trigger: 'axis', formatter: '{b}: {c} MW' },
+      tooltip: { ...themedEcBase(t).tooltip, trigger: 'axis', formatter: '{b}: {c} MW' },
       grid: { left: 45, right: 20, top: 35, bottom: 20 },
       xAxis: {
         type: 'category',
         data: ramp.map((_, i) => i + 1),
-        axisLabel: { color: '#aaa', interval: 7 },
+        axisLabel: { color: t.textMuted, interval: 7 },
         axisTick: { show: false },
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: '#333' } },
+        axisLabel: { color: t.textMuted },
+        splitLine: { lineStyle: { color: t.outline } },
       },
       series: [
         {
           type: 'line',
           data: ramp,
           smooth: true,
-          lineStyle: { color: '#38bdf8', width: 2 },
-          itemStyle: { color: '#38bdf8' },
+          lineStyle: { color: t.info, width: 2 },
+          itemStyle: { color: t.info },
         },
       ],
     };
-  }, [intraday]);
+  }, [intraday, t]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full">
       <div className="lg:col-span-2 flex flex-col gap-4">
-        <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-2 min-h-[260px]">
+        <div className="bg-[rgba(var(--panel-rgb),0.5)] border border-[color:var(--outline)] rounded-lg p-2 min-h-[260px]">
           <ReactECharts option={barOption} style={{ height: '320px', width: '100%' }} />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-2 min-h-[220px]">
+          <div className="bg-[rgba(var(--panel-rgb),0.5)] border border-[color:var(--outline)] rounded-lg p-2 min-h-[220px]">
             <ReactECharts option={peakImpactOption} style={{ height: '280px', width: '100%' }} />
           </div>
-          <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-2 min-h-[220px]">
+          <div className="bg-[rgba(var(--panel-rgb),0.5)] border border-[color:var(--outline)] rounded-lg p-2 min-h-[220px]">
             {rampOption ? (
               <ReactECharts option={rampOption} style={{ height: '280px', width: '100%' }} />
             ) : (
-              <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+              <div className="h-full flex items-center justify-center text-[color:var(--text-dim)] text-sm">
                 No ramp data.
               </div>
             )}
@@ -230,43 +232,43 @@ export default function PeakWindowStress({ data, intraday }) {
         </div>
       </div>
       <div className="flex flex-col gap-4">
-        <div className="flex-1 bg-slate-900/50 border border-slate-700 rounded-lg p-2 min-h-[140px]">
+        <div className="flex-1 bg-[rgba(var(--panel-rgb),0.5)] border border-[color:var(--outline)] rounded-lg p-2 min-h-[140px]">
           <ReactECharts option={gaugeOption} style={{ height: '100%', width: '100%' }} />
         </div>
         {peakShift && (
-          <div className="flex-1 bg-slate-900/50 border border-slate-700 rounded-lg p-3 min-h-[140px] flex flex-col gap-3">
+          <div className="flex-1 bg-[rgba(var(--panel-rgb),0.5)] border border-[color:var(--outline)] rounded-lg p-3 min-h-[140px] flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-200">Peak Shift Timeline</span>
+              <span className="text-sm font-semibold text-[color:var(--text)]">Peak Shift Timeline</span>
               <span
-                className={`text-[11px] px-2 py-1 rounded-full border ${peakShift.significant ? 'border-red-400/60 text-red-300' : 'border-emerald-400/50 text-emerald-300'}`}
+                className={`text-[11px] px-2 py-1 rounded-full border ${peakShift.significant ? 'border-[color:color-mix(in_srgb,var(--danger)_60%,transparent)] text-[color:var(--danger)]' : 'border-[color:color-mix(in_srgb,var(--success)_50%,transparent)] text-[color:var(--success)]'}`}
               >
                 {peakShift.significant ? 'Significant' : 'Minor'}
               </span>
             </div>
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-[color:var(--text-muted)]">
               {peakShift.direction} by{' '}
-              <span className="text-slate-100 font-semibold">
+              <span className="text-[color:var(--text)] font-semibold">
                 {Math.abs(peakShift.shiftBlocks)} blocks
               </span>{' '}
               ({peakShift.minutes} min)
             </div>
-            <div className="relative h-3 rounded-full bg-slate-800/80 border border-slate-700">
+            <div className="relative h-3 rounded-full bg-[var(--bg-surface)] border border-[color:var(--outline)]">
               <div
-                className="absolute top-0 h-full rounded-full bg-cyan-400/60"
+                className="absolute top-0 h-full rounded-full bg-[color:color-mix(in_srgb,var(--info)_60%,transparent)]"
                 style={{ left: `${peakShift.left}%`, width: `${peakShift.width}%` }}
               />
               <div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-300 border border-slate-100"
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[var(--text-muted)] border border-[color:var(--text)]"
                 style={{ left: `calc(${peakShift.normPct}% - 6px)` }}
                 title={`Normal Peak: Block ${peakShift.idxNorm}`}
               />
               <div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-red-400 border border-red-200"
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[var(--danger)] border border-[color:var(--bg-panel)]"
                 style={{ left: `calc(${peakShift.actPct}% - 6px)` }}
                 title={`Actual Peak: Block ${peakShift.idxAct}`}
               />
             </div>
-            <div className="flex items-center justify-between text-xs text-slate-400">
+            <div className="flex items-center justify-between text-xs text-[color:var(--text-muted)]">
               <span>
                 Normal: Block {peakShift.idxNorm} • {peakShift.normalTime}
               </span>
