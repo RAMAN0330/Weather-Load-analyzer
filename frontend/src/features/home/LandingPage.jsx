@@ -43,7 +43,7 @@ export default function LandingPage({ onSelect }) {
             </div>
             <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>VidyutPragya</span>
             <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-dim)', marginLeft: 4, paddingLeft: 10, borderLeft: '1px solid var(--outline)' }}>
-              Forecast OS
+              Grid Load Forecasting
             </span>
           </div>
 
@@ -77,7 +77,7 @@ export default function LandingPage({ onSelect }) {
           {/* Badge */}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '5px 14px', borderRadius: 100, background: 'rgba(var(--accent-rgb), 0.1)', border: '1px solid rgba(var(--accent-rgb), 0.22)', marginBottom: 32 }}>
             <Zap size={10} style={{ color: ACCENT }} />
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: ACCENT }}>Energy Intelligence Platform</span>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: ACCENT }}>Grid Load Forecasting Platform</span>
           </div>
 
           {/* Headline */}
@@ -90,17 +90,17 @@ export default function LandingPage({ onSelect }) {
           </h1>
 
           <p style={{ fontSize: 17, lineHeight: 1.7, color: 'var(--text-muted)', maxWidth: 560, margin: '0 auto 40px' }}>
-            Sub-1% MAPE day-ahead forecasts with deep analytics for power procurement,
-            balancing, and grid operations across Indian states.
+            Day-ahead and T+2 electricity demand forecasts at 15-minute resolution, with
+            weather-driven uncertainty bands for procurement, balancing and grid operations.
           </p>
 
           {/* Stats row */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 0, marginBottom: 44 }}>
             {[
-              { value: '<1%', label: 'MAPE' },
               { value: '96', label: 'Blocks/day' },
-              { value: '28', label: 'States' },
               { value: '15-min', label: 'Resolution' },
+              { value: 'T+1 · T+2', label: 'Horizons' },
+              { value: 'P10–P90', label: 'Bands' },
             ].map((s, i, arr) => (
               <div key={s.label} style={{ padding: '10px 28px', borderRight: i < arr.length - 1 ? '1px solid var(--outline)' : 'none', textAlign: 'center' }}>
                 <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>{s.value}</div>
@@ -178,7 +178,7 @@ export default function LandingPage({ onSelect }) {
               color: ACCENT,
               bg: 'rgba(var(--accent-rgb), 0.09)',
               border: 'rgba(var(--accent-rgb), 0.22)',
-              desc: 'XGBoost + LightGBM ensemble with temperature sensitivity correction, momentum recalibration, and distilled neural inference — MySQL + SQLite hybrid.',
+              desc: 'LightGBM quantile models on district-level weather (wet-bulb, cooling-degree-hours, heat persistence), checked by rolling-origin backtests before use.',
             },
           ].map(({ Icon, title, color, bg, border, desc }) => (
             <div key={title}

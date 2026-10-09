@@ -62,7 +62,9 @@ const TRAINING_API_URL = getTrainingApiUrl;
 
 axios.defaults.timeout = 45000;
 
+// Product name and its one descriptor, used in the browser tab and brand blocks.
 const APP_TITLE = 'VidyutPragya';
+const APP_TAGLINE = 'Grid Load Forecasting';
 const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 
 const NAV_ITEMS = [
@@ -1530,9 +1532,11 @@ export default function App({ authUser, onLogout, onHome }) {
 
   useEffect(() => {
     const activeLabel = NAV_ITEMS.find((item) => item.key === active)?.label
-      || (active === 'settings' ? 'Settings' : 'Grid Intelligence');
-    const regionLabel = selectedRegion ? titleize(selectedRegion) : 'Grid Intelligence';
-    document.title = `${APP_TITLE} | ${activeLabel} - ${regionLabel}`;
+      || (active === 'settings' ? 'Settings' : APP_TAGLINE);
+    // Page first so tabs stay distinguishable: "Forecast Studio · Haryana — VidyutPragya".
+    document.title = selectedRegion
+      ? `${activeLabel} · ${titleize(selectedRegion)} — ${APP_TITLE}`
+      : `${activeLabel} — ${APP_TITLE}`;
   }, [active, selectedRegion]);
 
   // Sync store sliders into local adj for display/calculation
@@ -3101,7 +3105,7 @@ export default function App({ authUser, onLogout, onHome }) {
           </div>
           <div className="sb-brand-text">
             <span className="sb-brand-title">VidyutPragya</span>
-            <span className="sb-brand-sub">Forecast OS</span>
+            <span className="sb-brand-sub">{APP_TAGLINE}</span>
           </div>
           <button
             className="sb-collapse-btn"

@@ -228,7 +228,7 @@ export default function LoginPage({ onAuth }) {
             </div>
             <div>
               <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.5, color: C.text }}>VidyutPragya</div>
-              <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 600, marginTop: 1, letterSpacing: 0.2 }}>Grid Intelligence Hub</div>
+              <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 600, marginTop: 1, letterSpacing: 0.2 }}>Grid Load Forecasting</div>
             </div>
           </div>
 
@@ -255,23 +255,19 @@ export default function LoginPage({ onAuth }) {
 
           {/* metrics */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <Tile icon={BarChart3}  label="Mean Accuracy"  value="97.8%"    note="Last 24 hours"        color={C.warm}    spark />
-            <Tile icon={TrendingUp} label="Horizon Scale"  value="Dual View" note="T+1 / T+2 Seamless"   color={C.accent}  spark />
-            <Tile icon={CloudRain}  label="Station Feed"   value="Live"      note="12 High-res nodes"    color={C.green}   />
-            <Tile icon={Cpu}        label="Process Time"   value="< 2.4s"    note="Complete 96-block sync" color={C.purple}  />
+            {/* Capabilities only: no performance claims on the public login page.
+                Measured accuracy belongs behind sign-in, sourced from backtests. */}
+            <Tile icon={BarChart3}  label="Resolution"     value="96 blocks"     note="15-minute, every day"         color={C.warm}   />
+            <Tile icon={TrendingUp} label="Horizons"       value="T+1 · T+2"     note="Day-ahead and day-after"      color={C.accent} />
+            <Tile icon={CloudRain}  label="Weather inputs" value="District-level" note="Load-weighted across Haryana" color={C.green}  />
+            <Tile icon={Cpu}        label="Uncertainty"    value="P10–P90"       note="Quantile band for every block" color={C.purple} />
           </div>
 
-          {/* live simulation footer */}
-          <div>
+          {/* decorative footer — labelled as illustrative, not live data */}
+          <div aria-hidden="true">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <span style={{
-                width: 7, height: 7, borderRadius: '50%',
-                background: C.green, display: 'inline-block',
-                boxShadow: `0 0 10px ${C.green}`,
-                animation: 'blink 2s ease-in-out infinite',
-              }} />
               <span style={{ fontSize: 11, color: C.dim, letterSpacing: 1.2, textTransform: 'uppercase', fontWeight: 700, fontFamily: C.mono }}>
-                Live Stream simulation
+                Illustrative 96-block profile
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 48 }}>
