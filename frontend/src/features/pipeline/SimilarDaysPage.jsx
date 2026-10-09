@@ -522,7 +522,7 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
         />
         <span style={S.label}>Method:</span>
         <select value={method} onChange={(e) => setMethod(e.target.value)} style={S.input}>
-          <option value="euclidean">Euclidean (load + weather)</option>
+          <option value="euclidean">Euclidean (weather, standardised)</option>
           <option value="weighted">Weighted</option>
           <option value="cosine">Cosine</option>
         </select>

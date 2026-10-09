@@ -2,12 +2,10 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import axios from 'axios';
 
-// Django runs on port 8001 — auth lives entirely there.
-const DJANGO_BASE = import.meta.env.VITE_DJANGO_URL
-  ? import.meta.env.VITE_DJANGO_URL.replace(/\/$/, '')
-  : 'http://localhost:8001';
+// Auth is served by the FastAPI backend at /auth (same origin; proxied by nginx / Vite).
+const AUTH_BASE = (import.meta.env.VITE_AUTH_BASE_URL || '').replace(/\/$/, '');
 
-const authUrl = (path) => `${DJANGO_BASE}/auth/${path}`;
+const authUrl = (path) => `${AUTH_BASE}/auth/${path}`;
 
 // ── Axios 401 interceptor ─────────────────────────────────────────────────────
 // Fires on any API 401 EXCEPT the auth/me validation call on boot

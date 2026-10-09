@@ -1647,7 +1647,7 @@ export default function App({ authUser, onLogout, onHome }) {
       }
     };
 
-    // Poll the FastAPI training service; normal app data stays on Django.
+    // Poll the FastAPI forecast job status.
     const workerApiBase = TRAINING_API_BASE;
     worker.postMessage({
       type: 'start',

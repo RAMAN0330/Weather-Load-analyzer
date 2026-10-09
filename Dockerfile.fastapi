@@ -13,8 +13,9 @@ RUN pip install --no-cache-dir torch==2.9.1 --index-url https://download.pytorch
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
-COPY config.py .
 COPY build_final_data.py .
+COPY mockdata/ ./mockdata/
+COPY db/ ./db/
 
 ENV PORT=8000
 EXPOSE 8000

@@ -10,20 +10,19 @@ const normalizeBase = (base: string, fallback = '/api', appendApi = true): strin
 };
 
 /**
- * The base URL for normal app/API requests. This should point at Django.
+ * The base URL for app/API requests (FastAPI, same origin via nginx / Vite proxy).
  * Priority:
- * 1. import.meta.env.VITE_DJANGO_API_BASE_URL or VITE_API_BASE_URL
+ * 1. import.meta.env.VITE_API_BASE_URL
  * 2. '/api' (relative path, works with Vite proxy in dev and same-origin in prod)
  */
 export const API_BASE = normalizeBase(
-  import.meta.env.VITE_DJANGO_API_BASE_URL || import.meta.env.VITE_API_BASE_URL || '',
+  import.meta.env.VITE_API_BASE_URL || '',
   '/api',
   true
 );
 
 /**
- * FastAPI is now reserved for forecast/model work only.
- * In dev, Vite rewrites '/ml-api/*' to FastAPI '/api/*'.
+ * '/ml-api/*' is an alias of FastAPI '/api/*' (rewritten by Vite / nginx).
  */
 const fastApiBaseOverride = import.meta.env.VITE_FASTAPI_API_BASE_URL || '';
 

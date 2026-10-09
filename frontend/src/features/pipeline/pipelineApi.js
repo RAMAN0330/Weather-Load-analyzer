@@ -1,9 +1,17 @@
+import { useAuthStore } from '../auth/authStore';
+
 const BASE = '/api/pipeline';
 
-export const DB_STATES = ['HARYANA', 'ODISHA', 'RAJASTHAN', 'CHHATTISGARH'];
+export const DB_STATES = ['HARYANA', 'PUNJAB', 'ODISHA', 'RAJASTHAN', 'CHHATTISGARH'];
+
+// The API requires the session token on every request (raw fetch has no axios defaults).
+const authHeaders = () => {
+  const token = useAuthStore.getState().token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 const safeFetch = (url) =>
-  fetch(url).then((r) => {
+  fetch(url, { headers: authHeaders() }).then((r) => {
     if (!r.ok)
       return r.json().then((e) => {
         throw new Error(e.detail || 'Request failed');
