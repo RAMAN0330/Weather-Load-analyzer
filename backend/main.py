@@ -112,6 +112,13 @@ app.add_middleware(
 
 app.include_router(pipeline_router)
 
+# Forecast Engine v3 (/api/v3/*) — contract: docs/forecast-v3-api.md
+try:
+    from .forecast_v3_router import router as forecast_v3_router
+except ImportError:
+    from forecast_v3_router import router as forecast_v3_router
+app.include_router(forecast_v3_router)
+
 # ── Data loading helpers ───────────────────────────────────────────────────
 
 class DataUnavailable(Exception):

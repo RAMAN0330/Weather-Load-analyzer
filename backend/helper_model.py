@@ -32,10 +32,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
 # ── TF import ─────────────────────────────────────────────────────────────────
 try:
     import tensorflow as tf
-    from sklearn.preprocessing import MinMaxScaler, StandardScaler
     from tensorflow.keras import Model
     from tensorflow.keras import callbacks as C
     from tensorflow.keras import layers as L
