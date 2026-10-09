@@ -11,6 +11,8 @@ services:
     env_file: .env
     environment:
       PORT: "8000"
+      # Django that issues user session tokens; FastAPI validates against /auth/me.
+      DJANGO_AUTH_BASE_URL: "http://django:8001"
     volumes:
       - ./backend/artifacts:/app/backend/artifacts
       - ./exports:/app/exports
