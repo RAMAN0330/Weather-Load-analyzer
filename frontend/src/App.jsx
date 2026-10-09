@@ -37,7 +37,8 @@ import {
   Wind,
   Zap,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Sparkles
 } from 'lucide-react';
 
 const ReactECharts = lazy(() => import('echarts-for-react'));
@@ -51,6 +52,7 @@ const SimilarDaysPage = lazy(() => import('./features/pipeline/SimilarDaysPage')
 const WeatherLocPage = lazy(() => import('./features/pipeline/WeatherLocPage'));
 const AccuracyMonitorPage = lazy(() => import('./features/monitor/AccuracyMonitorPage'));
 const BacktestPage = lazy(() => import('./features/backtest/BacktestPage'));
+const ForecastStudioPage = lazy(() => import('./features/studio/ForecastStudioPage'));
 
 // API URL builders moved to apiConfig.ts
 const API_URL = getApiUrl;
@@ -63,6 +65,7 @@ const APP_TITLE = 'VidyutPragya';
 const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 
 const NAV_ITEMS = [
+  { key: 'studio', label: 'Forecast Studio', icon: Sparkles },
   { key: 'load_analysis', label: 'Load Analysis', icon: Activity },
   { key: 'weather_analysis', label: 'Weather Analysis', icon: Sun },
   { key: 'simulator', label: 'Simulator', icon: Play },
@@ -3403,6 +3406,12 @@ export default function App({ authUser, onLogout, onHome }) {
       {/* Simulator and Analysis handled above */}
 
       {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} selectedRegion={selectedRegion} />}
+
+      {active === 'studio' && (
+        <Suspense fallback={<ViewLoading label="Loading Forecast Studio..." />}>
+          <ForecastStudioPage selectedRegion={selectedRegion} />
+        </Suspense>
+      )}
 
       {active === 'backtest' && (
         <Suspense fallback={<ViewLoading label="Loading Backtest..." />}>
