@@ -17,7 +17,7 @@ function Spinner() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ color: 'var(--accent)', fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>
-        VidyutPragya…
+        Forecast Studio…
       </div>
     </div>
   )

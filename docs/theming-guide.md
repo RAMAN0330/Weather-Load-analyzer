@@ -74,5 +74,5 @@ Other categorical series may use `t.warm`, `t.info`, `t.accent2`, `t.warning`.
 - Never remove behaviour; colour/contrast edits only (plus layout only where asked).
 - Text must stay ≥ 4.5:1 against its background in **both** themes.
 - Gradients that are white→grey "metal" text: use `var(--title-top)` → `var(--text-secondary)`.
-- Keep the VidyutPragya brand mark (orange tile) as is.
+- Keep the Forecast Studio brand mark (orange tile) as is.
 - Fixed dark overlays (modal backdrops) may stay dark in both themes.

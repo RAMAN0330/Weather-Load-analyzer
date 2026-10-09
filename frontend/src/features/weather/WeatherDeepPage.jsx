@@ -14,7 +14,7 @@ import {
 } from '../../components/page/PagePrimitives.jsx';
 
 /* ═══════════════════════════════════════════════════════════════
-   VidyutPragya — Weather Intelligence Page
+   Forecast Studio — Weather Intelligence Page
    Real data from backend, ECharts, spacious dark layout
    ═══════════════════════════════════════════════════════════════ */
 

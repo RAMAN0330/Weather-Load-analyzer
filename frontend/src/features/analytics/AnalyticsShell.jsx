@@ -83,7 +83,7 @@ export default function AnalyticsShell({ onHome }) {
           </div>
           {!collapsed && (
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.2, color: T.fg, whiteSpace: 'nowrap' }}>VidyutPragya</div>
+              <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.2, color: T.fg, whiteSpace: 'nowrap' }}>Forecast Studio</div>
               <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.faint, marginTop: 2 }}>Analytics</div>
             </div>
           )}

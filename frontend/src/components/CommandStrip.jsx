@@ -62,7 +62,7 @@ const CommandStrip = ({
         <span className="status-dot status-dot--green status-dot--active cs-status-dot" />
         <Zap size={15} style={{ color: 'var(--accent)' }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <span className="cs-title">VidyutPragya</span>
+          <span className="cs-title">Forecast Studio</span>
           <span className="cs-region">{selectedRegion || 'Load Forecasting'}</span>
         </div>
       </div>

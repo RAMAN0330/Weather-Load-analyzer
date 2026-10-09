@@ -63,12 +63,13 @@ const TRAINING_API_URL = getTrainingApiUrl;
 axios.defaults.timeout = 45000;
 
 // Product name and its one descriptor, used in the browser tab and brand blocks.
-const APP_TITLE = 'VidyutPragya';
+const APP_TITLE = 'Forecast Studio';
 const APP_TAGLINE = 'Grid Load Forecasting';
+const APP_TAGLINE_SHORT = 'Load Forecasting'; // fits the 220px sidebar brand block
 const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 
 const NAV_ITEMS = [
-  { key: 'studio', label: 'Forecast Studio', icon: Sparkles },
+  { key: 'studio', label: 'Studio', icon: Sparkles },
   { key: 'load_analysis', label: 'Load Analysis', icon: Activity },
   { key: 'weather_analysis', label: 'Weather Analysis', icon: Sun },
   { key: 'simulator', label: 'Simulator', icon: Play },
@@ -1533,10 +1534,12 @@ export default function App({ authUser, onLogout, onHome }) {
   useEffect(() => {
     const activeLabel = NAV_ITEMS.find((item) => item.key === active)?.label
       || (active === 'settings' ? 'Settings' : APP_TAGLINE);
-    // Page first so tabs stay distinguishable: "Forecast Studio · Haryana — VidyutPragya".
-    document.title = selectedRegion
-      ? `${activeLabel} · ${titleize(selectedRegion)} — ${APP_TITLE}`
-      : `${activeLabel} — ${APP_TITLE}`;
+    // Page first so tabs stay distinguishable ("Monitor · Haryana — Forecast Studio");
+    // the Studio page is the app's home, so its tab is just the app name.
+    const lead = [active === 'studio' ? null : activeLabel, selectedRegion ? titleize(selectedRegion) : null]
+      .filter(Boolean)
+      .join(' · ');
+    document.title = lead ? `${lead} — ${APP_TITLE}` : APP_TITLE;
   }, [active, selectedRegion]);
 
   // Sync store sliders into local adj for display/calculation
@@ -3104,8 +3107,8 @@ export default function App({ authUser, onLogout, onHome }) {
             <Zap size={15} />
           </div>
           <div className="sb-brand-text">
-            <span className="sb-brand-title">VidyutPragya</span>
-            <span className="sb-brand-sub">{APP_TAGLINE}</span>
+            <span className="sb-brand-title">{APP_TITLE}</span>
+            <span className="sb-brand-sub">{APP_TAGLINE_SHORT}</span>
           </div>
           <button
             className="sb-collapse-btn"
@@ -3223,7 +3226,7 @@ export default function App({ authUser, onLogout, onHome }) {
         <div className="loading-overlay">
           <div className="loading-spinner">
             <div className="loading-brand loading-brand--pulse">
-              <span className="loading-brand__title">VidyutPragya</span>
+              <span className="loading-brand__title">{APP_TITLE}</span>
               <span className="loading-brand__subtitle">
                 {selectedRegion ? `${titleize(selectedRegion)} analytics` : 'Loading analytics'}
               </span>
@@ -3415,7 +3418,7 @@ export default function App({ authUser, onLogout, onHome }) {
       {active === 'monitor' && <MonitorPage live={live} dayAhead={dayAhead} effectiveDate={effectiveDate} selectedRegion={selectedRegion} />}
 
       {active === 'studio' && (
-        <Suspense fallback={<ViewLoading label="Loading Forecast Studio..." />}>
+        <Suspense fallback={<ViewLoading label="Loading Studio..." />}>
           <ForecastStudioPage selectedRegion={selectedRegion} />
         </Suspense>
       )}

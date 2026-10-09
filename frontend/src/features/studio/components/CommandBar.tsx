@@ -96,7 +96,7 @@ export function CommandBar(p: CommandBarProps) {
           </span>
           <div className="leading-tight">
             <h1 className="whitespace-nowrap font-display text-sm font-semibold text-fg">
-              Forecast Studio
+              Studio
             </h1>
             <p
               className="truncate font-mono text-2xs text-muted"

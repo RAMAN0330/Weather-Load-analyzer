@@ -5,7 +5,7 @@ import ThemeModeSegmented from '../../components/ThemeModeSegmented';
 
 /* ─── tokens ─────────────────────────────────────────────────── */
 /* Theme-aware: every colour is a CSS variable from index.css (Light / One Dark Pro). */
-const BRAND = '#F07825'; // VidyutPragya brand-mark tile only (fixed in both themes)
+const BRAND = '#F07825'; // Forecast Studio brand-mark tile only (fixed in both themes)
 const C = {
   bg:      'var(--bg)',
   panel:   'var(--bg-panel)',
@@ -227,7 +227,7 @@ export default function LoginPage({ onAuth }) {
               <Zap size={22} color="#fff" strokeWidth={2.5} />
             </div>
             <div>
-              <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.5, color: C.text }}>VidyutPragya</div>
+              <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.5, color: C.text }}>Forecast Studio</div>
               <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 600, marginTop: 1, letterSpacing: 0.2 }}>Grid Load Forecasting</div>
             </div>
           </div>
@@ -457,7 +457,7 @@ export default function LoginPage({ onAuth }) {
             </div>
 
             <div className="anim-item" style={{ animationDelay: '0.45s', marginTop: 24, textAlign: 'center', fontSize: 12, color: C.dim, fontWeight: 500 }}>
-              VidyutPragya v2.4 &middot; GNA Energy Operations &middot; {new Date().getFullYear()}
+              Forecast Studio v2.4 &middot; GNA Energy Operations &middot; {new Date().getFullYear()}
             </div>
           </div>
         </div>

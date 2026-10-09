@@ -4,7 +4,7 @@ import { useAuthStore } from '../auth/authStore';
 import ThemeModeSegmented from '../../components/ThemeModeSegmented';
 
 /* Theme-aware: colours are CSS variables from index.css (Light / One Dark Pro). */
-const BRAND = '#F07825'; // VidyutPragya brand-mark tile only (fixed in both themes)
+const BRAND = '#F07825'; // Forecast Studio brand-mark tile only (fixed in both themes)
 const ACCENT = 'var(--accent)';
 const ACCENT2 = 'var(--accent2)';
 const WARM = 'var(--tone-warm)';
@@ -41,7 +41,7 @@ export default function LandingPage({ onSelect }) {
             <div style={{ width: 34, height: 34, borderRadius: 10, background: BRAND, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 20px ${tint(BRAND, 40)}` }}>
               <Zap size={16} color="#fff" />
             </div>
-            <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>VidyutPragya</span>
+            <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em' }}>Forecast Studio</span>
             <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-dim)', marginLeft: 4, paddingLeft: 10, borderLeft: '1px solid var(--outline)' }}>
               Grid Load Forecasting
             </span>

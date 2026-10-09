@@ -5910,3 +5910,14 @@ a:not([class]):hover,
   -webkit-text-fill-color: currentColor;
   color: var(--text);
 }
+
+/* Brand block: keep "Forecast Studio" and its tagline on one line each. */
+.sb-brand-title,
+.sb-brand-sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-brand-sub { letter-spacing: 0.08em; }
+.sidebar-nav.sidebar-nav--v2 .sb-brand { padding-left: 2px; padding-right: 0; gap: 9px; }
+.sb-brand-title { font-size: 13.5px; }
