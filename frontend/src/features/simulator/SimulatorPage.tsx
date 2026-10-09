@@ -41,6 +41,15 @@ const S = {
     gap: 14,
     padding: "8px 0 16px",
   },
+  demoBanner: {
+    margin: "0 16px 12px",
+    padding: "10px 14px",
+    borderRadius: 8,
+    border: "1px solid #FBBF24",
+    background: "rgba(251, 191, 36, 0.12)",
+    color: "#FBBF24",
+    fontSize: 12,
+  },
   kpiGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -187,6 +196,8 @@ export const SimulatorPage: React.FC<Props> = ({
   const blocks = useSimulatorStore((s) => s.blocks);
   const selectedBlocks = useSimulatorStore((s) => s.selectedBlocks);
   const dataDate = useSimulatorStore((s) => s.dataDate);
+  const dataStatus = useSimulatorStore((s) => s.dataStatus);
+  const dataError = useSimulatorStore((s) => s.dataError);
   const weatherDeltasByBlock = useSimulatorStore((s) => s.weatherDeltasByBlock);
   const [gridOpen, setGridOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<SimulatorTabId>("simulation");
@@ -450,6 +461,12 @@ export const SimulatorPage: React.FC<Props> = ({
         {setHorizon && (
           <div className="vp-horizon-floater">
             <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
+          </div>
+        )}
+        {dataStatus === "demo" && (
+          <div role="alert" style={S.demoBanner}>
+            DEMO DATA: the blocks below are synthetic, not real load.
+            {dataError ? ` ${dataError}` : ""}
           </div>
         )}
         <div style={S.kpiGrid}>

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { useAuthStore } from '../features/auth/authStore';
 
 const joinApi = (base, path) =>
   `${String(base || '').replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
@@ -42,7 +43,10 @@ export default function PipelineProgress({ jobId, onResult, apiBase = '/ml-api' 
     setElapsed('0.0');
     setMinimized(false);
 
-    const wsUrl = toWebSocketUrl(apiBase, `/v2/ws/forecast/${jobId}`);
+    // Browsers can't set headers on a WebSocket, so the session token rides in the query.
+    const token = useAuthStore.getState().token;
+    const wsPath = `/v2/ws/forecast/${jobId}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    const wsUrl = toWebSocketUrl(apiBase, wsPath);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'rea
 import axios from 'axios';
 import { API_BASE, TRAINING_API_BASE, getApiUrl, getTrainingApiUrl } from './apiConfig';
 import { useSimulatorStore } from './features/simulator/store';
+import { useAuthStore } from './features/auth/authStore';
 
 import CommandStrip from './components/CommandStrip';
 import {
@@ -95,31 +96,6 @@ const fmt = (val, digits = 2) => {
 };
 
 const pct = (val) => `${fmt(val)}%`;
-
-const seededUnit = (seed) => {
-  let hash = 2166136261;
-  const text = String(seed || '');
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) / 4294967295;
-};
-
-const actualSeededForecast = (actualValue, block, dateKey = '') => {
-  const actual = Number(actualValue);
-  if (!Number.isFinite(actual) || actual <= 0) return null;
-  const offset = 1 + (seededUnit(`${dateKey}:${block}`) * 132);
-  return Math.max(0, actual - offset);
-};
-
-const applySettledT1ForecastFormula = (forecast = [], actual = [], blocks = [], dateKey = '') =>
-  forecast.map((value, idx) => {
-    const actualValue = actual?.[idx];
-    const block = blocks?.[idx] ?? idx + 1;
-    const adjusted = actualSeededForecast(actualValue, block, dateKey);
-    return adjusted == null ? value : adjusted;
-  });
 
 const getNumericStats = (values = []) => {
   const clean = values.filter((v) => Number.isFinite(v));
@@ -1659,7 +1635,12 @@ export default function App({ authUser, onLogout, onHome }) {
 
     // Poll the FastAPI training service; normal app data stays on Django.
     const workerApiBase = TRAINING_API_BASE;
-    worker.postMessage({ type: 'start', jobId, apiBase: workerApiBase });
+    worker.postMessage({
+      type: 'start',
+      jobId,
+      apiBase: workerApiBase,
+      token: useAuthStore.getState().token,
+    });
   };
 
   // ── Phased initialisation ──────────────────────────────────────────────────
@@ -2133,15 +2114,13 @@ export default function App({ authUser, onLogout, onHome }) {
   const forecastPageBaseline = (activeHorizon === 't2' && !activeLive?.series?.hybrid_baseline?.length)
     ? (t2DataZipped.map(r => r.baseline_mw))
     : (activeLive?.series?.hybrid_baseline || []);
-  const forecastPageForecast = useMemo(() => {
-    const raw = activeHorizon === 't1'
+  const forecastPageForecast = useMemo(() => (
+    activeHorizon === 't1'
       ? (liveAdjustedForecast.length ? liveAdjustedForecast : (live?.series?.forecast || []))
       : (activeLive?.series?.forecast?.length
           ? activeLive.series.forecast
-          : t2DataZipped.map(r => r.forecast_mw));
-    if (activeHorizon !== 't1') return raw;
-    return applySettledT1ForecastFormula(raw, liveActual, forecastPageBlocks, forecastPageDate);
-  }, [activeHorizon, activeLive, forecastPageBlocks, forecastPageDate, live, liveActual, liveAdjustedForecast, t2DataZipped]);
+          : t2DataZipped.map(r => r.forecast_mw))
+  ), [activeHorizon, activeLive, live, liveAdjustedForecast, t2DataZipped]);
 
   const forecastPageRows = useMemo(() => {
     // T+2 with no activeLive series: fall back to pre-computed t2DataZipped rows
@@ -2831,9 +2810,13 @@ export default function App({ authUser, onLogout, onHome }) {
     if (!exportDate) { alert('No forecast date available. Run a forecast first.'); return; }
     setExportLoading(true);
     try {
+      const token = useAuthStore.getState().token;
       const res = await fetch(TRAINING_API_URL('/v2/forecast/export'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           date: exportDate,
           region: selectedRegion || 'haryana',

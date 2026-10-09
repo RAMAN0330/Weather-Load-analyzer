@@ -85,12 +85,17 @@ except ImportError:
     )
 
 try:
+    from .api_auth import BearerAuthMiddleware
     from .pipeline_router import router as pipeline_router
 except ImportError:
+    from api_auth import BearerAuthMiddleware
     from pipeline_router import router as pipeline_router
 
 # --- Initialization ---
 app = FastAPI()
+
+# Added before CORS so CORS stays outermost and 401s keep their CORS headers.
+app.add_middleware(BearerAuthMiddleware)
 
 _CORS_ORIGINS = os.getenv(
     "CORS_ORIGINS",
@@ -6080,30 +6085,6 @@ def v2_get_annotations(date_str: str):
     """Get operator annotations for a date."""
     store = getattr(v2_annotate, "_store", {})
     return {"date": date_str, "annotations": store.get(date_str, [])}
-
-
-@app.post("/api/v2/backtest")
-def v2_backtest(payload: dict = None):
-    """Rolling backtest: run pipeline day-ahead for last N days, compute stratified accuracy."""
-    payload = payload or {}
-    df = _get_df()
-    n_days = int(payload.get("n_days", 30))
-    actual_blocks_sim = int(payload.get("actual_blocks", 36))
-    config_override = payload.get("config", {})
-
-    def _pipeline_wrapper(df_inner, target_date, config=None):
-        merged = {**config_override, **(config or {})}
-        _inject_train_range(merged)
-        return run_short_term_pipeline(df_inner, target_date, config=merged)
-
-    result = run_backtest(
-        df=df,
-        pipeline_fn=_pipeline_wrapper,
-        n_days=n_days,
-        actual_blocks_sim=actual_blocks_sim,
-        config=config_override,
-    )
-    return _json_safe(result)
 
 
 if __name__ == "__main__":
