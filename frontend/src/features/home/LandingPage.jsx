@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Zap, TrendingUp, BarChart3, ArrowRight, Brain, Activity, Database, Shield, Clock, MapPin } from 'lucide-react';
 import { useAuthStore } from '../auth/authStore';
-import ThemeSwitcher from '../../components/ThemeSwitcher';
+import ThemeModeSegmented from '../../components/ThemeModeSegmented';
 
 /* Theme-aware: colours are CSS variables from index.css (Light / One Dark Pro). */
 const BRAND = '#F07825'; // VidyutPragya brand-mark tile only (fixed in both themes)
@@ -63,7 +63,7 @@ export default function LandingPage({ onSelect }) {
             >
               Sign out
             </button>
-            <ThemeSwitcher />
+            <ThemeModeSegmented showLabel={false} />
           </div>
         </div>
       </header>

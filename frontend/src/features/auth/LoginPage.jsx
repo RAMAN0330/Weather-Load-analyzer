@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Eye, EyeOff, Lock, Mail, User, Zap, BarChart3, CloudRain, TrendingUp, Cpu, Shield, ArrowRight } from 'lucide-react';
 import { useAuthStore } from './authStore';
-import ThemeSwitcher from '../../components/ThemeSwitcher';
+import ThemeModeSegmented from '../../components/ThemeModeSegmented';
 
 /* ─── tokens ─────────────────────────────────────────────────── */
 /* Theme-aware: every colour is a CSS variable from index.css (Light / One Dark Pro). */
@@ -198,9 +198,9 @@ export default function LoginPage({ onAuth }) {
         <div style={{ position:'absolute', top:'-15%', left:'-10%', width:'50%', height:'50%', borderRadius:'50%', background:'radial-gradient(circle,rgba(var(--accent-rgb), 0.1) 0%,transparent 70%)', pointerEvents:'none', filter:'blur(60px)' }} />
         <div style={{ position:'absolute', bottom:'-15%', right:'-5%', width:'45%', height:'45%', borderRadius:'50%', background:`radial-gradient(circle,${tint(C.purple, 8)} 0%,transparent 70%)`, pointerEvents:'none', filter:'blur(60px)' }} />
 
-        {/* theme switcher — reachable before sign-in */}
+        {/* theme mode — labelled and reachable before sign-in */}
         <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 20 }}>
-          <ThemeSwitcher />
+          <ThemeModeSegmented />
         </div>
 
         {/* ════════════════════════
