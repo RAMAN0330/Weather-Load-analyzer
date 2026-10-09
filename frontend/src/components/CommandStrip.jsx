@@ -13,6 +13,9 @@ LayoutGrid,
   Zap,
   Eye,
 } from 'lucide-react';
+import { TooltipProvider } from './ui/tooltip';
+import { ThemeToggle } from '../features/studio/components/ThemeToggle';
+import { useThemeScopeClass } from '../features/studio/theme';
 
 const CommandStrip = ({
   effectiveDate,
@@ -43,6 +46,7 @@ const CommandStrip = ({
           ? 'RED'
           : '--';
   const healthColor = forecastHealth?.color || 'var(--muted)';
+  const themeScope = useThemeScopeClass();
 
   const views = [
     { key: 'load_analysis', label: 'Load', icon: Activity },
@@ -116,6 +120,11 @@ const CommandStrip = ({
         >
           <Activity size={14} />
         </button>
+        <span className={themeScope}>
+          <TooltipProvider delayDuration={300}>
+            <ThemeToggle />
+          </TooltipProvider>
+        </span>
       </div>
     </div>
   );

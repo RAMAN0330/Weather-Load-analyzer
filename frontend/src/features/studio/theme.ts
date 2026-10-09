@@ -1,10 +1,11 @@
 /**
- * Forecast Studio theme state (studio subtree only — legacy pages stay dark).
+ * App-wide theme state: Light, Dark (One Dark Pro) or System.
  *
- * - `mode` persists to localStorage ('vp-studio-theme'); default 'system'.
- * - Persisted value is read synchronously at store creation (localStorage is a
- *   sync storage, so zustand's persist hydrates before first render), and the
- *   system preference is read synchronously via matchMedia → no theme flash.
+ * - `mode` persists to localStorage ('vp-theme'); default 'dark'.
+ * - The resolved theme is written to <html> as `data-theme` plus a
+ *   `theme-light` / `dark` class, synchronously at import time and on every
+ *   change, so the legacy shell (index.css variables), Tailwind and the
+ *   Studio's `.ds-scope` tokens all switch together with no flash.
  */
 import { useSyncExternalStore } from 'react';
 import { create } from 'zustand';
@@ -22,11 +23,11 @@ interface ThemeState {
 export const useStudioTheme = create<ThemeState>()(
   persist(
     (set) => ({
-      mode: 'system',
+      mode: 'dark',
       setMode: (mode) => set({ mode }),
     }),
     {
-      name: 'vp-studio-theme',
+      name: 'vp-theme',
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ mode: s.mode }),
       version: 1,
@@ -84,3 +85,22 @@ export function useThemeScopeClass(): string {
   const resolved = useResolvedTheme();
   return cn('ds-scope', resolved === 'light' ? 'theme-light' : 'theme-dark');
 }
+
+/** Write the resolved theme onto <html> (legacy CSS variables key off it). */
+export function applyDocumentTheme(theme: ResolvedTheme): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.classList.toggle('theme-light', theme === 'light');
+  root.classList.toggle('dark', theme === 'dark');
+  root.style.colorScheme = theme;
+}
+
+function currentResolved(): ResolvedTheme {
+  return resolveTheme(useStudioTheme.getState().mode, getSystemDark());
+}
+
+// Apply before React renders, then track store and OS-preference changes.
+applyDocumentTheme(currentResolved());
+useStudioTheme.subscribe(() => applyDocumentTheme(currentResolved()));
+subscribeSystem(() => applyDocumentTheme(currentResolved()));

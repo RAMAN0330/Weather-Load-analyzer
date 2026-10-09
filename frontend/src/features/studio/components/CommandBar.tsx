@@ -14,7 +14,6 @@ import { toast } from 'sonner';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
-import { Separator } from '../../../components/ui/separator';
 import { ToggleGroup, ToggleGroupItem } from '../../../components/ui/toggle-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
@@ -31,7 +30,6 @@ import type { ForecastResponse, Horizon, ModelInfo } from '../api';
 import { useThemeScopeClass } from '../theme';
 import { copyText, fmtDateShort, fmtDateTimeIST, shiftDate, titleCase } from '../utils';
 import { StatusBadge } from './StatusBadge';
-import { ThemeToggle } from './ThemeToggle';
 
 export interface CommandBarProps {
   region: string;
@@ -293,8 +291,6 @@ export function CommandBar(p: CommandBarProps) {
             {p.running ? <Loader2 className="animate-spin" aria-hidden /> : <Play aria-hidden />}
             {p.running ? 'Running…' : 'Run forecast'}
           </Button>
-          <Separator orientation="vertical" className="h-5" />
-          <ThemeToggle />
         </div>
       </form>
     </header>

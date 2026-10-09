@@ -3209,7 +3209,8 @@ export default function App({ authUser, onLogout, onHome }) {
 
       {/* Main body: workspace + context panel */}
       <div className={`nexus-body ${contextOpen ? 'ctx-open' : ''}`}>
-      <div className="workspace">
+      {/* Unmigrated pages hard-code dark colours: pin them dark in light mode. */}
+      <div className={`workspace ${active === 'studio' ? '' : 'legacy-dark'}`}>
 
       {/* Page-scoped loading veil — keep app chrome visible */}
       {(loading || initPhase === 'config') && (
