@@ -77,6 +77,9 @@ const NAV_ITEMS = [
   { key: 'weather_loc', label: 'Weather Locations', icon: MapPin },
 ];
 
+// Pages migrated to theme tokens (follow light/dark); others render pinned-dark.
+const THEMED_PAGES = new Set(['studio', 'simulator']);
+
 const OPTIMIZER_TABS = [
   { key: 'window', label: 'Window Selection', icon: Layers },
   { key: 'pattern', label: 'Pattern Fit', icon: Activity },
@@ -3210,7 +3213,7 @@ export default function App({ authUser, onLogout, onHome }) {
       {/* Main body: workspace + context panel */}
       <div className={`nexus-body ${contextOpen ? 'ctx-open' : ''}`}>
       {/* Unmigrated pages hard-code dark colours: pin them dark in light mode. */}
-      <div className={`workspace ${active === 'studio' ? '' : 'legacy-dark'}`}>
+      <div className={`workspace ${THEMED_PAGES.has(active) ? '' : 'legacy-dark'}`}>
 
       {/* Page-scoped loading veil — keep app chrome visible */}
       {(loading || initPhase === 'config') && (

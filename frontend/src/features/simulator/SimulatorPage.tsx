@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ForecastChart } from './components/ForecastChart';
 import { DriverEditorPanel } from './components/DriverEditorPanel';
 import { ScenarioCompareModal } from './components/ScenarioCompareModal';
@@ -28,54 +29,59 @@ const SIMULATOR_TABS = [
 type SimulatorTabId = (typeof SIMULATOR_TABS)[number]['id'];
 
 const S = {
+  // Viewport-fit: the page never scrolls; the driver column scrolls inside itself.
   page: {
     fontFamily: "'IBM Plex Mono', monospace",
-    color: '#ECEEF3',
+    color: 'var(--text)',
     minHeight: 0,
     height: '100%',
-    overflowX: 'hidden' as const,
-    overflowY: 'auto' as const,
+    overflow: 'hidden' as const,
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: 14,
-    padding: '8px 0 16px',
+    gap: 10,
+    padding: '12px 14px',
   },
   demoBanner: {
-    margin: '0 16px 12px',
-    padding: '10px 14px',
+    flexShrink: 0,
+    padding: '7px 12px',
     borderRadius: 8,
-    border: '1px solid #FBBF24',
-    background: 'rgba(251, 191, 36, 0.12)',
-    color: '#FBBF24',
-    fontSize: 12,
+    border: '1px solid var(--warning)',
+    background: 'var(--warning-dim)',
+    color: 'var(--warning)',
+    fontSize: 11,
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden' as const,
+    textOverflow: 'ellipsis' as const,
   },
   kpiGrid: {
+    flexShrink: 0,
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: 12,
-    padding: '0 16px',
+    gridTemplateColumns: 'repeat(8, minmax(0, 1fr))',
+    gap: 8,
   },
   kpiCard: {
-    minHeight: 132,
-    padding: '16px 18px',
-    background: 'linear-gradient(180deg, rgba(30, 29, 35, 0.98), rgba(22, 22, 27, 0.98))',
-    borderRadius: 14,
-    border: '1px solid #2A292F',
+    minWidth: 0,
+    padding: '9px 12px',
+    background: 'var(--bg-panel)',
+    borderRadius: 12,
+    border: '1px solid var(--outline)',
     display: 'flex',
     flexDirection: 'column' as const,
-    justifyContent: 'space-between' as const,
-    gap: 8,
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
+    gap: 3,
+    boxShadow: '0 4px 14px rgba(var(--shadow-rgb), 0.06)',
   },
   kpiLabel: {
     fontSize: 9,
     textTransform: 'uppercase' as const,
-    letterSpacing: 1.5,
-    color: '#6B7186',
+    letterSpacing: 1.2,
+    color: 'var(--text-muted)',
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden' as const,
+    textOverflow: 'ellipsis' as const,
   },
-  kpiValue: (color = '#ECEEF3') => ({
-    fontSize: 30,
-    lineHeight: 1.05,
+  kpiValue: (color = 'var(--text)') => ({
+    fontSize: 20,
+    lineHeight: 1.1,
     fontWeight: 700,
     color,
   }),
@@ -86,77 +92,80 @@ const S = {
   },
   kpiSub: {
     fontSize: 10,
-    color: '#6B7186',
-    lineHeight: 1.45,
+    color: 'var(--text-muted)',
+    lineHeight: 1.35,
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden' as const,
+    textOverflow: 'ellipsis' as const,
   },
   card: {
-    background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
-    borderRadius: 16,
-    border: '1px solid #2A292F',
+    background: 'var(--bg-panel)',
+    borderRadius: 14,
+    border: '1px solid var(--outline)',
     overflow: 'hidden' as const,
     display: 'flex',
     flexDirection: 'column' as const,
-    boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
   },
   cardTitle: {
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: 1.2,
-    color: '#A0A5B8',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase' as const,
   },
   workspace: {
-    ...{
-      background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.98), rgba(20, 20, 24, 0.96))',
-      borderRadius: 16,
-      border: '1px solid #2A292F',
-      overflow: 'visible' as const,
-      display: 'flex',
-      flexDirection: 'column' as const,
-      boxShadow: '0 18px 40px rgba(0, 0, 0, 0.18)',
-    },
-    margin: '0 16px',
+    flex: 1,
+    minHeight: 0,
+    background: 'var(--bg-panel)',
+    borderRadius: 14,
+    border: '1px solid var(--outline)',
+    overflow: 'hidden' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    boxShadow: '0 8px 24px rgba(var(--shadow-rgb), 0.08)',
   },
   tabBar: {
     display: 'inline-flex',
     gap: 4,
-    padding: 5,
-    background: '#141419',
-    border: '1px solid #2A292F',
+    padding: 4,
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
     borderRadius: 999,
     flexWrap: 'wrap' as const,
   },
   tab: (active: boolean) => ({
-    padding: '8px 16px',
+    padding: '6px 14px',
     fontSize: 10,
     fontWeight: 600,
     borderRadius: 999,
     border: '1px solid transparent',
-    background: active ? 'rgba(240, 120, 37, 0.14)' : 'transparent',
-    color: active ? '#F07825' : '#A0A5B8',
+    background: active ? 'var(--accent-dim)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-secondary)',
     cursor: 'pointer',
     fontFamily: 'inherit',
   }),
-  actionBtn: {
-    fontSize: 10,
-    fontWeight: 700,
-    padding: '8px 14px',
-    borderRadius: 999,
-    border: '1px solid #2A292F',
-    background: '#1A191E',
-    color: '#ECEEF3',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
   miniBadge: (color: string) => ({
     fontSize: 9,
     fontWeight: 700,
     padding: '4px 10px',
     borderRadius: 999,
-    background: `${color}18`,
+    background: `color-mix(in srgb, ${color} 12%, transparent)`,
     color,
-    border: `1px solid ${color}33`,
+    border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
   }),
+  snapshotTile: {
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--outline)',
+    borderRadius: 10,
+    padding: '8px 12px',
+  },
+  snapshotLabel: {
+    fontSize: 8,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase' as const,
+    color: 'var(--text-muted)',
+    marginBottom: 4,
+  },
 };
 
 const KpiCard = ({
@@ -173,12 +182,16 @@ const KpiCard = ({
   tone?: string;
 }) => (
   <div style={S.kpiCard}>
-    <div style={S.kpiLabel}>{label}</div>
-    <div>
+    <div style={S.kpiLabel} title={label}>
+      {label}
+    </div>
+    <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
       <span style={S.kpiValue(tone)}>{value}</span>
       {unit ? <span style={S.kpiUnit}> {unit}</span> : null}
     </div>
-    <div style={S.kpiSub}>{sub}</div>
+    <div style={S.kpiSub} title={sub}>
+      {sub}
+    </div>
   </div>
 );
 
@@ -456,7 +469,7 @@ export const SimulatorPage: React.FC<Props> = ({
     return count;
   }, [scopeBlocks]);
   const confidencePct = exogInsight.weightConfidence * 100;
-  const weatherTone = exogInsight.weatherTotal >= 0 ? '#F07825' : '#5B9FE4';
+  const weatherTone = exogInsight.weatherTotal >= 0 ? 'var(--tone-warm)' : 'var(--accent)';
   const weatherSignalLabel = exogInsight.weatherTotal >= 0 ? 'Weather Uplift' : 'Weather Drag';
   const simulatorActionButtons =
     activeTab === 'simulation'
@@ -473,7 +486,7 @@ export const SimulatorPage: React.FC<Props> = ({
 
   return (
     <>
-      <VpPageShell className="simulator-page">
+      <VpPageShell className="simulator-page" style={S.page}>
         {setHorizon && (
           <div className="vp-horizon-floater">
             <HorizonToggle horizon={horizon} setHorizon={setHorizon} t2Date={t2Date} />
@@ -491,21 +504,27 @@ export const SimulatorPage: React.FC<Props> = ({
             value={`${netSummary.shift >= 0 ? '+' : ''}${netSummary.shift.toFixed(1)}`}
             unit="MW"
             sub={`${selectionCount} blocks in scope • baseline ${netSummary.baseline.toFixed(1)} MW`}
-            tone={netSummary.shift >= 0 ? '#34D399' : '#F87171'}
+            tone={netSummary.shift >= 0 ? 'var(--success)' : 'var(--danger)'}
           />
           <KpiCard
             label="Energy Delta"
             value={netSummary.energy.toFixed(1)}
             unit="MWh"
             sub={`Final energy impact from current edits across selected scope`}
-            tone={Math.abs(netSummary.energy) <= 25 ? '#34D399' : '#FBBF24'}
+            tone={Math.abs(netSummary.energy) <= 25 ? 'var(--success)' : 'var(--warning)'}
           />
           <KpiCard
             label="Peak Delta"
             value={peakDeltaMw.toFixed(1)}
             unit="MW"
             sub={`Peak moved ${peakShiftBlocks > 0 ? '+' : ''}${peakShiftBlocks} blocks from baseline`}
-            tone={peakDeltaMw <= 40 ? '#34D399' : peakDeltaMw <= 90 ? '#FBBF24' : '#F87171'}
+            tone={
+              peakDeltaMw <= 40
+                ? 'var(--success)'
+                : peakDeltaMw <= 90
+                  ? 'var(--warning)'
+                  : 'var(--danger)'
+            }
           />
           <KpiCard
             label={weatherSignalLabel}
@@ -519,14 +538,20 @@ export const SimulatorPage: React.FC<Props> = ({
             value={confidencePct.toFixed(1)}
             unit="%"
             sub={`${seasonLabel} regime • ${calendarContextLabel}`}
-            tone={confidencePct >= 70 ? '#34D399' : confidencePct >= 45 ? '#FBBF24' : '#F87171'}
+            tone={
+              confidencePct >= 70
+                ? 'var(--success)'
+                : confidencePct >= 45
+                  ? 'var(--warning)'
+                  : 'var(--danger)'
+            }
           />
           <KpiCard
             label="Scenario Scope"
             value={selectionCount}
             unit="blocks"
             sub={selectionLabel}
-            tone="#ECEEF3"
+            tone="var(--text)"
           />
           <KpiCard
             label="Reserve Margin"
@@ -541,12 +566,12 @@ export const SimulatorPage: React.FC<Props> = ({
             }
             tone={
               reserveMarginPct == null
-                ? '#ECEEF3'
+                ? 'var(--text)'
                 : reserveBreach
-                  ? '#F87171'
+                  ? 'var(--danger)'
                   : reserveMarginPct < 20
-                    ? '#FBBF24'
-                    : '#34D399'
+                    ? 'var(--warning)'
+                    : 'var(--success)'
             }
           />
           <KpiCard
@@ -560,16 +585,22 @@ export const SimulatorPage: React.FC<Props> = ({
             }
             tone={
               rampFeasibilityViolations === 0
-                ? '#34D399'
+                ? 'var(--success)'
                 : rampFeasibilityViolations <= 3
-                  ? '#FBBF24'
-                  : '#F87171'
+                  ? 'var(--warning)'
+                  : 'var(--danger)'
             }
           />
         </div>
 
         <div style={S.workspace}>
-          <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid #2A292F' }}>
+          <div
+            style={{
+              flexShrink: 0,
+              padding: '10px 14px',
+              borderBottom: '1px solid var(--outline)',
+            }}
+          >
             <div
               style={{
                 display: 'flex',
@@ -600,11 +631,11 @@ export const SimulatorPage: React.FC<Props> = ({
                   alignItems: 'center',
                 }}
               >
-                <span style={S.miniBadge('#34D399')}>{seasonLabel}</span>
-                <span style={S.miniBadge('#5B9FE4')}>{calendarContextLabel}</span>
+                <span style={S.miniBadge('var(--success)')}>{seasonLabel}</span>
+                <span style={S.miniBadge('var(--accent)')}>{calendarContextLabel}</span>
                 <span
                   style={{
-                    ...S.miniBadge('#F07825'),
+                    ...S.miniBadge('var(--tone-warm)'),
                     maxWidth: 280,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -617,13 +648,13 @@ export const SimulatorPage: React.FC<Props> = ({
                   {
                     label: 'Choose Date',
                     sub: 'Pick forecast date',
-                    color: '#FBBF24',
+                    color: 'var(--warning)',
                     onClick: () => setCalendarPanelOpen(true),
                   },
                   {
                     label: 'Block Grid',
                     sub: '96-block schedule',
-                    color: '#5B9FE4',
+                    color: 'var(--accent)',
                     onClick: () => setGridOpen(true),
                   },
                   ...(activeTab === 'simulation'
@@ -631,19 +662,19 @@ export const SimulatorPage: React.FC<Props> = ({
                         {
                           label: 'Weather Adj.',
                           sub: 'Temp · Humidity · Cloud',
-                          color: '#34D399',
+                          color: 'var(--success)',
                           onClick: () => setOverlayPanel('adjustments'),
                         },
                         {
                           label: 'Quick Scenarios',
                           sub: 'Preset load scenarios',
-                          color: '#C084FC',
+                          color: 'var(--accent2)',
                           onClick: () => setOverlayPanel('scenarios'),
                         },
                         {
                           label: 'Pattern Windows',
                           sub: 'Shape & period filters',
-                          color: '#F07825',
+                          color: 'var(--tone-warm)',
                           onClick: () => setOverlayPanel('patterns'),
                         },
                       ]
@@ -651,19 +682,19 @@ export const SimulatorPage: React.FC<Props> = ({
                         {
                           label: 'Analytic Insights',
                           sub: 'Model diagnostics',
-                          color: '#34D399',
+                          color: 'var(--success)',
                           onClick: () => setOverlayPanel('insights'),
                         },
                         {
                           label: 'Variance Attribution',
                           sub: 'Error breakdown',
-                          color: '#C084FC',
+                          color: 'var(--accent2)',
                           onClick: () => setOverlayPanel('attribution'),
                         },
                         {
                           label: 'Weather Adj.',
                           sub: 'Temp · Humidity · Cloud',
-                          color: '#5B9FE4',
+                          color: 'var(--accent)',
                           onClick: () => setOverlayPanel('adjustments'),
                         },
                       ]),
@@ -672,35 +703,26 @@ export const SimulatorPage: React.FC<Props> = ({
                     key={label}
                     type="button"
                     onClick={onClick}
+                    title={`Quick panel: ${sub}`}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'flex-start',
-                      gap: 5,
-                      minWidth: 130,
-                      padding: '10px 14px',
-                      borderRadius: 14,
-                      border: `1px solid ${color}33`,
-                      background: `${color}10`,
-                      color: '#ECEEF3',
+                      gap: 2,
+                      minWidth: 112,
+                      padding: '6px 12px',
+                      borderRadius: 10,
+                      border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
+                      background: `color-mix(in srgb, ${color} 8%, transparent)`,
+                      color: 'var(--text)',
                       cursor: 'pointer',
                       fontFamily: 'inherit',
                       textAlign: 'left',
                       transition: 'all 0.15s ease',
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: 8,
-                        letterSpacing: 1.1,
-                        textTransform: 'uppercase',
-                        color: '#6B7186',
-                      }}
-                    >
-                      Quick panel
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color }}>{label}</span>
-                    <span style={{ fontSize: 9, color: '#6B7186' }}>{sub}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color }}>{label}</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{sub}</span>
                   </button>
                 ))}
               </div>
@@ -709,18 +731,21 @@ export const SimulatorPage: React.FC<Props> = ({
 
           <div
             style={{
+              flex: 1,
+              minHeight: 0,
               display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.5fr) minmax(300px, 0.78fr)',
+              gridTemplateColumns: 'minmax(0, 1.6fr) minmax(300px, 0.75fr)',
               gap: 12,
-              padding: '14px 16px',
-              alignItems: 'start',
+              padding: 12,
+              alignItems: 'stretch',
             }}
           >
-            <div style={{ ...S.card, minWidth: 0, boxShadow: 'none' }}>
+            <div style={{ ...S.card, minWidth: 0, minHeight: 0 }}>
               <div
                 style={{
-                  padding: '14px 16px',
-                  borderBottom: '1px solid #2A292F',
+                  flexShrink: 0,
+                  padding: '10px 14px',
+                  borderBottom: '1px solid var(--outline)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
@@ -731,7 +756,7 @@ export const SimulatorPage: React.FC<Props> = ({
                 <div>
                   <div style={S.cardTitle}>Forecast Canvas</div>
                 </div>
-                <div style={{ fontSize: 10, color: '#A0A5B8' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
                   Peak {netSummary.peakBaseline.block || '--'} {'->'}{' '}
                   {netSummary.peakFinal.block || '--'} • {peakDeltaMw.toFixed(1)} MW delta
                 </div>
@@ -739,8 +764,8 @@ export const SimulatorPage: React.FC<Props> = ({
               <div
                 style={{
                   padding: 10,
-                  height: 'clamp(430px, 52vh, 540px)',
-                  minHeight: 430,
+                  flex: 1,
+                  minHeight: 0,
                   overflow: 'hidden',
                   display: 'flex',
                   flexDirection: 'column',
@@ -752,7 +777,16 @@ export const SimulatorPage: React.FC<Props> = ({
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                minHeight: 0,
+                overflowY: 'auto',
+                paddingRight: 2,
+              }}
+            >
               <DriverEditorPanel activeTab={activeTab} part="command" />
 
               <div>
@@ -768,110 +802,42 @@ export const SimulatorPage: React.FC<Props> = ({
               </div>
 
               <div style={S.card}>
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid #2A292F' }}>
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--outline)' }}>
                   <div style={S.cardTitle}>Scenario Snapshot</div>
                 </div>
                 <div
-                  style={{ padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}
+                  style={{ padding: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
                 >
-                  <div
-                    style={{
-                      background: '#201F25',
-                      border: '1px solid #2A292F',
-                      borderRadius: 12,
-                      padding: '12px 14px',
-                    }}
-                  >
+                  <div style={S.snapshotTile}>
+                    <div style={S.snapshotLabel}>Temperature</div>
                     <div
                       style={{
-                        fontSize: 8,
-                        letterSpacing: 1.2,
-                        textTransform: 'uppercase',
-                        color: '#6B7186',
-                        marginBottom: 6,
-                      }}
-                    >
-                      Temperature
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: 700,
-                        color: deltaSummary.temp >= 0 ? '#F07825' : '#5B9FE4',
+                        color: deltaSummary.temp >= 0 ? 'var(--tone-warm)' : 'var(--accent)',
                       }}
                     >
                       {deltaSummary.temp >= 0 ? '+' : ''}
                       {deltaSummary.temp.toFixed(2)} C
                     </div>
                   </div>
-                  <div
-                    style={{
-                      background: '#201F25',
-                      border: '1px solid #2A292F',
-                      borderRadius: 12,
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 8,
-                        letterSpacing: 1.2,
-                        textTransform: 'uppercase',
-                        color: '#6B7186',
-                        marginBottom: 6,
-                      }}
-                    >
-                      Humidity
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#45b7d1' }}>
+                  <div style={S.snapshotTile}>
+                    <div style={S.snapshotLabel}>Humidity</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--info)' }}>
                       {deltaSummary.hum >= 0 ? '+' : ''}
                       {deltaSummary.hum.toFixed(2)} %
                     </div>
                   </div>
-                  <div
-                    style={{
-                      background: '#201F25',
-                      border: '1px solid #2A292F',
-                      borderRadius: 12,
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 8,
-                        letterSpacing: 1.2,
-                        textTransform: 'uppercase',
-                        color: '#6B7186',
-                        marginBottom: 6,
-                      }}
-                    >
-                      Rain
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#C084FC' }}>
+                  <div style={S.snapshotTile}>
+                    <div style={S.snapshotLabel}>Rain</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent2)' }}>
                       {deltaSummary.rain >= 0 ? '+' : ''}
                       {deltaSummary.rain.toFixed(2)} mm
                     </div>
                   </div>
-                  <div
-                    style={{
-                      background: '#201F25',
-                      border: '1px solid #2A292F',
-                      borderRadius: 12,
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 8,
-                        letterSpacing: 1.2,
-                        textTransform: 'uppercase',
-                        color: '#6B7186',
-                        marginBottom: 6,
-                      }}
-                    >
-                      Wind
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#34D399' }}>
+                  <div style={S.snapshotTile}>
+                    <div style={S.snapshotLabel}>Wind</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--success)' }}>
                       {deltaSummary.wind >= 0 ? '+' : ''}
                       {deltaSummary.wind.toFixed(2)} m/s
                     </div>
@@ -882,148 +848,156 @@ export const SimulatorPage: React.FC<Props> = ({
           </div>
         </div>
       </VpPageShell>
-      <ScenarioCompareModal
-        open={Boolean(comparePayload)}
-        payload={comparePayload}
-        onClose={closeCompare}
-      />
-      <BlockGridEditorModal
-        open={gridOpen}
-        onClose={() => setGridOpen(false)}
-        selectionLabel={selectionLabel}
-      />
+      {/* Overlays portal to <body>: .main-area is its own stacking context (z-index 1),
+          so in-tree modals would render underneath the sidebar. */}
+      {createPortal(
+        <>
+          <ScenarioCompareModal
+            open={Boolean(comparePayload)}
+            payload={comparePayload}
+            onClose={closeCompare}
+          />
+          <BlockGridEditorModal
+            open={gridOpen}
+            onClose={() => setGridOpen(false)}
+            selectionLabel={selectionLabel}
+          />
 
-      {overlayPanel && (
-        <div className="modal-overlay" onClick={() => setOverlayPanel(null)}>
-          <div
-            className="modal-content"
-            style={{ width: 'min(920px, 100%)', maxHeight: '84vh', borderRadius: 16 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              className="modal-header"
-              style={{ padding: '16px 18px', borderBottom: '1px solid #2A292F' }}
-            >
-              <div>
-                <h3 style={{ margin: 0 }}>
-                  {overlayPanel === 'adjustments' && 'Weather Adjustments'}
-                  {overlayPanel === 'scenarios' && 'Quick Scenarios'}
-                  {overlayPanel === 'patterns' && 'Pattern Windows'}
-                  {overlayPanel === 'insights' && 'Analytic Insights'}
-                  {overlayPanel === 'attribution' && 'Variance Attribution'}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOverlayPanel(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#6B7186',
-                  fontSize: 20,
-                  cursor: 'pointer',
-                }}
+          {overlayPanel && (
+            <div className="modal-overlay" onClick={() => setOverlayPanel(null)}>
+              <div
+                className="modal-content"
+                style={{ width: 'min(920px, 100%)', maxHeight: '84vh', borderRadius: 16 }}
+                onClick={(e) => e.stopPropagation()}
               >
-                ×
-              </button>
-            </div>
-            <div className="modal-body">
-              {overlayPanel === 'adjustments' && (
-                <DriverEditorPanel activeTab={activeTab} part="adjustments" />
-              )}
-              {overlayPanel === 'scenarios' && (
-                <DriverEditorPanel activeTab={activeTab} part="scenarios" />
-              )}
-              {overlayPanel === 'patterns' && (
-                <DriverEditorPanel activeTab={activeTab} part="patterns" />
-              )}
-              {overlayPanel === 'insights' && (
-                <DriverEditorPanel activeTab={activeTab} part="insights" />
-              )}
-              {overlayPanel === 'attribution' && (
-                <DriverEditorPanel activeTab={activeTab} part="attribution" />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {calendarPanelOpen && (
-        <div className="sim-modal-backdrop" onClick={() => setCalendarPanelOpen(false)}>
-          <div className="sim-modal sim-calendar-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="panel-header">
-              <h3>Select Simulation Date</h3>
-              <button
-                type="button"
-                className="close-btn"
-                onClick={() => setCalendarPanelOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="sim-calendar-widget">
-              <div className="sim-calendar-month-nav">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCalendarMonthCursor(
-                      new Date(
-                        calendarMonthCursor.getFullYear(),
-                        calendarMonthCursor.getMonth() - 1,
-                        1
-                      )
-                    )
-                  }
+                <div
+                  className="modal-header"
+                  style={{ padding: '16px 18px', borderBottom: '1px solid var(--outline)' }}
                 >
-                  &lt;
-                </button>
-                <strong>{calendarMonthLabel}</strong>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCalendarMonthCursor(
-                      new Date(
-                        calendarMonthCursor.getFullYear(),
-                        calendarMonthCursor.getMonth() + 1,
-                        1
-                      )
-                    )
-                  }
-                >
-                  &gt;
-                </button>
-              </div>
-              <div className="sim-calendar-weekdays">
-                {calendarWeekDays.map((d) => (
-                  <span key={d}>{d}</span>
-                ))}
-              </div>
-              <div className="sim-calendar-days">
-                {calendarCells.map((cell) => (
+                  <div>
+                    <h3 style={{ margin: 0 }}>
+                      {overlayPanel === 'adjustments' && 'Weather Adjustments'}
+                      {overlayPanel === 'scenarios' && 'Quick Scenarios'}
+                      {overlayPanel === 'patterns' && 'Pattern Windows'}
+                      {overlayPanel === 'insights' && 'Analytic Insights'}
+                      {overlayPanel === 'attribution' && 'Variance Attribution'}
+                    </h3>
+                  </div>
                   <button
-                    key={cell.ymd}
                     type="button"
-                    className={`sim-calendar-day ${cell.isSelected ? 'active' : ''} ${cell.inMonth ? '' : 'outside'}`}
-                    onClick={() => setCalendarDraftDate(cell.ymd)}
+                    onClick={() => setOverlayPanel(null)}
+                    aria-label="Close"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      fontSize: 20,
+                      cursor: 'pointer',
+                    }}
                   >
-                    {cell.dt.getDate()}
+                    ×
                   </button>
-                ))}
-              </div>
-              <div className="sim-modal-footer">
-                <div className="sim-draft-label">Draft: {calendarDraftDate || '--'}</div>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={() => void submitCalendarSelection()}
-                  disabled={!calendarDraftDate}
-                >
-                  Confirm Date
-                </button>
+                </div>
+                <div className="modal-body">
+                  {overlayPanel === 'adjustments' && (
+                    <DriverEditorPanel activeTab={activeTab} part="adjustments" />
+                  )}
+                  {overlayPanel === 'scenarios' && (
+                    <DriverEditorPanel activeTab={activeTab} part="scenarios" />
+                  )}
+                  {overlayPanel === 'patterns' && (
+                    <DriverEditorPanel activeTab={activeTab} part="patterns" />
+                  )}
+                  {overlayPanel === 'insights' && (
+                    <DriverEditorPanel activeTab={activeTab} part="insights" />
+                  )}
+                  {overlayPanel === 'attribution' && (
+                    <DriverEditorPanel activeTab={activeTab} part="attribution" />
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          )}
+
+          {calendarPanelOpen && (
+            <div className="sim-modal-backdrop" onClick={() => setCalendarPanelOpen(false)}>
+              <div className="sim-modal sim-calendar-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="panel-header">
+                  <h3>Select Simulation Date</h3>
+                  <button
+                    type="button"
+                    className="close-btn"
+                    onClick={() => setCalendarPanelOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="sim-calendar-widget">
+                  <div className="sim-calendar-month-nav">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCalendarMonthCursor(
+                          new Date(
+                            calendarMonthCursor.getFullYear(),
+                            calendarMonthCursor.getMonth() - 1,
+                            1
+                          )
+                        )
+                      }
+                    >
+                      &lt;
+                    </button>
+                    <strong>{calendarMonthLabel}</strong>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCalendarMonthCursor(
+                          new Date(
+                            calendarMonthCursor.getFullYear(),
+                            calendarMonthCursor.getMonth() + 1,
+                            1
+                          )
+                        )
+                      }
+                    >
+                      &gt;
+                    </button>
+                  </div>
+                  <div className="sim-calendar-weekdays">
+                    {calendarWeekDays.map((d) => (
+                      <span key={d}>{d}</span>
+                    ))}
+                  </div>
+                  <div className="sim-calendar-days">
+                    {calendarCells.map((cell) => (
+                      <button
+                        key={cell.ymd}
+                        type="button"
+                        className={`sim-calendar-day ${cell.isSelected ? 'active' : ''} ${cell.inMonth ? '' : 'outside'}`}
+                        onClick={() => setCalendarDraftDate(cell.ymd)}
+                      >
+                        {cell.dt.getDate()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="sim-modal-footer">
+                    <div className="sim-draft-label">Draft: {calendarDraftDate || '--'}</div>
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => void submitCalendarSelection()}
+                      disabled={!calendarDraftDate}
+                    >
+                      Confirm Date
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>,
+        document.body
       )}
     </>
   );

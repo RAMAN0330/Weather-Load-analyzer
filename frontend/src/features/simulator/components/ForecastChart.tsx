@@ -15,6 +15,7 @@ import {
 import { useSimulatorStore } from '../store';
 import type { ChartBlockPoint } from '../types';
 import { blockTimeLabel } from '../utils';
+import { useThemeColors } from '../../../lib/useThemeColors';
 
 const chartMargins = { top: 16, right: 20, left: 10, bottom: 8 };
 const round3 = (v: number) => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -30,9 +31,11 @@ type DotProps = {
   cx?: number;
   cy?: number;
   payload?: ChartBlockPoint;
+  dotFill?: string;
+  dotStroke?: string;
 };
 
-const DraggableDot = ({ cx = 0, cy = 0, payload }: DotProps) => {
+const DraggableDot = ({ cx = 0, cy = 0, payload, dotFill, dotStroke }: DotProps) => {
   const updateDriver = useSimulatorStore((s) => s.updateDriver);
   const setSelectedBlock = useSimulatorStore((s) => s.setSelectedBlock);
   const startRef = useRef<{ y: number; pct: number } | null>(null);
@@ -62,15 +65,31 @@ const DraggableDot = ({ cx = 0, cy = 0, payload }: DotProps) => {
       cx={cx}
       cy={cy}
       r={3.5}
-      fill="#c7655f"
-      stroke="#2b2d31"
+      fill={dotFill}
+      stroke={dotStroke}
       strokeWidth={1}
       onMouseDown={onDown}
     />
   );
 };
 
+// Same colour meaning as Forecast Studio: blue forecast, green actual, purple baseline.
+const CHART_VARS = {
+  forecast: '--accent',
+  actual: '--success',
+  baseline: '--accent2',
+  text: '--text',
+  textSecondary: '--text-secondary',
+  textMuted: '--text-muted',
+  outline: '--outline',
+  panel: '--bg-panel',
+  elevated: '--bg-elevated',
+  surface: '--bg-surface',
+  warm: '--tone-warm',
+} as const;
+
 export const ForecastChart: React.FC = () => {
+  const c = useThemeColors(CHART_VARS);
   const blocks = useSimulatorStore((s) => s.blocks);
   const selectedBlocks = useSimulatorStore((s) => s.selectedBlocks);
   const setSelectedBlock = useSimulatorStore((s) => s.setSelectedBlock);
@@ -263,18 +282,18 @@ export const ForecastChart: React.FC = () => {
     return (
       <div
         style={{
-          background: '#1A191E',
-          border: '1px solid #2A292F',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--outline)',
           borderRadius: 12,
           padding: '12px 14px',
-          color: '#ECEEF3',
-          boxShadow: '0 18px 30px rgba(0,0,0,0.24)',
+          color: 'var(--text)',
+          boxShadow: '0 18px 30px rgba(var(--shadow-rgb), 0.18)',
         }}
       >
         <div style={{ fontWeight: 700, marginBottom: 4 }}>
           Block {label} ({blockTimeLabel(Number(label))})
         </div>
-        <div style={{ fontSize: 11, color: '#A0A5B8', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>
           Season: {dateInfo.season} | Day: {dateInfo.calendarDay}
         </div>
         <div style={{ fontSize: 12 }}>Baseline: {p.baseline.toFixed(2)} MW</div>
@@ -326,7 +345,7 @@ export const ForecastChart: React.FC = () => {
             : 'Not applied'}
         </div>
         {p.actualWeatherExplanation && (
-          <div style={{ fontSize: 12, marginTop: 6, color: '#F07825' }}>
+          <div style={{ fontSize: 12, marginTop: 6, color: 'var(--tone-warm)' }}>
             {p.actualWeatherExplanation}
           </div>
         )}
@@ -360,7 +379,7 @@ export const ForecastChart: React.FC = () => {
           minWidth: 0,
           overflow: 'hidden',
           borderRadius: 8,
-          background: 'linear-gradient(180deg, rgba(26, 25, 30, 0.38), rgba(20, 20, 24, 0.14))',
+          background: 'var(--bg-surface)',
           padding: '12px 12px 6px',
         }}
       >
@@ -376,40 +395,46 @@ export const ForecastChart: React.FC = () => {
           >
             <defs>
               <linearGradient id="simAdjustedFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#F07825" stopOpacity={0.18} />
-                <stop offset="100%" stopColor="#F07825" stopOpacity={0.02} />
+                <stop offset="0%" stopColor={c.forecast} stopOpacity={0.18} />
+                <stop offset="100%" stopColor={c.forecast} stopOpacity={0.02} />
               </linearGradient>
               <linearGradient id="simActualFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#5B9FE4" stopOpacity={0.12} />
-                <stop offset="100%" stopColor="#5B9FE4" stopOpacity={0.01} />
+                <stop offset="0%" stopColor={c.actual} stopOpacity={0.12} />
+                <stop offset="100%" stopColor={c.actual} stopOpacity={0.01} />
               </linearGradient>
             </defs>
-            <CartesianGrid stroke="rgba(42, 41, 47, 0.9)" strokeDasharray="4 6" vertical={false} />
+            <CartesianGrid
+              stroke={c.outline}
+              strokeOpacity={0.7}
+              strokeDasharray="4 6"
+              vertical={false}
+            />
             {selectedRange && (
               <ReferenceArea
                 x1={selectedRange.start}
                 x2={selectedRange.end}
                 strokeOpacity={0}
-                fill="rgba(240, 120, 37, 0.08)"
+                fill={c.forecast}
+                fillOpacity={0.08}
               />
             )}
             <XAxis
               dataKey="block"
               tickFormatter={(value) => blockTimeLabel(Number(value))}
               interval={11}
-              tick={{ fill: '#6B7186', fontSize: 10 }}
-              axisLine={{ stroke: '#2A292F' }}
-              tickLine={{ stroke: '#2A292F' }}
+              tick={{ fill: c.textMuted, fontSize: 10 }}
+              axisLine={{ stroke: c.outline }}
+              tickLine={{ stroke: c.outline }}
               minTickGap={18}
             />
             <YAxis
-              tick={{ fill: '#6B7186', fontSize: 10 }}
+              tick={{ fill: c.textMuted, fontSize: 10 }}
               width={60}
               axisLine={false}
               tickLine={false}
             />
             <Tooltip content={renderTooltip} />
-            <Legend wrapperStyle={{ paddingBottom: 10, color: '#A0A5B8', fontSize: 11 }} />
+            <Legend wrapperStyle={{ paddingBottom: 10, color: c.textSecondary, fontSize: 11 }} />
             <Brush
               dataKey="block"
               height={24}
@@ -419,8 +444,8 @@ export const ForecastChart: React.FC = () => {
                 if (s > 0 && e > 0) setRangeSelection(s, e);
               }}
               travellerWidth={10}
-              stroke="#2A292F"
-              fill="rgba(26,25,30,0.95)"
+              stroke={c.outline}
+              fill={c.panel}
             />
 
             <Area
@@ -445,7 +470,7 @@ export const ForecastChart: React.FC = () => {
             <Line
               dataKey="baseline"
               name="Baseline Forecast"
-              stroke="#A0A5B8"
+              stroke={c.baseline}
               strokeDasharray="6 5"
               dot={false}
               strokeWidth={1.8}
@@ -454,7 +479,7 @@ export const ForecastChart: React.FC = () => {
             <Line
               dataKey="actual"
               name="Actual"
-              stroke="#5B9FE4"
+              stroke={c.actual}
               dot={false}
               strokeWidth={2.2}
               connectNulls={false}
@@ -463,10 +488,12 @@ export const ForecastChart: React.FC = () => {
             <Line
               dataKey="adjusted"
               name="Adjusted Forecast"
-              stroke="#F07825"
+              stroke={c.forecast}
               dot={(props: any) => {
                 const { key, ...rest } = props;
-                return <DraggableDot key={key} {...rest} />;
+                return (
+                  <DraggableDot key={key} {...rest} dotFill={c.forecast} dotStroke={c.panel} />
+                );
               }}
               strokeWidth={2.5}
               isAnimationActive={false}
