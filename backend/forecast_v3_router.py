@@ -1,7 +1,9 @@
 """FastAPI router for Forecast Engine v3 (contract: docs/forecast-v3-api.md).
 
 Routes (all behind the global Bearer auth middleware):
-  POST /api/v3/forecast      day-ahead quantile forecast
+  GET  /api/v3/forecast/daily  today's issued T+1 and T+2 forecasts (cached)
+  POST /api/v3/forecast      T+1 / T+2 quantile forecast (past dates rejected)
+  GET  /api/v3/status        daily job, feed and cache status
   POST /api/v3/backtest      rolling-origin backtest
   GET  /api/v3/data-quality  input data-quality report
   GET  /api/v3/models        available models
@@ -28,10 +30,12 @@ try:
     from .forecasting.data import DataSourceError
     from .forecasting.models import MODEL_SPECS
     from .forecasting.service import MAX_BACKTEST_DAYS, ForecastService, InsufficientHistory
+    from . import daily_jobs
 except ImportError:  # script mode (backend/ on sys.path)
     from forecasting.data import DataSourceError
     from forecasting.models import MODEL_SPECS
     from forecasting.service import MAX_BACKTEST_DAYS, ForecastService, InsufficientHistory
+    import daily_jobs  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +68,11 @@ class ForecastRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     region: str = "haryana"
-    target_date: str
+    # Optional: defaults to today + horizon. Only T+1 / T+2 from today are allowed.
+    target_date: Optional[str] = None
     horizon: Literal[1, 2] = 1
     model: ModelKey = "lgbm_residual"
+    refresh: bool = False  # recompute instead of returning today's issued forecast
 
     @field_validator("region")
     @classmethod
@@ -75,8 +81,8 @@ class ForecastRequest(BaseModel):
 
     @field_validator("target_date")
     @classmethod
-    def _v_target(cls, v: str) -> str:
-        return _check_date(v, "target_date")
+    def _v_target(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else _check_date(v, "target_date")
 
 
 class BacktestRequest(BaseModel):
@@ -168,7 +174,32 @@ async def _run(fn, *args, **kwargs) -> Any:
 @router.post("/forecast")
 async def post_forecast(payload: Any = Body(...)) -> dict:
     req: ForecastRequest = _parse(ForecastRequest, payload)
-    return await _run(get_service().forecast, req.region, req.target_date, req.horizon, req.model)
+    expected = daily_jobs.target_for(req.horizon).isoformat()
+    if req.target_date is not None and req.target_date != expected:
+        allowed = daily_jobs.allowed_targets()
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Forecasts are issued only for T+1 ({allowed[1]}) and T+2 ({allowed[2]}); "
+                    f"{req.target_date} is not allowed for horizon T+{req.horizon}. "
+                    "Use the backtest to evaluate past dates."),
+        )
+    if req.region.strip().lower() != daily_jobs.APP_REGION:
+        raise HTTPException(status_code=422, detail=f"Only region '{daily_jobs.APP_REGION}' is available.")
+    return await _run(daily_jobs.daily_forecasts.get, get_service(), req.horizon, req.model, req.refresh)
+
+
+@router.get("/forecast/daily")
+async def get_daily_forecasts(model: ModelKey = Query("lgbm_residual"), refresh: bool = Query(False)) -> dict:
+    """Today's issued T+1 and T+2 forecasts (computed once per day, then cached)."""
+    t1 = await _run(daily_jobs.daily_forecasts.get, get_service(), 1, model, refresh)
+    t2 = await _run(daily_jobs.daily_forecasts.get, get_service(), 2, model, refresh)
+    return {"ops_date": daily_jobs.ops_date().isoformat(), "region": daily_jobs.APP_REGION, "model": model,
+            "targets": daily_jobs.allowed_targets(), "t1": t1, "t2": t2}
+
+
+@router.get("/status")
+async def get_status() -> dict:
+    return daily_jobs.job_status()
 
 
 @router.post("/backtest")

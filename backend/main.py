@@ -119,8 +119,12 @@ app.include_router(pipeline_router)
 
 # Forecast Engine v3 (/api/v3/*) — contract: docs/forecast-v3-api.md
 try:
+    from . import daily_jobs
+    from .forecast_v3_router import get_service as forecast_v3_get_service
     from .forecast_v3_router import router as forecast_v3_router
 except ImportError:
+    import daily_jobs  # type: ignore
+    from forecast_v3_router import get_service as forecast_v3_get_service
     from forecast_v3_router import router as forecast_v3_router
 app.include_router(forecast_v3_router)
 
@@ -353,26 +357,47 @@ def _clear_runtime_caches() -> None:
     _simulator_date_context.cache_clear()
 
 
+def _load_engine(region: str) -> None:
+    """(Re)load the legacy engine's in-memory frame from PostgreSQL."""
+    global engine, gridintel, _CURRENT_REGION
+    db_df = _load_df_from_pipeline_db(region)
+    import tempfile as _tmp, os as _os2
+    tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
+    db_df.to_csv(tmp, index=False)
+    tmp.close()
+    try:
+        new_engine = EDAEngine(tmp.name, region=region)
+        new_gridintel = GridIntelControlDesk(tmp.name)
+    finally:
+        _os2.unlink(tmp.name)
+    engine, gridintel, _CURRENT_REGION = new_engine, new_gridintel, region
+    logger.info("[engine] PostgreSQL data loaded for region=%s (%d rows)", region, len(db_df))
+
+
 @app.on_event("startup")
 async def on_startup():
-    """Load MySQL data at startup so engine._df is never empty on first request."""
-    global engine, gridintel, _CURRENT_REGION
+    """Load data at startup and start the daily T+1/T+2 forecasting cycle."""
     startup_region = os.environ.get("STARTUP_REGION", "haryana").lower().strip()
     try:
-        db_df = await asyncio.to_thread(_load_df_from_pipeline_db, startup_region)
-        import tempfile as _tmp, os as _os2
-        tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
-        db_df.to_csv(tmp, index=False)
-        tmp.close()
-        try:
-            engine   = EDAEngine(tmp.name, region=startup_region)
-            gridintel = GridIntelControlDesk(tmp.name)
-        finally:
-            _os2.unlink(tmp.name)
-        _CURRENT_REGION = startup_region
-        logger.info("[startup] PostgreSQL data loaded for region=%s (%d rows)", startup_region, len(db_df))
+        # Bring the dummy feed up to date first so the engine sees today's data.
+        await asyncio.to_thread(daily_jobs.topup_dummy_data)
     except Exception as _e:
-        logger.warning("[startup] Could not load MySQL data for %s: %s — engine will be empty until switch-region is called", startup_region, _e)
+        logger.warning("[startup] dummy feed top-up failed: %s", _e)
+    try:
+        await asyncio.to_thread(_load_engine, startup_region)
+    except Exception as _e:
+        logger.warning("[startup] Could not load data for %s: %s", startup_region, _e)
+
+    def _on_new_data() -> None:
+        try:
+            _load_engine(_CURRENT_REGION or startup_region)
+        except Exception as exc:  # keep serving the previous frame
+            logger.warning("[daily] engine reload failed: %s", exc)
+
+    if os.environ.get("DAILY_JOBS_ENABLED", "true").strip().lower() not in ("0", "false", "no"):
+        app.state.daily_task = asyncio.create_task(
+            daily_jobs.scheduler(forecast_v3_get_service, _on_new_data)
+        )
 
 # --- Lightweight V2 helpers for the new UI ---
 def _get_df(copy=True):

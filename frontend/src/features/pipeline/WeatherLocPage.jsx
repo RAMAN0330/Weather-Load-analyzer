@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Loader2 } from 'lucide-react';
-import { DB_STATES, fetchPipelineCircleImpact, fetchPipelineWeatherLoc } from './pipelineApi';
+import { fetchPipelineCircleImpact, fetchPipelineWeatherLoc } from './pipelineApi';
 import {
   PageShell as VpPageShell,
   PageHeader as VpPageHeader,
@@ -352,14 +352,6 @@ export default function WeatherLocPage({ initialState = 'HARYANA', hideStateSele
       <div style={S.topBar}>
         {!hideStateSelector && (
           <>
-            <span style={S.label}>State:</span>
-            <select value={dbState} onChange={(e) => setDbState(e.target.value)} style={S.select}>
-              {DB_STATES.map((s) => (
-                <option key={s} value={s}>
-                  {s.charAt(0) + s.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </select>
           </>
         )}
 

@@ -24,6 +24,19 @@ Local development without Docker: start Postgres, set
 run `python -m db.seed`, `uvicorn backend.main:app --port 8000`, and `npm run dev`
 in `frontend/` (Vite proxies `/api`, `/ml-api` and `/auth` to port 8000).
 
+**Daily cycle.** FastAPI runs a background job (every `DAILY_JOB_INTERVAL_S`,
+default 900 s) that (1) tops up the dummy data feed — newly settled load blocks
+for today, weather and external forecasts to today + 2 — so the database keeps
+moving forward even if it was seeded days ago (`DUMMY_DATA_FEED=false` turns this
+off), and (2) issues today's **T+1 and T+2** forecasts, cached for the day.
+Forecasting has no date picker: only tomorrow and the day after can be
+forecast; past dates are for backtests. The app is Haryana-only.
+
+**Caching.** PostgreSQL reads are cached in-process for `DB_CACHE_TTL_S`
+(default 300 s, cleared whenever new data arrives); daily forecasts are cached
+per operating day; the v3 engine also caches trained models and input frames.
+`GET /api/v3/status` shows cache hits/misses and the daily job state.
+
 The data is synthetic: realistic in shape (seasonal peaks, daily cycle, weekends,
 weather response) but not real grid measurements. The seeded snapshot ends at the
 seed date; re-seed to move "today" forward.

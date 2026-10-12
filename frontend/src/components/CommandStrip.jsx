@@ -19,6 +19,7 @@ const CommandStrip = ({
   effectiveDate,
   selectedRegion,
   date,
+  hideDate = false,
   setDate,
   loading,
   onReload,
@@ -87,13 +88,15 @@ const CommandStrip = ({
 
       {/* ─── Actions (Right) ─── */}
       <div className="cs-float cs-float--actions">
-        <input
-          type="date"
-          className="cs-date-input"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          aria-label="Select date"
-        />
+        {!hideDate && (
+          <input
+            type="date"
+            className="cs-date-input"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            aria-label="Select date"
+          />
+        )}
         <button className="cs-action-btn" onClick={onRefreshLive} title="Refresh live forecast">
           {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
         </button>

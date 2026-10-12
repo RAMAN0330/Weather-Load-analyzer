@@ -369,13 +369,20 @@ def client(service):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from backend import daily_jobs as dj
     from backend import forecast_v3_router as r
 
+    # Pin the operating day so the synthetic 2025-07-20 is "tomorrow" (T+1).
+    prev_ops = dj.ops_date
+    dj.ops_date = lambda: pd.Timestamp("2025-07-19").date()
+    dj.daily_forecasts.invalidate()
     app = FastAPI()
     app.include_router(r.router)
     r.set_service(service)
     yield TestClient(app)
     r.set_service(None)
+    dj.ops_date = prev_ops
+    dj.daily_forecasts.invalidate()
 
 
 def test_router_models(client):
@@ -395,6 +402,19 @@ def test_router_forecast_and_backtest(client):
     assert len(r.json()["results"]) == 4
 
 
+def test_router_daily_t1_t2_cached(client):
+    r = client.get("/api/v3/forecast/daily")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["targets"] == {"1": "2025-07-20", "2": "2025-07-21"}
+    assert body["t1"]["target_date"] == "2025-07-20" and body["t1"]["horizon"] == 1
+    assert body["t2"]["target_date"] == "2025-07-21" and body["t2"]["horizon"] == 2
+    again = client.get("/api/v3/forecast/daily").json()
+    assert again["t1"]["issued_at"] == body["t1"]["issued_at"]  # served from cache
+    fresh = client.post("/api/v3/forecast", json={"horizon": 1, "refresh": True}).json()
+    assert fresh["target_date"] == "2025-07-20"
+
+
 def test_router_data_quality(client):
     r = client.get("/api/v3/data-quality", params={"region": "haryana", "days": 30, "to": "2025-07-29"})
     assert r.status_code == 200, r.text
@@ -411,7 +431,9 @@ def test_router_data_quality(client):
         ("/api/v3/forecast", {"target_date": "20-07-2025"}),
         ("/api/v3/forecast", {"target_date": "2025-07-20", "model": "prophet"}),
         ("/api/v3/backtest", {"date_from": "2025-07-20", "date_to": "2025-07-10"}),
-        ("/api/v3/forecast", {"target_date": "2025-04-10"}),  # insufficient history
+        ("/api/v3/forecast", {"target_date": "2025-07-10"}),  # past date: not T+1
+        ("/api/v3/forecast", {"target_date": "2025-07-20", "horizon": 2}),  # T+2 is 2025-07-21
+        ("/api/v3/forecast", {"target_date": "2025-07-20", "region": "odisha"}),  # single region
     ],
 )
 def test_router_422_with_string_detail(client, path, payload):
@@ -424,6 +446,7 @@ def test_router_503_on_data_source_failure():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from backend import daily_jobs as dj
     from backend import forecast_v3_router as r
 
     def broken(region, f, t):
@@ -431,10 +454,14 @@ def test_router_503_on_data_source_failure():
 
     app = FastAPI()
     app.include_router(r.router)
-    prev = r._service
+    prev, prev_ops = r._service, dj.ops_date
     r.set_service(ForecastService(loader=broken, records_dir=False))
+    dj.ops_date = lambda: pd.Timestamp("2025-07-19").date()
+    dj.daily_forecasts.invalidate()
     try:
         resp = TestClient(app).post("/api/v3/forecast", json={"target_date": "2025-07-20"})
         assert resp.status_code == 503 and "pipeline API down" in resp.json()["detail"]
     finally:
         r.set_service(prev)
+        dj.ops_date = prev_ops
+        dj.daily_forecasts.invalidate()

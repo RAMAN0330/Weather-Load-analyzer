@@ -8,7 +8,6 @@ import {
   Pill as VpPill,
 } from '../../components/page/PagePrimitives.jsx';
 import {
-  DB_STATES,
   fetchPipelineWeather,
   fetchPipelineLoad,
   fetchPipelineSimilarity,
@@ -250,7 +249,7 @@ function VirtualTable({ rows, columns, rowHeight, maxHeight, renderRow, keyFn })
 }
 
 export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1Forecast = [] }) {
-  const [dbState, setDbState] = useState('HARYANA');
+  const dbState = 'HARYANA'; // single-state product
   const [targetDate, setTargetDate] = useState('');
   const [method, setMethod] = useState('euclidean');
   const [topK, setTopK] = useState(5);
@@ -505,14 +504,6 @@ export default function SimilarDaysPage({ horizon = 't1', setHorizon, t2Date, t1
     <VpPageShell className="similar-days-page">
       {/* Top control bar */}
       <div style={S.topBar}>
-        <span style={S.label}>State:</span>
-        <select value={dbState} onChange={(e) => setDbState(e.target.value)} style={S.input}>
-          {DB_STATES.map((s) => (
-            <option key={s} value={s}>
-              {s.charAt(0) + s.slice(1).toLowerCase()}
-            </option>
-          ))}
-        </select>
         <span style={{ ...S.label, marginLeft: 8 }}>Target Date:</span>
         <input
           type="date"

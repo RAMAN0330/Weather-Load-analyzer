@@ -6,14 +6,11 @@ import {
   Download,
   Info,
   Loader2,
-  MapPin,
-  Play,
+  RefreshCw,
   Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../../components/ui/button';
-import { Input } from '../../../components/ui/input';
-import { Label } from '../../../components/ui/label';
 import { ToggleGroup, ToggleGroupItem } from '../../../components/ui/toggle-group';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
@@ -32,11 +29,9 @@ import { copyText, fmtDateShort, fmtDateTimeIST, shiftDate, titleCase } from '..
 import { StatusBadge } from './StatusBadge';
 
 export interface CommandBarProps {
-  region: string;
-  regions: string[];
-  onRegion: (r: string) => void;
+  /** Derived target: today + horizon (forecasts exist only for T+1 / T+2). */
   targetDate: string;
-  onTargetDate: (d: string) => void;
+  targetDates: Record<Horizon, string>;
   horizon: Horizon;
   onHorizon: (h: Horizon) => void;
   model: string;
@@ -45,7 +40,6 @@ export interface CommandBarProps {
   onModel: (m: string) => void;
   onRun: () => void;
   running: boolean;
-  dirty: boolean;
   forecast?: ForecastResponse;
   onExport: () => void;
 }
@@ -171,42 +165,6 @@ export function CommandBar(p: CommandBarProps) {
 
         {/* Controls */}
         <div className="flex items-center gap-2 xl:ml-auto">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className={cn(triggerCls, 'w-[7.5rem]')}
-              aria-label={`Region: ${titleCase(p.region)}`}
-              title="Region"
-            >
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <MapPin className="size-3.5 shrink-0 text-muted" aria-hidden />
-                <span className="truncate">{titleCase(p.region)}</span>
-              </span>
-              <ChevronDown className="size-3.5 shrink-0 text-muted" aria-hidden />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className={cn(scope, 'glass-strong')}>
-              <DropdownMenuLabel>Region</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={p.region} onValueChange={p.onRegion}>
-                {p.regions.map((r) => (
-                  <DropdownMenuRadioItem key={r} value={r}>
-                    {titleCase(r)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Label htmlFor="studio-target-date" className="sr-only">
-            Target date
-          </Label>
-          <Input
-            id="studio-target-date"
-            type="date"
-            required
-            value={p.targetDate}
-            onChange={(e) => p.onTargetDate(e.target.value)}
-            className="h-8 w-[8.75rem] font-mono"
-            title="Target date"
-          />
 
           <ToggleGroup
             type="single"
@@ -215,11 +173,19 @@ export function CommandBar(p: CommandBarProps) {
             aria-label="Forecast horizon"
             className="h-8 p-0.5"
           >
-            <ToggleGroupItem value="1" aria-label="T plus 1 day" className="h-6 px-2.5">
-              T+1
+            <ToggleGroupItem
+              value="1"
+              aria-label={`T plus 1: ${fmtDateShort(p.targetDates[1])}`}
+              className="h-6 px-2.5"
+            >
+              T+1 <span className="ml-1 font-mono text-2xs opacity-80">{fmtDateShort(p.targetDates[1])}</span>
             </ToggleGroupItem>
-            <ToggleGroupItem value="2" aria-label="T plus 2 days" className="h-6 px-2.5">
-              T+2
+            <ToggleGroupItem
+              value="2"
+              aria-label={`T plus 2: ${fmtDateShort(p.targetDates[2])}`}
+              className="h-6 px-2.5"
+            >
+              T+2 <span className="ml-1 font-mono text-2xs opacity-80">{fmtDateShort(p.targetDates[2])}</span>
             </ToggleGroupItem>
           </ToggleGroup>
 
@@ -254,17 +220,6 @@ export function CommandBar(p: CommandBarProps) {
 
         {/* Actions */}
         <div className="ml-auto flex items-center gap-2 xl:ml-0">
-          {p.dirty && f && (
-            <span
-              className="inline-flex items-center gap-1 text-2xs font-semibold text-warning"
-              role="status"
-              title="Parameters changed — run to update"
-            >
-              <span className="size-1.5 rounded-full bg-warning" aria-hidden />
-              <span className="2xl:hidden">Changed</span>
-              <span className="hidden 2xl:inline">Parameters changed</span>
-            </span>
-          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -285,11 +240,12 @@ export function CommandBar(p: CommandBarProps) {
           <Button
             type="submit"
             size="sm"
-            disabled={p.running || !p.targetDate}
-            className="h-8 min-w-[6.75rem]"
+            disabled={p.running}
+            className="h-8 min-w-[6.25rem]"
+            title="Re-run today's T+1 / T+2 forecast with the latest data"
           >
-            {p.running ? <Loader2 className="animate-spin" aria-hidden /> : <Play aria-hidden />}
-            {p.running ? 'Running…' : 'Run forecast'}
+            {p.running ? <Loader2 className="animate-spin" aria-hidden /> : <RefreshCw aria-hidden />}
+            {p.running ? 'Updating…' : 'Refresh'}
           </Button>
         </div>
       </form>

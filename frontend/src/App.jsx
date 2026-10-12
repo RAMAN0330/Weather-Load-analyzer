@@ -65,6 +65,9 @@ axios.defaults.timeout = 45000;
 // Product name and its one descriptor, used in the browser tab and brand blocks.
 const APP_TITLE = 'Forecast Studio';
 const APP_TAGLINE = 'Grid Load Forecasting';
+const APP_REGION = 'haryana';
+// Forecasting pages only forecast T+1 / T+2 from today: no date selection there.
+const FORECAST_PAGES = new Set(['studio', 'forecast']);
 const APP_TAGLINE_SHORT = 'Load Forecasting'; // fits the 220px sidebar brand block
 const FORECAST_REQUEST_TIMEOUT_MS = 180000;
 
@@ -246,40 +249,6 @@ const KPI_TARGETS = {
   unexplained_variance_kw: { type: 'max', good: 0, warn: 2 }
 };
 
-const REGION_DETAILS = {
-  odisha: {
-    label: 'Odisha',
-    subtitle: 'Coastal industry, monsoon swings, and heavy-grid draw clusters.',
-    signal: 'Cyclone-aware operations',
-    tags: ['Port + metals', 'Rain volatility'],
-    icon: Layers,
-    footerNote: 'Best for monsoon-sensitive load shifts, industrial clusters, and coastal weather stress.'
-  },
-  rajasthan: {
-    label: 'Rajasthan',
-    subtitle: 'Solar-heavy daytime behavior with desert heat and ramp transitions.',
-    signal: 'Solar ramp watch',
-    tags: ['Solar swing', 'Dry heat load'],
-    icon: Sun,
-    footerNote: 'Best for solar ramp analysis, weather-driven cooling load, and daylight peak planning.'
-  },
-  haryana: {
-    label: 'Haryana',
-    subtitle: 'Industrial and agricultural demand with sharp urban evening acceleration.',
-    signal: 'Evening peak acceleration',
-    tags: ['Mixed demand', 'Fast ramps'],
-    icon: TrendingUp,
-    footerNote: 'Best for mixed urban-industrial behavior, short-term stress windows, and evening peak readiness.'
-  },
-  chhattisgarh: {
-    label: 'Chhattisgarh',
-    subtitle: 'Coal-heavy generation mix with industrial load clusters and seasonal demand swings.',
-    signal: 'Thermal dispatch watch',
-    tags: ['Industrial load', 'Coal-heavy'],
-    icon: Activity,
-    footerNote: 'Best for thermal-dominant dispatch analysis, industrial demand patterns, and monsoon-season variability.'
-  }
-};
 
 const downloadBlob = (data, filename, type) => {
   const blob = new Blob([data], { type });
@@ -319,120 +288,6 @@ const ViewLoading = ({ label = 'Loading view...' }) => (
   </div>
 );
 
-const RegionSelectionModal = ({ regions, selected, onSelect, onConfirm, dateRange, onDateRange }) => {
-  const selectedMeta = selected ? (REGION_DETAILS[selected] || null) : null;
-
-  // Default: last 120 days up to today
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const presetFrom = (days) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-  const defaultFrom = presetFrom(120);
-  const isActivePreset = (days) =>
-    (dateRange.from || defaultFrom) === presetFrom(days) && (dateRange.to || todayStr) === todayStr;
-
-  return (
-    <div className="overlay region-overlay">
-      <div className="modal region-modal">
-        <div className="modal-header region-modal__header">
-          <p className="region-kicker">State Workspace</p>
-          <h2>Select Your State</h2>
-          <p>Choose a state to load localized power grid analytics and weather-aware forecasting.</p>
-        </div>
-
-        <div className="region-grid">
-          {regions.map((r) => {
-            const meta = REGION_DETAILS[r] || {
-              label: titleize(r),
-              subtitle: 'Localized load analytics and weather-aware forecasting.',
-              signal: 'State-specific forecasting',
-              tags: ['Grid analytics', 'Weather aware'],
-              icon: Layers,
-              footerNote: 'State-specific dashboard with localized forecasting and grid intelligence.'
-            };
-            const Icon = meta.icon;
-
-            return (
-              <button
-                type="button"
-                key={r}
-                className={`region-tile ${selected === r ? 'active' : ''}`}
-                onClick={() => onSelect(r)}
-              >
-                <div className="region-tile__top">
-                  <div className="region-icon">
-                    <Icon size={22} />
-                  </div>
-                </div>
-
-                <div className="region-copy">
-                  <span className="region-name">{meta.label}</span>
-                  <span className="region-subtitle">{meta.subtitle}</span>
-                </div>
-
-                <span className="region-signal">{meta.signal}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ── Date range picker ─────────────────────────────────────────── */}
-        <div className="region-date-range">
-          <div className="region-date-range__label">
-            <span>Data Range</span>
-            <span className="region-date-range__hint">Fetch historical data between these dates</span>
-          </div>
-          <div className="region-date-range__inputs">
-            <div className="region-date-field">
-              <label>From</label>
-              <input
-                type="date"
-                value={dateRange.from || defaultFrom}
-                max={dateRange.to || todayStr}
-                onChange={e => onDateRange({ ...dateRange, from: e.target.value })}
-              />
-            </div>
-            <div className="region-date-range__sep">→</div>
-            <div className="region-date-field">
-              <label>To</label>
-              <input
-                type="date"
-                value={dateRange.to || todayStr}
-                min={dateRange.from || defaultFrom}
-                max={todayStr}
-                onChange={e => onDateRange({ ...dateRange, to: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="region-date-presets">
-            <button type="button" className={`region-date-preset ${isActivePreset(120) ? 'active' : ''}`} title="Last 120 days"
-              onClick={() => onDateRange({ from: defaultFrom, to: todayStr })}>120d</button>
-            <button type="button" className={`region-date-preset ${isActivePreset(60) ? 'active' : ''}`} title="Last 60 days"
-              onClick={() => onDateRange({ from: presetFrom(60), to: todayStr })}>60d</button>
-            <button type="button" className={`region-date-preset ${isActivePreset(30) ? 'active' : ''}`} title="Last 30 days"
-              onClick={() => onDateRange({ from: presetFrom(30), to: todayStr })}>30d</button>
-          </div>
-        </div>
-
-        <div className="modal-footer region-modal__footer">
-          <div className="region-selection-summary">
-            <span className="region-selection-summary__label">Selected state</span>
-            <strong>{selectedMeta?.label || 'Choose a state to continue'}</strong>
-            <p>
-              {selectedMeta?.footerNote || 'Your launch will open a tailored dashboard with localized baselines, weather-impact analytics, and operator-ready forecasting signals.'}
-            </p>
-          </div>
-          <button
-            className="primary-btn start-btn region-launch-btn"
-            disabled={!selected}
-            onClick={onConfirm}
-          >
-            <span>Launch Dashboard</span>
-            <ArrowRight size={16} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const LoadChart = ({
   blocks = [],
@@ -1509,11 +1364,8 @@ export default function App({ authUser, onLogout, onHome }) {
   const [calendarConfig, setCalendarConfig] = useState('weekday');
   const [activeLiveInsight, setActiveLiveInsight] = useState('similar_day_matches');
   const [liveInsightsOpen, setLiveInsightsOpen] = useState(false);
-  const [selectedRegion, setSelectedRegion] = useState(null);
-  const [showRegionPrompt, setShowRegionPrompt] = useState(true);
-  const _today = new Date().toISOString().slice(0, 10);
-  const _defaultFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-  const [regionDateRange, setRegionDateRange] = useState({ from: _defaultFrom, to: _today });
+  // Single-state product: Haryana only (no region picker or start-up selection panel).
+  const selectedRegion = APP_REGION;
   const [viewDataOpen, setViewDataOpen] = useState(false);
   // Intelligence drawer is an overlay with a backdrop: start closed, open from the top bar.
   const [contextOpen, setContextOpen] = useState(false);
@@ -1569,6 +1421,12 @@ export default function App({ authUser, onLogout, onHome }) {
   };
 
   const effectiveDate = date || config?.latest_date || dayAhead?.metadata?.effective_date || '';
+
+  // Entering a forecasting page drops any past date picked on an analysis page.
+  useEffect(() => {
+    if (FORECAST_PAGES.has(active) && date) setDate('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
   const t2Date = liveT2?.t2_date || '';
 
   const detectedSeason = useMemo(() => detectSeason(effectiveDate), [effectiveDate]);
@@ -1669,7 +1527,6 @@ export default function App({ authUser, onLogout, onHome }) {
         axios.get(API_URL('/v2/settings'), { timeout: 15000 }),
       ]);
 
-      setAvailableRegions(cfgRes.data.available_regions || []);
       setConfig(cfgRes.data);
       setSettings(settingsRes.data);
 
@@ -1748,30 +1605,13 @@ export default function App({ authUser, onLogout, onHome }) {
     }
   };
 
-  const [availableRegions, setAvailableRegions] = useState(['odisha', 'rajasthan', 'haryana', 'chhattisgarh']);
+  const availableRegions = [APP_REGION];
 
-  // Startup: only fetch config if we have a region
+  // Startup: load Haryana data immediately (the backend preloads it at boot).
   useEffect(() => {
-    // If we already have a region (e.g. from localstorage later), we could auto-init
-    // For now, wait for selection
+    initializeData(APP_REGION);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleRegionConfirm = async () => {
-    if (selectedRegion) {
-      setShowRegionPrompt(false);
-      setInitPhase('config');
-      try {
-        await axios.post(TRAINING_API_URL('/switch-region'), {
-          region: selectedRegion,
-          from_date: regionDateRange.from || undefined,
-          to_date: regionDateRange.to || undefined,
-        }, { timeout: 60000 });
-      } catch (e) {
-        console.warn('switch-region failed, using existing engine data:', e?.message);
-      }
-      initializeData(selectedRegion);
-    }
-  };
 
   const fetchDayAheadForInit = async (targetDate, targetBaseline, targetRegion) => {
     setLoading(true);
@@ -3195,6 +3035,7 @@ export default function App({ authUser, onLogout, onHome }) {
         selectedRegion={selectedRegion}
         date={date}
         setDate={setDate}
+        hideDate={FORECAST_PAGES.has(active)}
         loading={loading}
         onReload={() => { reloadData(); loadFromFileData(effectiveDate, baselineDays); }}
         onRefreshLive={fetchLive}
@@ -3447,18 +3288,6 @@ export default function App({ authUser, onLogout, onHome }) {
         </Suspense>
       )}
 
-      {
-        showRegionPrompt && (
-          <RegionSelectionModal
-            regions={availableRegions}
-            selected={selectedRegion}
-            onSelect={setSelectedRegion}
-            onConfirm={handleRegionConfirm}
-            dateRange={regionDateRange}
-            onDateRange={setRegionDateRange}
-          />
-        )
-      }
 
       {
         active === 'settings' && (

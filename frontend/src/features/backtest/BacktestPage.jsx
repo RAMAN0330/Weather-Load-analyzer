@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState } from 'react';
 import axios from 'axios';
 import { getTrainingApiUrl } from '../../apiConfig';
 
-const REGIONS = ['haryana', 'odisha', 'rajasthan', 'chhattisgarh'];
 
 const fmtDate = (iso) => {
   try {
@@ -26,7 +25,7 @@ const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0
 export default function BacktestPage({ selectedRegion }) {
   const [dateFrom, setDateFrom] = useState(daysAgo(7));
   const [dateTo, setDateTo] = useState(today());
-  const [region, setRegion] = useState(selectedRegion || 'haryana');
+  const region = 'haryana'; // single-state product
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -75,14 +74,6 @@ export default function BacktestPage({ selectedRegion }) {
 
       {/* Controls */}
       <div className="bt-controls">
-        <div className="bt-field">
-          <label className="bt-label">Region</label>
-          <select className="bt-select" value={region} onChange={(e) => setRegion(e.target.value)}>
-            {REGIONS.map((r) => (
-              <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
-            ))}
-          </select>
-        </div>
         <div className="bt-field">
           <label className="bt-label">Date From</label>
           <input type="date" className="bt-input" value={dateFrom} max={dateTo} onChange={(e) => setDateFrom(e.target.value)} />

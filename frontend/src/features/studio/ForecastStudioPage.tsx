@@ -9,6 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { TooltipProvider } from '../../components/ui/tooltip';
 import {
   FALLBACK_MODELS,
+  postForecast,
+  studioKeys,
+  toApiError,
   useForecastV3,
   useModels,
   type ForecastRequest,
@@ -38,7 +41,8 @@ const studioQueryClient = new QueryClient({
   },
 });
 
-const REGIONS = ['haryana', 'odisha', 'rajasthan', 'chhattisgarh'];
+// Single-state product; forecasts are issued daily for T+1 and T+2 only.
+const APP_REGION = 'haryana';
 
 export interface ForecastStudioPageProps {
   region?: string | null;
@@ -46,24 +50,21 @@ export interface ForecastStudioPageProps {
   selectedRegion?: string | null;
 }
 
-const sameReq = (a: ForecastRequest | null, b: ForecastRequest | null) =>
-  !!a &&
-  !!b &&
-  a.region === b.region &&
-  a.target_date === b.target_date &&
-  a.horizon === b.horizon &&
-  a.model === b.model;
-
-function Studio({ initialRegion }: { initialRegion: string }) {
-  const [region, setRegion] = useState(initialRegion);
-  const [targetDate, setTargetDate] = useState(() => shiftDate(todayIST(), 1));
+function Studio() {
+  const region = APP_REGION;
   const [horizon, setHorizon] = useState<Horizon>(1);
   const [model, setModel] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState<ForecastRequest | null>(null);
   const [view, setView] = useState('forecast');
   const [sideTab, setSideTab] = useState('blocks');
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => setRegion(initialRegion), [initialRegion]);
+  // No date picker: targets are always tomorrow (T+1) and the day after (T+2).
+  const today = todayIST();
+  const targetDates = useMemo(
+    () => ({ 1: shiftDate(today, 1), 2: shiftDate(today, 2) }) as Record<Horizon, string>,
+    [today]
+  );
+  const targetDate = targetDates[horizon];
 
   const modelsQ = useModels();
   const models = modelsQ.data?.models?.length ? modelsQ.data.models : FALLBACK_MODELS;
@@ -71,21 +72,13 @@ function Studio({ initialRegion }: { initialRegion: string }) {
   const effectiveModel =
     model ?? models.find((m) => m.default)?.key ?? models[0]?.key ?? 'lgbm_residual';
 
-  const regions = useMemo(
-    () => (REGIONS.includes(region) ? REGIONS : [region, ...REGIONS]),
-    [region]
+  const current: ForecastRequest = useMemo(
+    () => ({ region, target_date: targetDate, horizon, model: effectiveModel }),
+    [region, targetDate, horizon, effectiveModel]
   );
-
-  const fq = useForecastV3(submitted);
+  // Loads today's issued forecast (served from the server cache) automatically.
+  const fq = useForecastV3(current);
   const forecast = fq.data;
-
-  const current: ForecastRequest = {
-    region,
-    target_date: targetDate,
-    horizon,
-    model: effectiveModel,
-  };
-  const dirty = submitted != null && !sameReq(current, submitted);
 
   // Toasts on run outcome (keyed on update timestamps so re-runs toast again).
   const lastOk = useRef(0);
@@ -110,12 +103,19 @@ function Studio({ initialRegion }: { initialRegion: string }) {
     }
   }, [fq.error, fq.errorUpdatedAt]);
 
-  const run = useCallback(() => {
-    if (!targetDate) return;
-    if (sameReq(current, submitted)) fq.refetch();
-    else setSubmitted(current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [region, targetDate, horizon, effectiveModel, submitted, fq.refetch]);
+  // Refresh = recompute on the server with the latest data, then replace the cached result.
+  const run = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const data = await postForecast({ ...current, refresh: true });
+      studioQueryClient.setQueryData(studioKeys.forecast(current), data);
+      toast.success('Forecast refreshed', { description: `T+${data.horizon} · ${fmtDateLong(data.target_date)}` });
+    } catch (err) {
+      toast.error('Refresh failed', { description: toApiError(err).message });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [current]);
 
   const onExport = useCallback(() => {
     if (!forecast?.blocks?.length) return;
@@ -123,8 +123,8 @@ function Studio({ initialRegion }: { initialRegion: string }) {
     toast.success('CSV exported', { description: `${forecast.blocks.length} blocks` });
   }, [forecast]);
 
-  const running = fq.isFetching;
-  const showSkeleton = submitted != null && !forecast && fq.isFetching;
+  const running = fq.isFetching || refreshing;
+  const showSkeleton = !forecast && fq.isFetching;
   const showError = !forecast && fq.isError;
 
   const forecastBody = forecast ? (
@@ -178,7 +178,7 @@ function Studio({ initialRegion }: { initialRegion: string }) {
       title="No forecast yet"
       description={
         <>
-          Choose a target date, horizon and model, then run. T+{horizon} for{' '}
+          Today's T+{horizon} forecast for{' '}
           <span className="font-mono text-fg/90">{targetDate || '—'}</span> uses data up to{' '}
           <span className="font-mono text-fg/90">
             {targetDate ? shiftDate(targetDate, -horizon) : '—'}
@@ -189,7 +189,7 @@ function Studio({ initialRegion }: { initialRegion: string }) {
       action={
         <Button onClick={run} disabled={!targetDate}>
           <Sparkles aria-hidden />
-          Run forecast
+          Load forecast
         </Button>
       }
     />
@@ -199,11 +199,8 @@ function Studio({ initialRegion }: { initialRegion: string }) {
     <div className="flex h-full min-h-0 flex-col gap-2">
       {/* Header zone — fixed height */}
       <CommandBar
-        region={region}
-        regions={regions}
-        onRegion={setRegion}
         targetDate={targetDate}
-        onTargetDate={setTargetDate}
+        targetDates={targetDates}
         horizon={horizon}
         onHorizon={setHorizon}
         model={effectiveModel}
@@ -212,7 +209,6 @@ function Studio({ initialRegion }: { initialRegion: string }) {
         onModel={setModel}
         onRun={run}
         running={running}
-        dirty={dirty}
         forecast={forecast}
         onExport={onExport}
       />
@@ -250,7 +246,6 @@ function Studio({ initialRegion }: { initialRegion: string }) {
 }
 
 export default function ForecastStudioPage({ region, selectedRegion }: ForecastStudioPageProps) {
-  const initialRegion = (region || selectedRegion || 'haryana').toLowerCase();
   // Resolved synchronously (persisted mode + matchMedia) on first render → no flash.
   const resolved = useResolvedTheme();
   const scope = useThemeScopeClass();
@@ -273,7 +268,7 @@ export default function ForecastStudioPage({ region, selectedRegion }: ForecastS
             data-theme={resolved}
           >
             <div className="flex min-h-0 w-full flex-1 flex-col p-2 [@media(max-height:679px)]:min-h-[620px]">
-              <Studio initialRegion={initialRegion} />
+              <Studio />
             </div>
             <Toaster
               theme={resolved}

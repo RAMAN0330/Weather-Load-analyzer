@@ -14,6 +14,9 @@ change their import.
 from __future__ import annotations
 
 import os
+import threading
+import time
+from collections import OrderedDict
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Iterable, Optional
@@ -47,6 +50,32 @@ class DataSourceUnavailable(RuntimeError):
     """The database could not be reached or queried."""
 
 
+# ── Query cache ──────────────────────────────────────────────────────────────
+# Reads are cached in-process for DB_CACHE_TTL_S seconds (default 300) and the
+# whole cache is cleared whenever new data is written (see clear_cache()), so
+# repeated page loads and forecasts don't re-query PostgreSQL.
+_CACHE_MAX_ENTRIES = int(os.environ.get("DB_CACHE_MAX_ENTRIES", "128"))
+_cache: "OrderedDict[tuple, tuple[float, pd.DataFrame]]" = OrderedDict()
+_cache_lock = threading.Lock()
+_cache_stats = {"hits": 0, "misses": 0, "cleared_at": None}
+
+
+def _cache_ttl() -> float:
+    return float(os.environ.get("DB_CACHE_TTL_S", "300"))
+
+
+def clear_cache() -> None:
+    """Drop all cached query results (call after inserting data)."""
+    with _cache_lock:
+        _cache.clear()
+        _cache_stats["cleared_at"] = time.time()
+
+
+def cache_stats() -> dict:
+    with _cache_lock:
+        return {**_cache_stats, "entries": len(_cache), "ttl_s": _cache_ttl()}
+
+
 def database_url() -> str:
     return os.environ.get("DATABASE_URL", DEFAULT_URL)
 
@@ -68,7 +97,27 @@ def _iso(d: object) -> Optional[str]:
     return str(d)[:10]
 
 
-def _query(sql: str, params: dict) -> pd.DataFrame:
+def _query(sql: str, params: dict, cache: bool = True) -> pd.DataFrame:
+    ttl = _cache_ttl() if cache else 0
+    key = (sql, tuple(sorted(params.items())))
+    if ttl > 0:
+        with _cache_lock:
+            hit = _cache.get(key)
+            if hit and time.time() - hit[0] < ttl:
+                _cache.move_to_end(key)
+                _cache_stats["hits"] += 1
+                return hit[1].copy()
+    df = _query_uncached(sql, params)
+    if ttl > 0:
+        with _cache_lock:
+            _cache_stats["misses"] += 1
+            _cache[key] = (time.time(), df)
+            while len(_cache) > _CACHE_MAX_ENTRIES:
+                _cache.popitem(last=False)
+    return df.copy()
+
+
+def _query_uncached(sql: str, params: dict) -> pd.DataFrame:
     try:
         with engine().connect() as conn:
             return pd.read_sql_query(text(sql), conn, params=params)
@@ -172,5 +221,5 @@ def table_count(table: str, state: object) -> int:
 __all__: Iterable[str] = [
     "DataSourceUnavailable", "TABLES", "database_url", "engine", "read_frame", "table_rows",
     "load_frame", "weather_loc_frame", "weather_mean_frame", "forecast_frame",
-    "states", "locations", "date_range", "load_dates", "table_count",
+    "states", "locations", "date_range", "load_dates", "table_count", "clear_cache", "cache_stats",
 ]

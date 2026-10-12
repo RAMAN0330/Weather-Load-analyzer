@@ -406,7 +406,7 @@ export default function WeatherDeepPage({
         {
           date: effectiveDate,
           baseline_days: 7,
-          region: selectedRegion || 'odisha',
+          region: selectedRegion || 'haryana',
         },
         { timeout: 60000 }
       );
@@ -457,7 +457,7 @@ export default function WeatherDeepPage({
           {
             date,
             baseline_days: 7,
-            region: selectedRegion || 'odisha',
+            region: selectedRegion || 'haryana',
           },
           { timeout: 60000 }
         );
