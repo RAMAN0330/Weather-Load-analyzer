@@ -48,8 +48,8 @@ export default function BacktestPage({ selectedRegion }) {
     }
   }, [region, dateFrom, dateTo]);
 
-  const { daily, summary } = useMemo(() => {
-    if (!results) return { daily: [], summary: null };
+  const { daily, summary, hasT2 } = useMemo(() => {
+    if (!results) return { daily: [], summary: null, hasT2: false };
     const daily = results.daily_results || [];
     const t1Mapes = daily.map((d) => d.t1_mape).filter((v) => v != null);
     const t2Mapes = daily.map((d) => d.t2_mape).filter((v) => v != null);
@@ -63,8 +63,11 @@ export default function BacktestPage({ selectedRegion }) {
       t1_above_98: t1Mapes.filter((v) => 100 - v >= 98).length,
       t2_above_96: t2Mapes.filter((v) => 100 - v >= 96).length,
     };
-    return { daily, summary };
+    // The v2 backtest simulates T+1 only; T+2 columns appear only when provided.
+    return { daily, summary, hasT2: t2Mapes.length > 0 };
   }, [results]);
+
+  const gridCols = hasT2 ? undefined : { gridTemplateColumns: '120px 80px 80px 130px 80px' };
 
   return (
     <div className="bt-page">
@@ -122,6 +125,7 @@ export default function BacktestPage({ selectedRegion }) {
               {summary.t1_accuracy != null ? `${summary.t1_accuracy.toFixed(2)}%` : '—'}
             </span>
           </div>
+          {hasT2 && (<>
           <div className="bt-sum-kpi">
             <span className="bt-sum-label">T+2 Avg MAPE</span>
             <span className="bt-sum-value" style={{ color: mapeColor(summary.t2_avg_mape) }}>
@@ -134,18 +138,33 @@ export default function BacktestPage({ selectedRegion }) {
               {summary.t2_accuracy != null ? `${summary.t2_accuracy.toFixed(2)}%` : '—'}
             </span>
           </div>
+          </>)}
           <div className="bt-sum-kpi">
             <span className="bt-sum-label">Days ≥98% T+1</span>
             <span className="bt-sum-value" style={{ color: 'var(--success)' }}>
               {summary.t1_above_98}/{summary.days}
             </span>
           </div>
-          <div className="bt-sum-kpi">
-            <span className="bt-sum-label">Days ≥96% T+2</span>
-            <span className="bt-sum-value" style={{ color: 'var(--success)' }}>
-              {summary.t2_above_96}/{summary.days}
-            </span>
-          </div>
+          {hasT2 && (
+            <div className="bt-sum-kpi">
+              <span className="bt-sum-label">Days ≥96% T+2</span>
+              <span className="bt-sum-value" style={{ color: 'var(--success)' }}>
+                {summary.t2_above_96}/{summary.days}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {results?.capped && (
+        <div className="bt-target-gap" style={{ color: 'var(--text-muted)' }}>
+          Range capped to the last {daily.length || results.evaluated_dates?.length} days
+          ({fmtDate(results.evaluated_dates?.[0])} – {fmtDate(results.evaluated_dates?.at(-1))}).
+        </div>
+      )}
+      {results && !hasT2 && (
+        <div className="bt-target-gap" style={{ color: 'var(--text-muted)' }}>
+          T+1 only. T+2 accuracy is evaluated by the v3 engine backtest (horizons 1 and 2).
         </div>
       )}
 
@@ -164,12 +183,12 @@ export default function BacktestPage({ selectedRegion }) {
           <div className="bt-section-title">Daily Results</div>
           <div className="bt-table-wrap">
             <div className="bt-table">
-              <div className="bt-thead">
+              <div className="bt-thead" style={gridCols}>
                 <span>Date</span>
                 <span>T+1 MAPE</span>
                 <span>T+1 Acc</span>
-                <span>T+2 MAPE</span>
-                <span>T+2 Acc</span>
+                {hasT2 && <span>T+2 MAPE</span>}
+                {hasT2 && <span>T+2 Acc</span>}
                 <span>Worst Block</span>
                 <span>Weather</span>
               </div>
@@ -177,6 +196,7 @@ export default function BacktestPage({ selectedRegion }) {
                 <div
                   key={row.date}
                   className={`bt-trow ${(row.t1_mape > 4 || row.t2_mape > 6) ? 'bt-trow--warn' : ''}`}
+                  style={gridCols}
                 >
                   <span>{fmtDate(row.date)}</span>
                   <span style={{ color: mapeColor(row.t1_mape) }}>
@@ -185,12 +205,16 @@ export default function BacktestPage({ selectedRegion }) {
                   <span style={{ color: mapeColor(row.t1_mape) }}>
                     {row.t1_mape != null ? `${(100 - row.t1_mape).toFixed(2)}%` : '—'}
                   </span>
-                  <span style={{ color: mapeColor(row.t2_mape) }}>
-                    {row.t2_mape != null ? `${row.t2_mape.toFixed(2)}%` : '—'}
-                  </span>
-                  <span style={{ color: mapeColor(row.t2_mape) }}>
-                    {row.t2_mape != null ? `${(100 - row.t2_mape).toFixed(2)}%` : '—'}
-                  </span>
+                  {hasT2 && (
+                    <span style={{ color: mapeColor(row.t2_mape) }}>
+                      {row.t2_mape != null ? `${row.t2_mape.toFixed(2)}%` : '—'}
+                    </span>
+                  )}
+                  {hasT2 && (
+                    <span style={{ color: mapeColor(row.t2_mape) }}>
+                      {row.t2_mape != null ? `${(100 - row.t2_mape).toFixed(2)}%` : '—'}
+                    </span>
+                  )}
                   <span style={{ color: row.worst_block_ape > 10 ? 'var(--danger)' : 'var(--text-muted)' }}>
                     {row.worst_block != null ? `B${row.worst_block} (${row.worst_block_ape?.toFixed(1)}%)` : '—'}
                   </span>

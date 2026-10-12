@@ -169,6 +169,54 @@ const safeAverage = (values = []) => {
   return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : 0;
 };
 
+const toBlocks = (arr) =>
+  Array.isArray(arr) && arr.length
+    ? Array.from({ length: 96 }, (_, i) => {
+        const v = arr[i];
+        if (v == null || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      })
+    : [];
+
+const validValues = (vec) => vec.filter((v) => v != null);
+
+const dayStats = (vec) => {
+  const vals = validValues(vec);
+  if (!vals.length) {
+    return { peak: 0, valley: 0, peakIdx: -1, energy: 0, avg: 0, loadFactor: 0, validBlocks: 0 };
+  }
+  const peak = Math.max(...vals);
+  const positive = vals.filter((v) => v > 0);
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+  return {
+    peak,
+    valley: positive.length ? Math.min(...positive) : 0,
+    peakIdx: vec.indexOf(peak),
+    energy: vals.reduce((s, v) => s + v * 0.25, 0), // MWh over valid blocks only
+    avg,
+    loadFactor: peak > 0 ? (avg / peak) * 100 : 0,
+    validBlocks: vals.length,
+  };
+};
+
+const hourlyMeans = (vec) => {
+  const hrs = Array.from({ length: 24 }, () => []);
+  vec.forEach((v, i) => {
+    if (v != null) hrs[Math.floor(i / 4)].push(v);
+  });
+  return hrs.map((arr) => (arr.length ? safeAverage(arr) : null));
+};
+
+// Ramps only between consecutive blocks that both have data.
+const blockRamps = (vec) => {
+  const out = [];
+  for (let i = 1; i < vec.length; i += 1) {
+    if (vec[i] != null && vec[i - 1] != null) out.push(vec[i] - vec[i - 1]);
+  }
+  return out;
+};
+
 const KpiCard = ({ eyebrow, title, value, unit, tone = 'var(--text)', detail, footer }) => (
   <div
     className="kpi-card"
@@ -246,61 +294,47 @@ export default function LoadAnalysisPage({
     setLocalMultiSeries(multiDaySeries || {});
   }, [multiDaySeries]);
 
-  const today = useMemo(
-    () => (resolvedBenchmark?.today || []).map(Number).filter(Number.isFinite),
-    [resolvedBenchmark]
-  );
-  const t1 = useMemo(
-    () => (resolvedBenchmark?.t1 || []).map(Number).filter(Number.isFinite),
-    [resolvedBenchmark]
-  );
-  const t7 = useMemo(
-    () => (resolvedBenchmark?.t7 || []).map(Number).filter(Number.isFinite),
-    [resolvedBenchmark]
-  );
-  const t365 = useMemo(
-    () => (resolvedBenchmark?.t365 || []).map(Number).filter(Number.isFinite),
-    [resolvedBenchmark]
-  );
+  // 96-aligned vectors: missing blocks stay null (never 0) so stats, ramps and
+  // deviations are computed only over blocks that actually have data.
+  const today = useMemo(() => toBlocks(resolvedBenchmark?.today), [resolvedBenchmark]);
+  const t1 = useMemo(() => toBlocks(resolvedBenchmark?.t1), [resolvedBenchmark]);
+  const t7 = useMemo(() => toBlocks(resolvedBenchmark?.t7), [resolvedBenchmark]);
+  const t365 = useMemo(() => toBlocks(resolvedBenchmark?.t365), [resolvedBenchmark]);
 
-  const peak = today.length ? Math.max(...today) : 0;
-  const valley = today.length ? Math.min(...today.filter((v) => v > 0)) : 0;
-  const yPeak = t1.length ? Math.max(...t1) : 0;
-  const yValley = t1.length ? Math.min(...t1.filter((v) => v > 0)) : 0;
-  const peakIdx = today.indexOf(peak);
-  const yPeakIdx = t1.indexOf(yPeak);
-  const energy = today.reduce((s, v) => s + v * 0.25, 0);
-  const yEnergy = t1.reduce((s, v) => s + v * 0.25, 0);
-  const avgLoad = today.length ? today.reduce((s, v) => s + v, 0) / today.length : 0;
-  const yAvgLoad = t1.length ? t1.reduce((s, v) => s + v, 0) / t1.length : 0;
-  const loadFactor = peak > 0 ? (avgLoad / peak) * 100 : 0;
-  const yLoadFactor = yPeak > 0 ? (yAvgLoad / yPeak) * 100 : 0;
+  const todayStats = useMemo(() => dayStats(today), [today]);
+  const yStats = useMemo(() => dayStats(t1), [t1]);
+  const { peak, valley, peakIdx, energy, avg: avgLoad, loadFactor, validBlocks } = todayStats;
+  const {
+    peak: yPeak,
+    valley: yValley,
+    peakIdx: yPeakIdx,
+    energy: yEnergy,
+    loadFactor: yLoadFactor,
+    validBlocks: yValidBlocks,
+  } = yStats;
+  // Energy over a day with missing blocks is a partial sum, not a daily total.
+  const energyPartial = validBlocks > 0 && validBlocks < 96;
+  const yEnergyPartial = yValidBlocks > 0 && yValidBlocks < 96;
 
-  const deviation = useMemo(() => today.map((v, i) => (t1[i] ? v - t1[i] : 0)), [today, t1]);
-  const absDeviation = deviation.map(Math.abs);
-  const maxDevBlock = absDeviation.indexOf(Math.max(...absDeviation));
+  // Deviation only where both days have a value; null elsewhere (chart gap).
+  const deviation = useMemo(
+    () => today.map((v, i) => (v != null && t1[i] != null ? v - t1[i] : null)),
+    [today, t1]
+  );
+  const absDeviation = deviation.filter((v) => v != null).map(Math.abs);
+  const maxDev = absDeviation.length ? Math.max(...absDeviation) : null;
+  const maxDevBlock =
+    maxDev == null ? -1 : deviation.findIndex((v) => v != null && Math.abs(v) === maxDev);
   const avgDev = absDeviation.length
     ? absDeviation.reduce((s, v) => s + v, 0) / absDeviation.length
     : 0;
-  const sortedLoad = useMemo(() => [...today].sort((a, b) => b - a), [today]);
+  const sortedLoad = useMemo(() => validValues(today).sort((a, b) => b - a), [today]);
 
-  const hourlyAvg = useMemo(() => {
-    const hrs = Array.from({ length: 24 }, () => []);
-    today.forEach((v, i) => hrs[Math.floor(i / 4)].push(v));
-    return hrs.map((arr) => safeAverage(arr));
-  }, [today]);
+  const hourlyAvg = useMemo(() => hourlyMeans(today), [today]);
+  const yHourlyAvg = useMemo(() => hourlyMeans(t1), [t1]);
 
-  const yHourlyAvg = useMemo(() => {
-    const hrs = Array.from({ length: 24 }, () => []);
-    t1.forEach((v, i) => hrs[Math.floor(i / 4)].push(v));
-    return hrs.map((arr) => safeAverage(arr));
-  }, [t1]);
-
-  const ramps = useMemo(
-    () => (today.length > 1 ? today.slice(1).map((v, i) => v - today[i]) : []),
-    [today]
-  );
-  const yRamps = useMemo(() => (t1.length > 1 ? t1.slice(1).map((v, i) => v - t1[i]) : []), [t1]);
+  const ramps = useMemo(() => blockRamps(today), [today]);
+  const yRamps = useMemo(() => blockRamps(t1), [t1]);
   const maxRampUp = ramps.length ? Math.max(...ramps) : 0;
   const maxRampDown = ramps.length ? Math.min(...ramps) : 0;
   const yMaxRampUp = yRamps.length ? Math.max(...yRamps) : 0;
@@ -346,11 +380,12 @@ export default function LoadAnalysisPage({
   }, [normalizedMomentum]);
 
   const similarDays = activeLiveData?.metadata?.similar_days || [];
-  const hasData = today.length > 0;
+  const hasData = validBlocks > 0;
 
   const peakShiftBlocks = peakIdx >= 0 && yPeakIdx >= 0 ? peakIdx - yPeakIdx : null;
   const nightBase = safeAverage(hourlyAvg.slice(0, 6));
-  const morningRampWindow = (hourlyAvg[10] || 0) - (hourlyAvg[6] || 0);
+  const morningRampWindow =
+    hourlyAvg[10] != null && hourlyAvg[6] != null ? hourlyAvg[10] - hourlyAvg[6] : null;
   const afternoonPlateau = safeAverage(hourlyAvg.slice(12, 17));
   const eveningPeakWindow = safeAverage(hourlyAvg.slice(18, 21));
   const demandRange = peak - valley;
@@ -360,8 +395,11 @@ export default function LoadAnalysisPage({
   // Duck Curve Severity: midday min (blocks 40-56) / morning peak (blocks 44-55)
   const duckCurveSeverity = useMemo(() => {
     if (today.length < 56) return null;
-    const middayMin = Math.min(...today.slice(39, 56).filter((v) => v > 0));
-    const morningPeak = Math.max(...today.slice(43, 56));
+    const midday = today.slice(39, 56).filter((v) => v != null && v > 0);
+    const morning = today.slice(43, 56).filter((v) => v != null);
+    if (!midday.length || !morning.length) return null;
+    const middayMin = Math.min(...midday);
+    const morningPeak = Math.max(...morning);
     if (morningPeak <= 0) return null;
     return middayMin / morningPeak;
   }, [today]);
@@ -408,7 +446,7 @@ export default function LoadAnalysisPage({
       { l: 'Night Base (00-06)', v: `${fmt(nightBase, 0)} MW`, c: 'var(--info)' },
       {
         l: 'Morning Ramp (06-10)',
-        v: `${morningRampWindow >= 0 ? '+' : ''}${fmt(morningRampWindow, 0)} MW`,
+        v: `${morningRampWindow > 0 ? '+' : ''}${fmt(morningRampWindow, 0)} MW`,
         c: 'var(--warning)',
       },
       { l: 'Afternoon Plateau', v: `${fmt(afternoonPlateau, 0)} MW`, c: 'var(--accent)' },
@@ -443,14 +481,16 @@ export default function LoadAnalysisPage({
       },
       {
         eyebrow: 'Energy balance',
-        title: 'Daily Energy',
+        title: energyPartial ? 'Energy (partial)' : 'Daily Energy',
         value: fmt(energy, 0),
         unit: 'MWh',
         tone: 'var(--text)',
         detail:
-          yEnergy > 0
-            ? `${(energy - yEnergy) / yEnergy >= 0 ? '+' : ''}${fmt(((energy - yEnergy) / yEnergy) * 100)}% vs yesterday`
-            : 'No comparison baseline',
+          energyPartial || yEnergyPartial
+            ? `${validBlocks}/96 blocks today, ${yValidBlocks}/96 yesterday — not comparable`
+            : yEnergy > 0
+              ? `${(energy - yEnergy) / yEnergy >= 0 ? '+' : ''}${fmt(((energy - yEnergy) / yEnergy) * 100)}% vs yesterday`
+              : 'No comparison baseline',
         footer: `Average load ${fmt(avgLoad, 0)} MW`,
       },
       {
@@ -524,6 +564,10 @@ export default function LoadAnalysisPage({
       peakIdx,
       energy,
       yEnergy,
+      energyPartial,
+      yEnergyPartial,
+      validBlocks,
+      yValidBlocks,
       avgLoad,
       loadFactor,
       yLoadFactor,
@@ -915,7 +959,7 @@ export default function LoadAnalysisPage({
             <div style={{ ...S.card, padding: '12px 14px', gap: 4 }}>
               <span style={S.miniLabel}>Largest block delta</span>
               <strong style={{ fontSize: 22, color: 'var(--danger)' }}>
-                {fmt(absDeviation[maxDevBlock], 0)} MW
+                {fmt(maxDev, 0)} MW
               </strong>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {maxDevBlock >= 0 ? `Around ${blockToTime(maxDevBlock + 1)}` : 'Not available'}

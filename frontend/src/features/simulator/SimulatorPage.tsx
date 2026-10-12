@@ -325,11 +325,13 @@ export const SimulatorPage: React.FC<Props> = ({
       }
     });
 
+    const n = scopeBlocks.length;
     return {
-      baseline,
-      final,
-      shift: final - baseline,
-      energy: (final - baseline) * 0.25,
+      // Mean MW over the scope: summing MW across blocks is not a power quantity.
+      baseline: baseline / n,
+      final: final / n,
+      shift: (final - baseline) / n,
+      energy: (final - baseline) * 0.25, // MWh = sum of MW deltas x 0.25 h
       peakBaseline,
       peakFinal,
     };
@@ -441,7 +443,8 @@ export const SimulatorPage: React.FC<Props> = ({
   }, [selected]);
 
   const selectionCount = selectedBlocks.length || blocks.length;
-  const peakDeltaMw = Math.abs(netSummary.peakFinal.value - netSummary.peakBaseline.value);
+  // Signed: positive = scenario raises the peak, negative = lowers it.
+  const peakDeltaMw = netSummary.peakFinal.value - netSummary.peakBaseline.value;
   const peakShiftBlocks =
     netSummary.peakFinal.block && netSummary.peakBaseline.block
       ? netSummary.peakFinal.block - netSummary.peakBaseline.block
@@ -463,6 +466,8 @@ export const SimulatorPage: React.FC<Props> = ({
     if (scopeBlocks.length < 2) return 0;
     let count = 0;
     for (let i = 1; i < scopeBlocks.length; i++) {
+      // Only adjacent 15-min blocks form a ramp; skip gaps in a non-contiguous selection.
+      if (scopeBlocks[i].block_number - scopeBlocks[i - 1].block_number !== 1) continue;
       const ramp = Math.abs((scopeBlocks[i].final_mw || 0) - (scopeBlocks[i - 1].final_mw || 0));
       if (ramp > RAMP_LIMIT_MW) count++;
     }
@@ -500,10 +505,10 @@ export const SimulatorPage: React.FC<Props> = ({
         )}
         <div style={S.kpiGrid}>
           <KpiCard
-            label="Net Shift"
+            label="Mean Shift"
             value={`${netSummary.shift >= 0 ? '+' : ''}${netSummary.shift.toFixed(1)}`}
             unit="MW"
-            sub={`${selectionCount} blocks in scope • baseline ${netSummary.baseline.toFixed(1)} MW`}
+            sub={`${selectionCount} blocks in scope • mean baseline ${netSummary.baseline.toFixed(1)} MW`}
             tone={netSummary.shift >= 0 ? 'var(--success)' : 'var(--danger)'}
           />
           <KpiCard
@@ -515,13 +520,13 @@ export const SimulatorPage: React.FC<Props> = ({
           />
           <KpiCard
             label="Peak Delta"
-            value={peakDeltaMw.toFixed(1)}
+            value={`${peakDeltaMw > 0 ? '+' : ''}${peakDeltaMw.toFixed(1)}`}
             unit="MW"
             sub={`Peak moved ${peakShiftBlocks > 0 ? '+' : ''}${peakShiftBlocks} blocks from baseline`}
             tone={
-              peakDeltaMw <= 40
+              Math.abs(peakDeltaMw) <= 40
                 ? 'var(--success)'
-                : peakDeltaMw <= 90
+                : Math.abs(peakDeltaMw) <= 90
                   ? 'var(--warning)'
                   : 'var(--danger)'
             }
@@ -758,7 +763,7 @@ export const SimulatorPage: React.FC<Props> = ({
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
                   Peak {netSummary.peakBaseline.block || '--'} {'->'}{' '}
-                  {netSummary.peakFinal.block || '--'} • {peakDeltaMw.toFixed(1)} MW delta
+                  {netSummary.peakFinal.block || '--'} • {peakDeltaMw > 0 ? '+' : ''}{peakDeltaMw.toFixed(1)} MW delta
                 </div>
               </div>
               <div
