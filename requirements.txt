@@ -11,12 +11,11 @@ openpyxl==3.1.5
 pandas==3.0.1
 plotly==6.6.0
 polars==1.39.3
-psycopg2==2.9.11
+psycopg2-binary==2.9.11  # prebuilt wheel: no compiler or libpq-dev needed
 pydantic==2.12.5
 python-dotenv==1.0.1
 Requests==2.33.0
 scikit_learn==1.8.0
 scipy==1.17.1
-torch==2.9.1
 uvicorn[standard]==0.42.0
-xgboost==3.2.0
+xgboost-cpu==3.2.0  # same `import xgboost`; skips the 350 MB CUDA NCCL dependency
