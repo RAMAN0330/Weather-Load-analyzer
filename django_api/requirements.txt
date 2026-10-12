@@ -1,7 +1,0 @@
-django>=4.2,<5.2
-djangorestframework>=3.15
-django-cors-headers>=4.3
-PyMySQL>=1.1              # Pure-Python MySQL adapter (no build deps)
-python-dotenv>=1.0
-uvicorn[standard]>=0.29   # ASGI server (optional, for gunicorn alternative)
-gunicorn>=22.0            # Production WSGI server

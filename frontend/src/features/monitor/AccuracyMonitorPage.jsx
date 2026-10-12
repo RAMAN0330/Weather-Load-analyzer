@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { getApiUrl } from '../../apiConfig';
+import { getTrainingApiUrl } from '../../apiConfig';
 
 const REFRESH_MS = 5 * 60 * 1000; // 5 min
 const DRIFT_MAPE_THRESHOLD = 5.0;
@@ -51,7 +51,7 @@ export default function AccuracyMonitorPage({
     if (!forecastVec.length) return;
     setLoading(true);
     try {
-      const { data } = await axios.post(getApiUrl('/api/v2/accuracy/live'), {
+      const { data } = await axios.post(getTrainingApiUrl('/v2/accuracy/live'), {
         date: selectedDate,
         region: selectedRegion,
         forecast: forecastVec,
@@ -93,7 +93,7 @@ export default function AccuracyMonitorPage({
     setRecalibrating(true);
     setRecalibMsg(null);
     try {
-      await axios.post(getApiUrl('/api/v2/live'), {
+      await axios.post(getTrainingApiUrl('/v2/live'), {
         date: selectedDate,
         region: selectedRegion,
         actual_blocks: actualBlocks,

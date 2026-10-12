@@ -19,7 +19,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 # ── DB connection ──────────────────────────────────────────────────────────
 _HERE = Path(__file__).parent.parent          # project root
 _DEFAULT_DB = f"sqlite:///{_HERE / 'auth.db'}"
-DB_URL = os.environ.get("AUTH_DB_URL", _DEFAULT_DB)
+# Accounts live in the same PostgreSQL database as the pipeline data.
+DB_URL = os.environ.get("AUTH_DB_URL") or os.environ.get("DATABASE_URL") or _DEFAULT_DB
 
 engine = create_engine(
     DB_URL,

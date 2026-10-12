@@ -1,7 +1,7 @@
 """Data access for Forecast Engine v3.
 
 ``load_region_frames`` pulls SLDC + load + per-district weather from the
-Django pipeline API (via ``build_final_data._fetch_table``) and returns two
+PostgreSQL database (``backend/db.py``) and returns two
 tidy frames:
 
 * ``load_df``       — date, block, load  (SLDC preferred, gaps filled from /load)
@@ -138,13 +138,14 @@ def normalise_weather_rows(rows: list[dict] | pd.DataFrame) -> pd.DataFrame:
     return out[cols].reset_index(drop=True)
 
 
-def _import_fetch_table():
-    root = str(Path(__file__).resolve().parents[2])
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    from build_final_data import _fetch_table  # noqa: WPS433
+def _import_db():
+    """PostgreSQL data access (``backend/db.py``)."""
+    backend_dir = str(Path(__file__).resolve().parents[1])
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    import db  # noqa: WPS433
 
-    return _fetch_table
+    return db
 
 
 def _cache_key(region: str, from_date: str, to_date: str) -> str:
@@ -192,12 +193,12 @@ def load_region_frames(region: str, from_date: str, to_date: str) -> tuple[pd.Da
 
     state = region_to_state(region)
     try:
-        fetch = _import_fetch_table()
-        sldc = normalise_load_rows(fetch("/sldc", state, from_date, to_date))
-        aux = normalise_load_rows(fetch("/load", state, from_date, to_date))
-        wx = normalise_weather_rows(fetch("/weather/loc", state, from_date, to_date))
-    except Exception as exc:  # network / HTTP / parse failures
-        raise DataSourceError(f"Pipeline data source unavailable for {state}: {type(exc).__name__}: {exc}") from exc
+        source = _import_db()
+        sldc = normalise_load_rows(source.load_frame(state, from_date, to_date, table="sldc"))
+        aux = normalise_load_rows(source.load_frame(state, from_date, to_date, table="load"))
+        wx = normalise_weather_rows(source.weather_loc_frame(state, from_date, to_date))
+    except Exception as exc:  # generator / parse failures
+        raise DataSourceError(f"Data source unavailable for {state}: {type(exc).__name__}: {exc}") from exc
     load_df = merge_sldc_load(sldc, aux)
     if load_df.empty:
         raise DataSourceError(f"No load data returned for {state} between {from_date} and {to_date}.")

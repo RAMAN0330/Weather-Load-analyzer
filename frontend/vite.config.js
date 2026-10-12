@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const djangoTarget = process.env.VITE_DJANGO_PROXY_TARGET || 'http://localhost:8001';
-const fastapiTarget = process.env.VITE_FASTAPI_PROXY_TARGET || 'http://localhost:8000';
+// Single FastAPI backend serves /api, /ml-api (alias) and /auth.
+const apiTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -14,16 +14,18 @@ export default defineConfig({
       interval: 300,
     },
     proxy: {
-      // Forecast/model-training traffic only.
       '/ml-api': {
-        target: fastapiTarget,
+        target: apiTarget,
         changeOrigin: true,
         ws: true,
         rewrite: (path) => path.replace(/^\/ml-api/, '/api'),
       },
-      // Normal application/API traffic goes through Django.
       '/api': {
-        target: djangoTarget,
+        target: apiTarget,
+        changeOrigin: true,
+      },
+      '/auth': {
+        target: apiTarget,
         changeOrigin: true,
       },
     },

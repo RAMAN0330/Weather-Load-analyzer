@@ -38,3 +38,6 @@ exports/scenarios_store.json
 
 # Forecast Engine v3 data/model cache and forecast records
 backend/.cache/
+
+# Local auth fallback DB (used only when DATABASE_URL is unset)
+auth.db

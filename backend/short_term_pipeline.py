@@ -6544,7 +6544,7 @@ def _recompute_precipitation_if_split(wdf: pd.DataFrame) -> pd.DataFrame:
 
 def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFrame]:
     """
-    Fetch block-level weather from MySQL (via Django pipeline API).
+    Fetch block-level weather from PostgreSQL (backend/db.py).
     MySQL is the ONLY source — no SQLite/CSV fallback.
 
     For Haryana, this also attempts a per-location fetch via
@@ -6561,10 +6561,11 @@ def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFram
     _log = logging.getLogger(__name__)
     state = region.upper().replace(" ", "_").replace("-", "_")
 
-    import requests as _req
-    pipeline_base = os.environ.get("PIPELINE_API_BASE_URL", "http://3.108.54.200:8001").rstrip("/")
-    api_token     = os.environ.get("PIPELINE_API_TOKEN", os.environ.get("API_SECRET_KEY", "flagbearer"))
-    headers = {"Authorization": f"Bearer {api_token}"}
+    # Weather comes from PostgreSQL (backend/db.py).
+    try:
+        from . import db as _wxdb  # type: ignore
+    except ImportError:
+        import db as _wxdb  # type: ignore
 
     # ── Per-location weighted aggregation (if applicable) ─────────────────────
     # HARYANA  → hand-curated CIRCLE_CONTRIBUTION_PCT (haryana_circle_weights).
@@ -6610,14 +6611,8 @@ def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFram
 
     if aggregator is not None:
             try:
-                resp_loc = _req.get(
-                    f"{pipeline_base}/weather/by_location",
-                    params={"state": state, "date": t2_date, "limit": 5000},
-                    headers=headers,
-                    timeout=10,
-                )
-                if resp_loc.status_code == 200:
-                    loc_rows = resp_loc.json()
+                if True:
+                    loc_rows = _wxdb.table_rows("weather_loc", state, date=t2_date, limit=None)
                     if isinstance(loc_rows, list) and loc_rows:
                         loc_df = pd.DataFrame(loc_rows)
                         rename = {
@@ -6645,41 +6640,19 @@ def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFram
                                 wdf = wdf.sort_values("time_block").reset_index(drop=True)
                                 wdf = _recompute_precipitation_if_split(wdf)
                                 _log.info(
-                                    "[weather] MySQL per-location aggregate: %d blocks for %s %s "
+                                    "[weather] per-location aggregate: %d blocks for %s %s "
                                     "(method=%s)",
                                     len(wdf), region, t2_date, aggregator_label,
                                 )
                                 return wdf
-            except _req.exceptions.RequestException as exc:
-                _log.info("[weather] per-location endpoint not available, falling back to /weather/mean: %s", exc)
             except Exception as exc:
                 _log.warning("[weather] per-location aggregation failed, falling back: %s", exc)
 
-    try:
-        resp = _req.get(
-            f"{pipeline_base}/weather/mean",
-            params={"state": state, "date": t2_date, "limit": 100},
-            headers=headers,
-            timeout=10,
-        )
-    except _req.exceptions.RequestException as exc:
-        raise WeatherDataUnavailable(
-            f"MySQL weather API unreachable ({pipeline_base}): {exc}"
-        ) from exc
-
-    if resp.status_code != 200:
-        raise WeatherDataUnavailable(
-            f"MySQL weather API returned {resp.status_code} for {state} {t2_date}"
-        )
-
-    try:
-        rows = resp.json()
-    except ValueError as exc:
-        raise WeatherDataUnavailable(f"MySQL weather API returned non-JSON: {exc}") from exc
+    rows = _wxdb.table_rows("weather_mean", state, date=t2_date, limit=None)
 
     if not isinstance(rows, list) or not rows:
         raise WeatherDataUnavailable(
-            f"No weather data in MySQL for {region} on {t2_date}"
+            f"No weather data for {region} on {t2_date}"
         )
 
     wdf = pd.DataFrame(rows)
@@ -6700,7 +6673,7 @@ def _fetch_t2_weather_from_db(t2_date: str, region: str) -> Optional[pd.DataFram
 
     if len(wdf) < 10:
         raise WeatherDataUnavailable(
-            f"MySQL weather for {region} {t2_date} has only {len(wdf)} blocks (need ≥10)"
+            f"Weather for {region} {t2_date} has only {len(wdf)} blocks (need ≥10)"
         )
 
     wdf = _recompute_precipitation_if_split(wdf)
@@ -6975,7 +6948,7 @@ def run_t2_pipeline(
     # ── Step 3: Build T+2 rows — use DB weather if available ─────────────────
     dates_in_df = sorted(df["date"].dropna().astype(str).unique().tolist()) if "date" in df.columns else []
 
-    # Fetch real T+2 weather from MySQL via Django API
+    # Fetch T+2 weather from PostgreSQL
     t2_weather_df = None
     _t2_wx_log = logging.getLogger(__name__)
     if _region:

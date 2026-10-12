@@ -85,10 +85,14 @@ except ImportError:
     )
 
 try:
+    from . import auth_db as _auth_db
     from .api_auth import BearerAuthMiddleware
+    from .auth_router import router as auth_router
     from .pipeline_router import router as pipeline_router
 except ImportError:
+    import auth_db as _auth_db
     from api_auth import BearerAuthMiddleware
+    from auth_router import router as auth_router
     from pipeline_router import router as pipeline_router
 
 # --- Initialization ---
@@ -110,19 +114,24 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+app.include_router(auth_router)
 app.include_router(pipeline_router)
 
 # Forecast Engine v3 (/api/v3/*) — contract: docs/forecast-v3-api.md
 try:
+    from . import daily_jobs
+    from .forecast_v3_router import get_service as forecast_v3_get_service
     from .forecast_v3_router import router as forecast_v3_router
 except ImportError:
+    import daily_jobs  # type: ignore
+    from forecast_v3_router import get_service as forecast_v3_get_service
     from forecast_v3_router import router as forecast_v3_router
 app.include_router(forecast_v3_router)
 
 # ── Data loading helpers ───────────────────────────────────────────────────
 
 class DataUnavailable(Exception):
-    """Raised when MySQL data is unavailable."""
+    """Raised when database data is unavailable."""
     pass
 
 
@@ -132,10 +141,10 @@ def _load_df_from_pipeline_db(
     to_date: str = None,
     days: int | None = None,
 ) -> "pd.DataFrame | None":
-    """Load engine-compatible DataFrame for the given region from MySQL only.
+    """Load engine-compatible DataFrame for the given region from PostgreSQL only.
 
-    MySQL (via build_final_data API) is the ONLY source.  Raises DataUnavailable
-    if MySQL is unreachable or returns no data.  Callers must surface the error.
+    PostgreSQL (via build_final_data) is the ONLY source.  Raises DataUnavailable
+    if the database is unreachable or returns no data.  Callers must surface the error.
     """
     import pandas as _pd
 
@@ -147,7 +156,7 @@ def _load_df_from_pipeline_db(
     if _rd_root not in _sys.path:
         _sys.path.insert(0, _rd_root)
     from build_final_data import _date_range_to_days, build_final_data as _build
-    logger.info("[switch-region] Loading %s from MySQL (from=%s to=%s) ...", state, from_date, to_date)
+    logger.info("[switch-region] Loading %s from PostgreSQL (from=%s to=%s) ...", state, from_date, to_date)
     full_days = int(days) if days is not None else int(os.getenv("FULL_HISTORY_DAYS", "730"))
     eff_days = _date_range_to_days(from_date, to_date, default=full_days)
 
@@ -155,17 +164,17 @@ def _load_df_from_pipeline_db(
         df = _build(state=state, days=eff_days, from_date=from_date, to_date=to_date)
     except Exception as _e:
         raise DataUnavailable(
-            f"MySQL API error loading {state}: {_e}"
+            f"Database error loading {state}: {_e}"
         ) from _e
 
     if df is None or df.empty:
         raise DataUnavailable(
-            f"No data in MySQL for {state} (range={from_date}..{to_date}, days={eff_days})"
+            f"No data in the database for {state} (range={from_date}..{to_date}, days={eff_days})"
         )
 
     if 'Datetime' in df.columns:
         df['Datetime'] = _pd.to_datetime(df['Datetime'], errors='coerce')
-    logger.info("[switch-region] MySQL: %d rows for %s", len(df), state)
+    logger.info("[switch-region] PostgreSQL: %d rows for %s", len(df), state)
     return df
 
 
@@ -301,24 +310,16 @@ async def _run_forecast_job(job_id: str) -> None:
             )
             job["result"] = processed
 
-        # ── Persist result to Django DB via HTTP ───────────────────────────
+        # ── Persist result in PostgreSQL ───────────────────────────────────
         if job.get("result"):
             try:
-                import requests as _req
-                _django_base = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001")
-                _req.post(
-                    f"{_django_base}/auth/results/save",
-                    json={
-                        "job_id": job_id,
-                        "date": job["date"],
-                        "region": job["region"],
-                        "baseline_days": job["baseline_days"],
-                        "result": job["result"],
-                    },
-                    timeout=10,
-                )
+                with _auth_db.SessionLocal() as _s:
+                    _auth_db.save_forecast_result(
+                        _s, job_id=job_id, date=job["date"], region=job["region"],
+                        baseline_days=job["baseline_days"], result=job["result"],
+                    )
             except Exception as _db_exc:
-                logger.warning("Could not persist forecast result to Django: %s", _db_exc)
+                logger.warning("Could not persist forecast result: %s", _db_exc)
 
         job["status"] = "done"
         job["completed_at"] = _time_module.time()
@@ -356,26 +357,47 @@ def _clear_runtime_caches() -> None:
     _simulator_date_context.cache_clear()
 
 
+def _load_engine(region: str) -> None:
+    """(Re)load the legacy engine's in-memory frame from PostgreSQL."""
+    global engine, gridintel, _CURRENT_REGION
+    db_df = _load_df_from_pipeline_db(region)
+    import tempfile as _tmp, os as _os2
+    tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
+    db_df.to_csv(tmp, index=False)
+    tmp.close()
+    try:
+        new_engine = EDAEngine(tmp.name, region=region)
+        new_gridintel = GridIntelControlDesk(tmp.name)
+    finally:
+        _os2.unlink(tmp.name)
+    engine, gridintel, _CURRENT_REGION = new_engine, new_gridintel, region
+    logger.info("[engine] PostgreSQL data loaded for region=%s (%d rows)", region, len(db_df))
+
+
 @app.on_event("startup")
 async def on_startup():
-    """Load MySQL data at startup so engine._df is never empty on first request."""
-    global engine, gridintel, _CURRENT_REGION
+    """Load data at startup and start the daily T+1/T+2 forecasting cycle."""
     startup_region = os.environ.get("STARTUP_REGION", "haryana").lower().strip()
     try:
-        db_df = await asyncio.to_thread(_load_df_from_pipeline_db, startup_region)
-        import tempfile as _tmp, os as _os2
-        tmp = _tmp.NamedTemporaryFile(suffix=".csv", delete=False, mode="w", newline="")
-        db_df.to_csv(tmp, index=False)
-        tmp.close()
-        try:
-            engine   = EDAEngine(tmp.name, region=startup_region)
-            gridintel = GridIntelControlDesk(tmp.name)
-        finally:
-            _os2.unlink(tmp.name)
-        _CURRENT_REGION = startup_region
-        logger.info("[startup] MySQL data loaded for region=%s (%d rows)", startup_region, len(db_df))
+        # Bring the dummy feed up to date first so the engine sees today's data.
+        await asyncio.to_thread(daily_jobs.topup_dummy_data)
     except Exception as _e:
-        logger.warning("[startup] Could not load MySQL data for %s: %s — engine will be empty until switch-region is called", startup_region, _e)
+        logger.warning("[startup] dummy feed top-up failed: %s", _e)
+    try:
+        await asyncio.to_thread(_load_engine, startup_region)
+    except Exception as _e:
+        logger.warning("[startup] Could not load data for %s: %s", startup_region, _e)
+
+    def _on_new_data() -> None:
+        try:
+            _load_engine(_CURRENT_REGION or startup_region)
+        except Exception as exc:  # keep serving the previous frame
+            logger.warning("[daily] engine reload failed: %s", exc)
+
+    if os.environ.get("DAILY_JOBS_ENABLED", "true").strip().lower() not in ("0", "false", "no"):
+        app.state.daily_task = asyncio.create_task(
+            daily_jobs.scheduler(forecast_v3_get_service, _on_new_data)
+        )
 
 # --- Lightweight V2 helpers for the new UI ---
 def _get_df(copy=True):
@@ -2816,21 +2838,15 @@ def api_simulator_blocks(req: SimulatorBlocksRequest):
             weights_df["weight_confidence"] = 0.5
             
         weights_source = "linear_regression"
-        # ── Persist weights to Django DB via HTTP ──────────────────────────
+        # ── Persist weights in PostgreSQL ──────────────────────────────────
         try:
-            import requests as _req2
-            _django_base2 = os.environ.get("PIPELINE_API_BASE_URL", "http://localhost:8001")
-            _req2.post(
-                f"{_django_base2}/auth/weights/save",
-                json={
-                    "region": req.region if hasattr(req, "region") else "unknown",
-                    "weights_type": "block_driver",
-                    "weights": weights_df.to_dict(orient="list"),
-                },
-                timeout=10,
-            )
+            with _auth_db.SessionLocal() as _s:
+                _auth_db.save_model_weights(
+                    _s, region=req.region if hasattr(req, "region") else "unknown",
+                    weights_type="block_driver", weights=weights_df.to_dict(orient="list"),
+                )
         except Exception as _wdb_exc:
-            logger.warning("Could not persist block driver weights to Django: %s", _wdb_exc)
+            logger.warning("Could not persist block driver weights: %s", _wdb_exc)
     except Exception as e:
         logger.warning("Error in api_simulator_blocks weights: %s", e)
         # Fallback

@@ -16,9 +16,12 @@ export type ModelKey = 'lgbm_residual' | 'lgbm_direct' | 'recent_day' | 'seasona
 
 export interface ForecastRequest {
   region: string;
+  /** Must be today + horizon (the server rejects past or other dates). */
   target_date: string;
   horizon: Horizon;
   model: string;
+  /** Recompute on the server instead of returning today's issued forecast. */
+  refresh?: boolean;
 }
 
 export interface ForecastBlock {

@@ -1,16 +1,17 @@
-"""Bearer-token authentication for the FastAPI forecasting service.
+"""Bearer-token authentication for the FastAPI service.
 
-Users log in through Django (``/auth/login``), which issues the session token
-the frontend sends on every request. This middleware accepts a request when:
+Users log in at ``/auth/login`` (``auth_router``), which stores a session token
+in PostgreSQL. This middleware accepts a request when:
 
+* the path is public (``/auth/login``, ``/auth/register``), or
 * the token is the shared service key ``API_SECRET_KEY`` (internal callers), or
-* Django's ``/auth/me`` accepts it as a live user session.
+* the token is a live, unexpired session in the ``user_sessions`` table.
 
-Successful Django lookups are cached briefly so each request does not cost a
-round trip. Browsers cannot set headers on a WebSocket, so WebSocket clients
-pass the token as a ``?token=`` query parameter instead.
+Successful lookups are cached briefly so each request does not cost a query.
+Browsers cannot set headers on a WebSocket, so WebSocket clients pass the token
+as a ``?token=`` query parameter instead.
 
-Set ``FASTAPI_AUTH_DISABLED=true`` only for local development without Django.
+Set ``FASTAPI_AUTH_DISABLED=true`` only for local development without a database.
 """
 from __future__ import annotations
 
@@ -23,12 +24,11 @@ import time
 from typing import Dict, Optional
 from urllib.parse import parse_qs
 
-import requests
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL_S = float(os.getenv("FASTAPI_AUTH_CACHE_TTL", "60"))
-_DJANGO_TIMEOUT_S = 5.0
 
 # token -> monotonic expiry time
 _valid_tokens: Dict[str, float] = {}
@@ -38,13 +38,7 @@ def _auth_disabled() -> bool:
     return os.getenv("FASTAPI_AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes")
 
 
-def _django_me_url() -> str:
-    base = (
-        os.getenv("DJANGO_AUTH_BASE_URL")
-        or os.getenv("PIPELINE_API_BASE_URL")
-        or "http://localhost:8001"
-    )
-    return f"{base.rstrip('/')}/auth/me"
+PUBLIC_PATHS = frozenset({"/auth/login", "/auth/register"})
 
 
 def _is_service_token(token: str) -> bool:
@@ -52,17 +46,24 @@ def _is_service_token(token: str) -> bool:
     return bool(secret) and hmac.compare_digest(token, secret)
 
 
-def _check_with_django(token: str) -> bool:
+def _check_session(token: str) -> bool:
+    """True if ``token`` is an unexpired session in the database."""
     try:
-        resp = requests.get(
-            _django_me_url(),
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=_DJANGO_TIMEOUT_S,
-        )
-    except requests.RequestException as exc:
-        logger.warning("Auth check against Django failed: %s", exc)
+        try:
+            from . import auth_db
+        except ImportError:
+            import auth_db  # type: ignore
+        with auth_db.SessionLocal() as db:
+            sess = auth_db.get_session(db, token)
+            if sess is None:
+                return False
+            expires = sess.expires_at
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            return expires > datetime.now(timezone.utc)
+    except Exception as exc:  # database unreachable
+        logger.warning("Session lookup failed: %s", exc)
         return False
-    return resp.status_code == 200
 
 
 async def is_token_valid(token: Optional[str]) -> bool:
@@ -74,7 +75,7 @@ async def is_token_valid(token: Optional[str]) -> bool:
     expiry = _valid_tokens.get(token)
     if expiry is not None and expiry > now:
         return True
-    ok = await asyncio.to_thread(_check_with_django, token)
+    ok = await asyncio.to_thread(_check_session, token)
     if ok:
         if len(_valid_tokens) > 10_000:
             for t, exp in list(_valid_tokens.items()):
@@ -117,7 +118,7 @@ class BearerAuthMiddleware:
             return
 
         if scope_type == "http":
-            if scope.get("method") == "OPTIONS":
+            if scope.get("method") == "OPTIONS" or scope.get("path") in PUBLIC_PATHS:
                 await self.app(scope, receive, send)
                 return
             if await is_token_valid(_bearer_from_headers(scope)):

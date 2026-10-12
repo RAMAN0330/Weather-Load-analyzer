@@ -7,12 +7,38 @@ All routes require the Bearer session token (see `backend/api_auth.py`).
 Conventions: dates are `YYYY-MM-DD`; blocks are 1..96 (block 1 = 00:00–00:15 IST);
 all load values are MW of **net grid drawal** (`total_drawal`). `null` = missing, never 0.
 
+## Daily issue (T+1 and T+2 only)
+
+Forecasts are issued **once per operating day (IST)** for exactly two targets:
+T+1 = tomorrow and T+2 = the day after. A background job (every
+`DAILY_JOB_INTERVAL_S`, default 900 s) tops up the dummy data feed and issues
+both forecasts with the default model; results are cached for the day.
+Past or other target dates are rejected (422) — evaluate history with
+`/api/v3/backtest`. Only region `haryana` is available.
+
+## GET /api/v3/forecast/daily?model=lgbm_residual&refresh=false
+
+Returns today's issued pair (served from cache; `refresh=true` recomputes):
+```json
+{ "ops_date": "2026-10-12", "region": "haryana", "model": "lgbm_residual",
+  "targets": { "1": "2026-10-13", "2": "2026-10-14" },
+  "t1": { "...": "forecast response (below)", "issued_for": "2026-10-12", "issued_at": "2026-10-12T06:43:01+05:30" },
+  "t2": { "...": "forecast response (below)" } }
+```
+
+## GET /api/v3/status
+
+Daily-job state: `ops_date`, `targets`, cached forecasts, last run / error,
+dummy-feed flag and DB query-cache stats (`hits`, `misses`, `entries`, `ttl_s`).
+
 ## POST /api/v3/forecast
 
 Request:
 ```json
-{ "region": "haryana", "target_date": "2026-10-10", "horizon": 1, "model": "lgbm_residual" }
+{ "horizon": 1, "model": "lgbm_residual", "refresh": false }
 ```
+- `target_date` is optional; if given it must equal today + `horizon` (else 422).
+- `refresh: true` recomputes with the latest data instead of returning today's issued forecast.
 - `horizon`: 1 (T+1) or 2 (T+2). Origin = `target_date - horizon` days; only data
   dated **≤ origin** is used.
 - `model`: `lgbm_residual` (default) | `lgbm_direct` | `recent_day` | `seasonal_naive`.

@@ -17,12 +17,6 @@ const TABS = [
   { key: 'similar', label: 'Similar Days',    icon: Search,    color: 'var(--accent2)' },
 ];
 
-const STATES = [
-  'HARYANA','CHHATTISGARH','RAJASTHAN','ODISHA','PUNJAB','DELHI',
-  'UTTAR_PRADESH','UTTARAKHAND','HIMACHAL_PRADESH','GUJARAT',
-  'MADHYA_PRADESH','MAHARASHTRA','BIHAR','JHARKHAND','WEST_BENGAL',
-  'TAMIL_NADU','KARNATAKA','TELANGANA','ANDHRA_PRADESH','KERALA',
-];
 
 const T = {
   bg:     'var(--bg)',
@@ -47,7 +41,7 @@ function FallbackSpinner() {
 
 export default function AnalyticsShell({ onHome }) {
   const [tab, setTab]           = useState('weather');
-  const [state, setState]       = useState('HARYANA');
+  const state = 'HARYANA'; // single-state product
   const [collapsed, setCollapsed] = useState(false);
 
   const SIDEBAR_W = collapsed ? 64 : 220;
@@ -141,20 +135,7 @@ export default function AnalyticsShell({ onHome }) {
                 <MapPin size={12} style={{ color: T.accent }} />
                 <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: T.faint }}>Location</span>
               </div>
-              <select
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-                style={{
-                  width: '100%', background: 'rgba(var(--overlay-rgb),0.06)',
-                  border: `1px solid ${T.border}`, borderRadius: 9,
-                  color: T.fg, padding: '6px 8px', fontSize: 12,
-                  fontWeight: 500, cursor: 'pointer', outline: 'none',
-                }}
-              >
-                {STATES.map((s) => (
-                  <option key={s} value={s} style={{ background: 'var(--bg-panel)' }}>{s.replace(/_/g, ' ')}</option>
-                ))}
-              </select>
+              <div style={{ color: T.fg, fontSize: 12, fontWeight: 600, padding: '6px 8px' }}>Haryana</div>
             </div>
           )}
         </nav>

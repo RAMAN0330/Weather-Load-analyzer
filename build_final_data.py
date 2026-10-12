@@ -32,7 +32,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import requests
 
 # ── Load env from ./env file ──────────────────────────────────────────────
 _ENV_PATH = Path(__file__).parent / "env"
@@ -43,9 +42,13 @@ if _ENV_PATH.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-API_BASE = os.environ.get("PIPELINE_API_BASE_URL", "http://3.108.54.200:8001").rstrip("/")
-API_TOKEN = os.environ.get("PIPELINE_API_TOKEN", os.environ.get("API_SECRET_KEY", "flagbearer"))
-TIMEOUT = 60
+# Data comes from PostgreSQL (DATABASE_URL); see backend/db.py and db/seed.py.
+import sys as _sys
+
+for _p in (Path(__file__).parent, Path(__file__).parent / "backend"):
+    if str(_p) not in _sys.path:
+        _sys.path.insert(0, str(_p))
+import db as _db  # noqa: E402
 
 INDIAN_HOLIDAYS_STATIC = {
     2023: [(1,26),(3,8),(3,30),(4,4),(4,6),(4,14),(4,21),(5,1),(6,29),(8,15),(8,31),(9,19),(10,2),(10,24),(11,12),(11,13),(12,25)],
@@ -56,28 +59,15 @@ INDIAN_HOLIDAYS_STATIC = {
 
 # ── API helpers ────────────────────────────────────────────────────────────
 
-def _session() -> requests.Session:
-    s = requests.Session()
-    s.headers["Authorization"] = f"Bearer {API_TOKEN}"
-    s.headers["Accept"] = "application/json"
-    return s
-
-
-_sess = _session()
-
-
-def _get(path: str, params: dict) -> list[dict]:
-    """GET from API, return list of row dicts."""
-    url = f"{API_BASE}{path}"
-    resp = _sess.get(url, params=params, timeout=TIMEOUT)
-    resp.raise_for_status()
-    data = resp.json()
-    if isinstance(data, list):
-        return data
-    return []
-
-
-_MAX_ROWS_PER_REQUEST = int(os.environ.get("PIPELINE_API_MAX_LIMIT", "9600"))  # 100 days × 96 blocks
+# Old pipeline-API paths -> mock table names.
+_PATH_TO_TABLE = {
+    "/load": "load",
+    "/sldc": "sldc",
+    "/weather/mean": "weather_mean",
+    "/weather/loc": "weather_loc",
+    "/forecast": "forecast",
+    "/sldc/forecast": "sldc_forecast",
+}
 
 
 def _fetch_table(
@@ -87,45 +77,20 @@ def _fetch_table(
     to_date: str = None,
     days: int = 120,
 ) -> list[dict]:
-    """
-    Fetch rows from the API with date-range chunking so we never exceed the
-    server's max page size.  Chunks the requested window into N-day slices
-    and concatenates results.
-    """
-    # Resolve the full window into absolute from/to dates
+    """Rows for ``path`` over the requested window, from PostgreSQL."""
     import datetime as _dt
+
+    table = _PATH_TO_TABLE[path]
     today = _dt.date.today()
     if from_date:
         start_dt = _dt.date.fromisoformat(from_date[:10])
     else:
         total_days = _date_range_to_days(from_date, to_date, default=days)
         start_dt = today - _dt.timedelta(days=total_days)
-    if to_date:
-        end_dt = _dt.date.fromisoformat(to_date[:10])
-    else:
-        end_dt = today
-
+    end_dt = _dt.date.fromisoformat(to_date[:10]) if to_date else today
     if end_dt < start_dt:
         start_dt, end_dt = end_dt, start_dt
-
-    chunk_days = max(1, _MAX_ROWS_PER_REQUEST // 96)  # how many days fit per request
-    all_rows: list[dict] = []
-    cursor = start_dt
-    while cursor <= end_dt:
-        chunk_end = min(cursor + _dt.timedelta(days=chunk_days - 1), end_dt)
-        params = {
-            "state": state.upper(),
-            "from_date": cursor.isoformat(),
-            "to_date":   chunk_end.isoformat(),
-            "limit":     _MAX_ROWS_PER_REQUEST,
-        }
-        rows = _get(path, params)
-        all_rows.extend(rows)
-        if chunk_end >= end_dt:
-            break
-        cursor = chunk_end + _dt.timedelta(days=1)
-
-    return all_rows
+    return _db.table_rows(table, state, from_date=start_dt.isoformat(), to_date=end_dt.isoformat(), limit=None)
 
 
 def _norm_load_df(rows: list[dict]) -> pd.DataFrame:
