@@ -27,6 +27,8 @@ services:
 
   # One-shot: fills the database with dummy data (skips if already seeded).
   seed:
+    # Same image tag as fastapi: the second build is a full cache hit.
+    image: forecast-studio-api
     build:
       context: .
       dockerfile: Dockerfile.fastapi
@@ -42,6 +44,7 @@ services:
     restart: "no"
 
   fastapi:
+    image: forecast-studio-api
     build:
       context: .
       dockerfile: Dockerfile.fastapi
