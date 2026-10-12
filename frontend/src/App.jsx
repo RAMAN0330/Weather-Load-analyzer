@@ -181,21 +181,21 @@ const KPI_META = {
   mape: { label: 'MAPE', unit: '%' },
   peak_accuracy_pct: { label: 'Peak Load Accuracy', unit: '%' },
   daily_energy_error_pct: { label: 'Daily Energy Error', unit: '%' },
-  rmse_kw: { label: 'RMSE', unit: 'MW' },
-  bias_kw: { label: 'Forecast Bias', unit: 'MW' },
+  rmse_mw: { label: 'RMSE', unit: 'MW' },
+  bias_mw: { label: 'Forecast Bias', unit: 'MW' },
   block_accuracy_within_2pct: { label: 'Blocks Within ±2%', unit: '%' },
   block_accuracy_within_5pct: { label: 'Blocks Within ±5%', unit: '%' },
   block_over_10pct: { label: 'Blocks > ±10%', unit: '%' },
-  temperature_impact_kw: { label: 'Temperature Impact', unit: 'MW' },
-  humidity_impact_kw: { label: 'Humidity Impact', unit: 'MW' },
-  precipitation_impact_kw: { label: 'Precipitation Impact', unit: 'MW' },
-  calendar_effect_kw: { label: 'Calendar Effect', unit: 'MW' },
-  unexplained_variance_kw: { label: 'Unexplained Variance', unit: 'MW' },
+  temperature_impact_mw: { label: 'Temperature Impact', unit: 'MW' },
+  humidity_impact_mw: { label: 'Humidity Impact', unit: 'MW' },
+  precipitation_impact_mw: { label: 'Precipitation Impact', unit: 'MW' },
+  calendar_effect_mw: { label: 'Calendar Effect', unit: 'MW' },
+  unexplained_variance_mw: { label: 'Unexplained Variance', unit: 'MW' },
   load_dip_count: { label: 'Load Dip Count' },
   load_rise_count: { label: 'Load Rise Count' },
-  max_ramp_kw_per_15min: { label: 'Max Ramp Rate', unit: 'MW/15min' },
-  cooling_sensitivity_kw_per_c: { label: 'Cooling Sensitivity', unit: 'MW/°C' },
-  heating_sensitivity_kw_per_c: { label: 'Heating Sensitivity', unit: 'MW/°C' },
+  max_ramp_mw_per_15min: { label: 'Max Ramp Rate', unit: 'MW/15min' },
+  cooling_sensitivity_mw_per_c: { label: 'Cooling Sensitivity', unit: 'MW/°C' },
+  heating_sensitivity_mw_per_c: { label: 'Heating Sensitivity', unit: 'MW/°C' },
   humidity_amplification_x: { label: 'Humidity Amplification', unit: 'x' },
   precipitation_response_pct: { label: 'Precipitation Response', unit: '%' },
   day_type: { label: 'Day Type' },
@@ -213,16 +213,16 @@ const KPI_META = {
   dr_accuracy_pct: { label: 'DR Accuracy', unit: '%' },
   peak_time_prediction_category: { label: 'Peak Time Prediction' },
   peak_time_block_error: { label: 'Peak Time Error', unit: 'blocks' },
-  peak_variance_attribution_temp_kw: { label: 'Peak Temp Attribution', unit: 'MW' },
-  peak_variance_attribution_hum_kw: { label: 'Peak Humidity Attribution', unit: 'MW' },
-  peak_variance_attribution_precip_kw: { label: 'Peak Precip Attribution', unit: 'MW' },
-  daily_energy_variance_temp_kw: { label: 'Daily Energy Temp', unit: 'MW' },
-  daily_energy_variance_hum_kw: { label: 'Daily Energy Humidity', unit: 'MW' },
-  daily_energy_variance_precip_kw: { label: 'Daily Energy Precip', unit: 'MW' },
-  morning_ramp_delta_kw: { label: 'Morning Ramp Delta', unit: 'MW' },
-  midday_plateau_delta_kw: { label: 'Midday Plateau Delta', unit: 'MW' },
-  evening_peak_delta_kw: { label: 'Evening Peak Delta', unit: 'MW' },
-  night_valley_delta_kw: { label: 'Night Valley Delta', unit: 'MW' },
+  peak_variance_attribution_temp_mw: { label: 'Peak Temp Attribution', unit: 'MW' },
+  peak_variance_attribution_hum_mw: { label: 'Peak Humidity Attribution', unit: 'MW' },
+  peak_variance_attribution_precip_mw: { label: 'Peak Precip Attribution', unit: 'MW' },
+  daily_energy_variance_temp_mw: { label: 'Daily Energy Temp', unit: 'MW' },
+  daily_energy_variance_hum_mw: { label: 'Daily Energy Humidity', unit: 'MW' },
+  daily_energy_variance_precip_mw: { label: 'Daily Energy Precip', unit: 'MW' },
+  morning_ramp_delta_mw: { label: 'Morning Ramp Delta', unit: 'MW' },
+  midday_plateau_delta_mw: { label: 'Midday Plateau Delta', unit: 'MW' },
+  evening_peak_delta_mw: { label: 'Evening Peak Delta', unit: 'MW' },
+  night_valley_delta_mw: { label: 'Night Valley Delta', unit: 'MW' },
   heat_index_effect: { label: 'Heat Index Effect', unit: 'corr' },
   weekend_weather_interaction: { label: 'Weekend Weather Interaction', unit: 'corr' },
   rain_temperature_interaction: { label: 'Rain × Temp Interaction', unit: 'corr' },
@@ -237,16 +237,13 @@ const KPI_TARGETS = {
   mape: { type: 'max', good: 3, warn: 5 },
   peak_accuracy_pct: { type: 'max', good: 2, warn: 3 },
   daily_energy_error_pct: { type: 'max', good: 2.5, warn: 4 },
-  rmse_kw: { type: 'max', good: 0.5, warn: 0.7 },
-  bias_kw: { type: 'abs', good: 0.1, warn: 0.2 },
   block_accuracy_within_2pct: { type: 'min', good: 70, warn: 60 },
   block_accuracy_within_5pct: { type: 'min', good: 90, warn: 80 },
   block_over_10pct: { type: 'max', good: 2, warn: 5 },
   reserve_margin_adequacy_pct: { type: 'range', good: [15, 20], warn: [10, 25] },
   dr_accuracy_pct: { type: 'min', good: 90, warn: 80 },
   baseline_confidence_score: { type: 'min', good: 85, warn: 70 },
-  historical_completeness_pct: { type: 'min', good: 98, warn: 95 },
-  unexplained_variance_kw: { type: 'max', good: 0, warn: 2 }
+  historical_completeness_pct: { type: 'min', good: 98, warn: 95 }
 };
 
 
@@ -671,15 +668,15 @@ const Ring = ({ value = 0 }) => {
 };
 
 const KPI_GROUPS = [
-  { key: 'forecast_accuracy', label: 'Forecast Accuracy', keys: ['mape', 'peak_accuracy_pct', 'daily_energy_error_pct', 'rmse_kw', 'bias_kw', 'block_accuracy_within_2pct', 'block_accuracy_within_5pct', 'block_over_10pct'] },
-  { key: 'attribution', label: 'Attribution & Root Cause', keys: ['temperature_impact_kw', 'humidity_impact_kw', 'precipitation_impact_kw', 'calendar_effect_kw', 'unexplained_variance_kw'] },
-  { key: 'pattern', label: 'Load Pattern Analysis', keys: ['load_dip_count', 'load_rise_count', 'max_ramp_kw_per_15min'] },
-  { key: 'weather', label: 'Weather Sensitivity', keys: ['cooling_sensitivity_kw_per_c', 'heating_sensitivity_kw_per_c', 'humidity_amplification_x', 'precipitation_response_pct'] },
+  { key: 'forecast_accuracy', label: 'Forecast Accuracy', keys: ['mape', 'peak_accuracy_pct', 'daily_energy_error_pct', 'rmse_mw', 'bias_mw', 'block_accuracy_within_2pct', 'block_accuracy_within_5pct', 'block_over_10pct'] },
+  { key: 'attribution', label: 'Attribution & Root Cause', keys: ['temperature_impact_mw', 'humidity_impact_mw', 'precipitation_impact_mw', 'calendar_effect_mw', 'unexplained_variance_mw'] },
+  { key: 'pattern', label: 'Load Pattern Analysis', keys: ['load_dip_count', 'load_rise_count', 'max_ramp_mw_per_15min'] },
+  { key: 'weather', label: 'Weather Sensitivity', keys: ['cooling_sensitivity_mw_per_c', 'heating_sensitivity_mw_per_c', 'humidity_amplification_x', 'precipitation_response_pct'] },
   { key: 'calendar', label: 'Day Type & Calendar', keys: ['day_type', 'weekend_load_change_pct', 'holiday_impact_pct', 'weekend_to_weekday_transition_pct', 'day_after_holiday_pct', 'day_type_match_quality'] },
   { key: 'baseline', label: 'Baseline Quality', keys: ['baseline_confidence_score', 'baseline_std_dev', 'baseline_completeness_pct', 'baseline_outlier_days'] },
   { key: 'operational', label: 'Operational Decision', keys: ['reserve_margin_adequacy_pct', 'generator_commitment_alignment_pct', 'dr_accuracy_pct', 'peak_time_prediction_category', 'peak_time_block_error'] },
-  { key: 'variance', label: 'Variance Attribution', keys: ['peak_variance_attribution_temp_kw', 'peak_variance_attribution_hum_kw', 'peak_variance_attribution_precip_kw', 'daily_energy_variance_temp_kw', 'daily_energy_variance_hum_kw', 'daily_energy_variance_precip_kw'] },
-  { key: 'time_patterns', label: 'Time-Based Patterns', keys: ['morning_ramp_delta_kw', 'midday_plateau_delta_kw', 'evening_peak_delta_kw', 'night_valley_delta_kw'] },
+  { key: 'variance', label: 'Variance Attribution', keys: ['peak_variance_attribution_temp_mw', 'peak_variance_attribution_hum_mw', 'peak_variance_attribution_precip_mw', 'daily_energy_variance_temp_mw', 'daily_energy_variance_hum_mw', 'daily_energy_variance_precip_mw'] },
+  { key: 'time_patterns', label: 'Time-Based Patterns', keys: ['morning_ramp_delta_mw', 'midday_plateau_delta_mw', 'evening_peak_delta_mw', 'night_valley_delta_mw'] },
   { key: 'interactions', label: 'Multi-Factor Interactions', keys: ['heat_index_effect', 'weekend_weather_interaction', 'rain_temperature_interaction'] },
   { key: 'improvement', label: 'Forecast Improvement', keys: ['mape_improvement_pct', 'bias_trend_improving', 'problematic_block_identification_rate'] },
   { key: 'data_quality', label: 'Data Quality', keys: ['historical_completeness_pct', 'weather_data_accuracy'] }
@@ -735,8 +732,8 @@ class KpiErrorBoundary extends React.Component {
 }
 
 const KPI_TIERS = {
-  tier1: new Set(['mape', 'peak_accuracy_pct', 'daily_energy_error_pct', 'reserve_margin_adequacy_pct', 'bias_kw']),
-  tier2: new Set(['rmse_kw', 'block_accuracy_within_2pct', 'block_accuracy_within_5pct', 'block_over_10pct', 'temperature_impact_kw', 'humidity_impact_kw', 'unexplained_variance_kw', 'dr_accuracy_pct'])
+  tier1: new Set(['mape', 'peak_accuracy_pct', 'daily_energy_error_pct', 'reserve_margin_adequacy_pct', 'bias_mw']),
+  tier2: new Set(['rmse_mw', 'block_accuracy_within_2pct', 'block_accuracy_within_5pct', 'block_over_10pct', 'temperature_impact_mw', 'humidity_impact_mw', 'unexplained_variance_mw', 'dr_accuracy_pct'])
 };
 
 const KPIGrid = ({ kpis, filterText = '', viewMode = 'all' }) => {
@@ -1004,7 +1001,9 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
   const validLoads = monLoads.filter(v => v > 0);
   const peak    = validLoads.length ? Math.max(...validLoads) : 0;
   const valley  = validLoads.length ? Math.min(...validLoads) : 0;
-  const energy  = monLoads.reduce((s, v) => s + v * 0.25, 0);
+  // Missing blocks are 0 in monLoads; sum energy over observed blocks only.
+  const energy  = validLoads.reduce((s, v) => s + v * 0.25, 0);
+  const energyPartial = validLoads.length > 0 && validLoads.length < 96;
   const avgLoad = validLoads.length ? validLoads.reduce((a, b) => a + b, 0) / validLoads.length : 0;
   const loadFactor = peak > 0 ? (avgLoad / peak) * 100 : 0;
   const sorted  = [...validLoads].sort((a, b) => a - b);
@@ -1014,7 +1013,9 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
   const iqr = q3 - q1;
   const stdDev = validLoads.length > 1 ? Math.sqrt(validLoads.reduce((s, v) => s + (v - avgLoad) ** 2, 0) / validLoads.length) : 0;
   const cv   = avgLoad > 0 ? (stdDev / avgLoad) * 100 : 0;
-  const ramps = monLoads.slice(1).map((v, i) => v - monLoads[i]);
+  // Ramps only between consecutive observed blocks (a gap is not a ramp).
+  const rampEvents = monLoads.slice(1).map((v, i) => ({ v: v - monLoads[i], i, ok: v > 0 && monLoads[i] > 0 })).filter(r => r.ok);
+  const ramps = rampEvents.map(r => r.v);
   const maxRampUp   = ramps.length ? Math.max(...ramps) : 0;
   const maxRampDown = ramps.length ? Math.min(...ramps) : 0;
   const pvRatio  = valley > 0 ? peak / valley : null;
@@ -1027,9 +1028,9 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 
   /* ── ramp profile ── */
   const topRamps = React.useMemo(() => {
-    return ramps.map((v, i) => ({ v, t: `${String(Math.floor((i+1)/4)).padStart(2,'0')}:${String(((i+1)%4)*15).padStart(2,'0')}` }))
+    return rampEvents.map(({ v, i }) => ({ v, t: `${String(Math.floor((i+1)/4)).padStart(2,'0')}:${String(((i+1)%4)*15).padStart(2,'0')}` }))
       .sort((a,b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, 5);
-  }, [ramps]);
+  }, [rampEvents]);
 
   /* ── error vs baseline ── */
   const errorPairs = monLoads.map((v, i) => ({ a: v, f: monYLoads[i] })).filter(({ a, f }) => a > 100 && f > 0);
@@ -1073,7 +1074,7 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
 
   /* ── stat tabs ── */
   const statGroups = {
-    central:  [['Peak Load', fmtN(peak,0), 'MW', 'var(--tone-warm)', `Occurs at ${peakTime}`], ['Valley Load', fmtN(valley,0), 'MW', 'var(--accent)', `Occurs at ${valleyTime}`], ['Mean Load', fmtN(avgLoad,0), 'MW', 'var(--text)', 'Simple arithmetic mean of all valid blocks'], ['Median Load', fmtN(median,0), 'MW', 'var(--warning)', '50th percentile — robust to outliers'], ['Day Energy', fmtN(energy,0), 'MWh', 'var(--text)', 'Sum of load × 0.25 h across all 96 blocks'], ['Load Factor', fmtN(loadFactor,2), '%', loadFactor>=70?'var(--success)':'var(--warning)', 'Mean/Peak — higher = more efficient utilisation']],
+    central:  [['Peak Load', fmtN(peak,0), 'MW', 'var(--tone-warm)', `Occurs at ${peakTime}`], ['Valley Load', fmtN(valley,0), 'MW', 'var(--accent)', `Occurs at ${valleyTime}`], ['Mean Load', fmtN(avgLoad,0), 'MW', 'var(--text)', 'Simple arithmetic mean of all valid blocks'], ['Median Load', fmtN(median,0), 'MW', 'var(--warning)', '50th percentile — robust to outliers'], ['Day Energy', fmtN(energy,0), 'MWh', 'var(--text)', energyPartial ? `Sum of load × 0.25 h over ${validLoads.length}/96 observed blocks` : 'Sum of load × 0.25 h across all 96 blocks'], ['Load Factor', fmtN(loadFactor,2), '%', loadFactor>=70?'var(--success)':'var(--warning)', 'Mean/Peak — higher = more efficient utilisation']],
     spread:   [['Std Deviation', fmtN(stdDev,0), 'MW', 'var(--accent2)', 'Square root of variance — measures load volatility'], ['IQR (Q3−Q1)', fmtN(iqr,0), 'MW', 'var(--accent2)', 'Middle 50% spread — resistant to extremes'], ['Q1 (25th pct)', fmtN(q1,0), 'MW', 'var(--accent)', 'Bottom quartile load threshold'], ['Q3 (75th pct)', fmtN(q3,0), 'MW', 'var(--accent2)', 'Top quartile load threshold'], ['CV %', fmtN(cv,2), '%', 'var(--accent2)', 'Std Dev / Mean × 100 — normalised volatility'], ['P/V Ratio', pvRatio!=null?pvRatio.toFixed(3):'--', '', 'var(--text)', 'Peak-to-valley — higher = greater storage opportunity']],
     ramp:     [['Max Ramp Up', fmtN(maxRampUp,0), 'MW/15m', maxRampUp>200?'var(--danger)':'var(--warning)', 'Largest positive 15-min delta'], ['Max Ramp Down', fmtN(Math.abs(maxRampDown),0), 'MW/15m', 'var(--accent)', 'Largest negative 15-min delta (absolute)'], ['Valid Blocks', validLoads.length, '/ 96', 'var(--text)', 'Blocks with non-zero load observed'], ['Peak Time', peakTime, '', 'var(--tone-warm)', 'Clock time of peak block'], ['Valley Time', valleyTime, '', 'var(--accent)', 'Clock time of lowest load block'], ['Temp Now', monTemps[nowBlk]!=null?`${monTemps[nowBlk].toFixed(1)}°C`:'--', '', 'var(--warning)', 'Ambient temperature at current block']],
     perf:     [['MAPE (meta)', mape!=null?`${mape.toFixed(2)}%`:'--', '', mape!=null&&mape<3?'var(--success)':'var(--danger)', 'Mean Absolute % Error from API metadata'], ['MAPE (calc)', mapeVal!=null?`${mapeVal.toFixed(2)}%`:'--', '', mapeVal!=null&&mapeVal<3?'var(--success)':mapeVal!=null&&mapeVal<6?'var(--warning)':'var(--danger)', 'Computed from actual vs baseline pairs'], ['MAE', fmtN(maeVal,0), 'MW', 'var(--accent)', 'Mean Absolute Error in MW'], ['RMSE', fmtN(rmseVal,0), 'MW', 'var(--accent2)', 'Root Mean Squared Error — penalises large errors'], ['Bias', biasVal!=null?`${biasVal>0?'+':''}${fmtN(biasVal,0)}`:'--', 'MW', biasVal!=null&&Math.abs(biasVal)<50?'var(--success)':'var(--warning)', 'Signed mean error — positive = over-forecast'], ['Error Pairs', errorPairs.length, 'blocks', 'var(--text)', 'Blocks used for error calculation']],
@@ -1126,7 +1127,7 @@ function MonitorPage({ live, dayAhead, effectiveDate, selectedRegion }) {
         {[
           { label: 'Peak Load',     value: fmtN(peak),           unit: 'MW',     color: 'var(--tone-warm)', sub: `at ${peakTime}` },
           { label: 'Valley Load',   value: fmtN(valley),         unit: 'MW',     color: 'var(--accent)', sub: `at ${valleyTime}` },
-          { label: 'Day Energy',    value: fmtN(energy,0),       unit: 'MWh',    color: 'var(--text)', sub: `Avg ${fmtN(avgLoad,0)} MW` },
+          { label: 'Day Energy',    value: fmtN(energy,0),       unit: 'MWh',    color: 'var(--text)', sub: energyPartial ? `Partial: ${validLoads.length}/96 blocks` : `Avg ${fmtN(avgLoad,0)} MW` },
           { label: 'Load Factor',   value: fmtN(loadFactor,1),   unit: '%',      color: loadFactor>=70?'var(--success)':'var(--warning)', sub: `P/V ${pvRatio!=null?pvRatio.toFixed(2):'--'}` },
           { label: 'Std Deviation', value: fmtN(stdDev,0),       unit: 'MW',     color: 'var(--accent2)', sub: `CV ${fmtN(cv,1)}%` },
           { label: 'Max Ramp Up',   value: fmtN(maxRampUp,0),    unit: 'MW/15m', color: maxRampUp>200?'var(--danger)':'var(--warning)', sub: `Down ${fmtN(Math.abs(maxRampDown),0)}` },
@@ -1358,7 +1359,7 @@ export default function App({ authUser, onLogout, onHome }) {
   const [toasts, setToasts] = useState([]);
   const [selectedBlock, setSelectedBlock] = useState(72);
   const [selectedKpiGroup, setSelectedKpiGroup] = useState('forecast_accuracy');
-  const [selectedKpiImpact, setSelectedKpiImpact] = useState('temperature_impact_kw');
+  const [selectedKpiImpact, setSelectedKpiImpact] = useState('temperature_impact_mw');
   const [weatherAdj, setWeatherAdj] = useState(defaultWeatherAdj);
   const [appliedWeatherAdj, setAppliedWeatherAdj] = useState(defaultWeatherAdj);
   const [calendarConfig, setCalendarConfig] = useState('weekday');

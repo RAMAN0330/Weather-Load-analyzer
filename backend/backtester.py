@@ -7,7 +7,7 @@ Results are stratified by season, day-type, weather regime, and time-of-day.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,7 @@ def run_backtest(
     n_days: int = 90,
     actual_blocks_sim: int = 36,
     config: Optional[Dict] = None,
+    target_dates: Optional[List] = None,
 ) -> Dict[str, Any]:
     """
     Rolling backtest: for each of the last n_days, run pipeline as day-ahead
@@ -32,20 +33,26 @@ def run_backtest(
         n_days: Number of days to backtest
         actual_blocks_sim: Simulated number of known blocks (e.g., 36 = 09:00)
         config: Pipeline config override
+        target_dates: Explicit dates to evaluate (overrides n_days), e.g. a
+            user-selected range. Each date only sees history up to itself.
 
     Returns:
         Dict with daily_results, summary_metrics, stratified_metrics
     """
     dates = sorted(df["date"].unique())
-    if len(dates) < n_days + 15:
-        n_days = max(len(dates) - 15, 7)
-
-    test_dates = dates[-n_days:]
+    if target_dates is not None:
+        wanted = {str(d)[:10] for d in target_dates}
+        test_dates = [d for d in dates if str(d)[:10] in wanted]
+    else:
+        if len(dates) < n_days + 15:
+            n_days = max(len(dates) - 15, 7)
+        test_dates = dates[-n_days:]
     daily_results = []
 
     for target_date in test_dates:
         try:
-            result = pipeline_fn(df, target_date, config=config or {})
+            # Truncate at the target date so the forecast cannot see later data.
+            result = pipeline_fn(df[df["date"] <= target_date], target_date, config=config or {})
             if not isinstance(result, dict):
                 continue
 
@@ -183,7 +190,7 @@ def run_backtest(
         "summary": summary,
         "stratified": stratified,
         "config": {
-            "n_days": n_days,
+            "n_days": len(test_dates),
             "actual_blocks_sim": actual_blocks_sim,
         }
     }

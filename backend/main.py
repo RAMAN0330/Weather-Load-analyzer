@@ -1340,23 +1340,80 @@ def _compute_daytype_metrics(df):
         "weekend_load_change_pct": round(float(weekend_change), 2)
     }
 
+_CDD_BASE_C = 24.0
+_HDD_BASE_C = 18.0
+
+
+def _fit_day_slopes(daily):
+    """OLS of daily mean load on [1, CDD, HDD, humidity]; returns coef dict or None."""
+    cols = ["cdd", "hdd", "humidity"]
+    # Drop regressors with no variation in the window (e.g. no heating days in summer).
+    use = [c for c in cols if daily[c].std(ddof=0) > 1e-9]
+    if len(daily) < len(use) + 3:
+        return None
+    X = np.column_stack([np.ones(len(daily))] + [daily[c].to_numpy(float) for c in use])
+    coef, *_ = np.linalg.lstsq(X, daily["load"].to_numpy(float), rcond=None)
+    out = {c: 0.0 for c in cols}
+    out.update(dict(zip(use, coef[1:])))
+    return out
+
+
 def _compute_weather_sensitivity(df):
-    temp = df["temperature"].to_numpy()
-    load = df["total_drawal"].to_numpy()
-    hum = df["humidity"].to_numpy()
-    if len(temp) < 2:
-        return {"cooling_sensitivity": 0, "heating_sensitivity": 0, "humidity_amplification": 0}
-    # Simple linear slope
-    slope = np.polyfit(temp, load, 1)[0] if len(np.unique(temp)) > 1 else 0
-    hum_slope = np.polyfit(hum, load, 1)[0] if len(np.unique(hum)) > 1 else 0
-    cooling = slope if slope > 0 else 0
-    heating = abs(slope) if slope < 0 else 0
+    """Day-level weather sensitivity.
+
+    Regressing 15-min load on 15-min temperature is confounded by the daily
+    cycle (both peak in the afternoon), so slopes are fitted on daily means:
+    load ~ CDD + HDD + humidity, with CDD/HDD from the daily mean temperature.
+    NaN rows are dropped; values that cannot be estimated are None.
+    """
+    empty = {
+        "cooling_sensitivity": None, "heating_sensitivity": None,
+        "humidity_amplification": None, "temperature_sensitivity": None,
+        "humidity_sensitivity": None, "n_days": 0,
+    }
+    need = {"date", "temperature", "total_drawal", "humidity"}
+    if df is None or df.empty or not need.issubset(df.columns):
+        return empty
+    d = df[list(need)].copy()
+    for c in ("temperature", "total_drawal", "humidity"):
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    d = d[d["total_drawal"] > 0]
+    daily = (
+        d.groupby("date")
+        .agg(load=("total_drawal", "mean"), temp=("temperature", "mean"), humidity=("humidity", "mean"))
+        .dropna()
+    )
+    if len(daily) < 4:
+        return {**empty, "n_days": int(len(daily))}
+    daily["cdd"] = (daily["temp"] - _CDD_BASE_C).clip(lower=0)
+    daily["hdd"] = (_HDD_BASE_C - daily["temp"]).clip(lower=0)
+
+    coef = _fit_day_slopes(daily)
+    if coef is None:
+        return {**empty, "n_days": int(len(daily))}
+    cooling = max(float(coef["cdd"]), 0.0)
+    heating = max(float(coef["hdd"]), 0.0)
+    temp_slope = (
+        float(np.polyfit(daily["temp"], daily["load"], 1)[0]) if daily["temp"].nunique() > 1 else None
+    )
+
+    # Amplification: cooling slope on humid days / on dry days (split at median humidity).
+    amp = None
+    med = daily["humidity"].median()
+    humid, dry = daily[daily["humidity"] > med], daily[daily["humidity"] <= med]
+    if min(len(humid), len(dry)) >= 4 and humid["cdd"].std(ddof=0) > 0 and dry["cdd"].std(ddof=0) > 0:
+        s_h = np.polyfit(humid["cdd"], humid["load"], 1)[0]
+        s_d = np.polyfit(dry["cdd"], dry["load"], 1)[0]
+        if s_d > 1e-6 and s_h > 0:
+            amp = round(float(s_h / s_d), 2)
+
     return {
-        "cooling_sensitivity": round(float(cooling), 2),
-        "heating_sensitivity": round(float(heating), 2),
-        "humidity_amplification": round(float(abs(hum_slope / (slope + 1e-6))), 2),
-        "temperature_sensitivity": round(float(slope), 2),
-        "humidity_sensitivity": round(float(hum_slope), 2)
+        "cooling_sensitivity": round(cooling, 2),
+        "heating_sensitivity": round(heating, 2),
+        "humidity_amplification": amp,
+        "temperature_sensitivity": round(temp_slope, 2) if temp_slope is not None else None,
+        "humidity_sensitivity": round(float(coef["humidity"]), 2),
+        "n_days": int(len(daily)),
     }
 
 def _compute_ramp_metrics(actual):
@@ -5144,7 +5201,8 @@ def v2_backtest(payload: dict = None):
 
         # Cap at 14 days to keep response time under ~60s
         MAX_DAYS = 14
-        if len(all_dates) > MAX_DAYS:
+        capped = len(all_dates) > MAX_DAYS
+        if capped:
             all_dates = all_dates[-MAX_DAYS:]
         n_days = len(all_dates)
 
@@ -5159,6 +5217,7 @@ def v2_backtest(payload: dict = None):
             n_days=n_days,
             actual_blocks_sim=0,
             config={"region": region},
+            target_dates=all_dates,
         )
 
         # Enrich daily results with weather flag from metadata
@@ -5177,7 +5236,6 @@ def v2_backtest(payload: dict = None):
             # Rename mape → t1_mape for consistency
             if "mape" in row and "t1_mape" not in row:
                 row["t1_mape"] = row.pop("mape")
-            row["t2_mape"] = None  # T+2 not run in basic backtest
 
         return _json_safe({
             "daily_results": daily,
@@ -5185,6 +5243,10 @@ def v2_backtest(payload: dict = None):
             "region": region,
             "date_from": date_from,
             "date_to": date_to,
+            "evaluated_dates": all_dates,
+            "capped": capped,
+            # T+2 is not simulated here; use POST /api/v3/backtest with horizons [1, 2].
+            "horizons": [1],
         })
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Backtest error: {exc}")
@@ -5308,45 +5370,7 @@ async def v2_load_change(payload: dict):
     date1 = payload.get("date1")
     date2 = payload.get("date2")
     req_dates = payload.get("dates", [])
-
-    def _work():
-        df = _get_df()
-        dates = req_dates
-
-        def _extract_sum(d):
-            day_df = df[df["date"] == d]
-            return float(day_df["total_drawal"].sum()) if not day_df.empty else 0.0
-
-        if not dates or len(dates) <= 1:
-            dates = sorted(df["date"].dropna().astype(str).unique().tolist())
-
-        if dates and len(dates) > 1:
-            sorted_dates = sorted(dates)
-            daily_trends = []
-            for i in range(1, len(sorted_dates)):
-                curr_sum = _extract_sum(sorted_dates[i])
-                prev_sum = _extract_sum(sorted_dates[i - 1])
-                if prev_sum > 0:
-                    daily_trends.append({
-                        "date": sorted_dates[i],
-                        "value": round(((curr_sum - prev_sum) / prev_sum) * 100, 2)
-                    })
-            return _json_safe({"type": "daily", "data": daily_trends})
-        else:
-            def _extract_blocks(d):
-                day_df = df[df["date"] == d].sort_values("time_block")
-                return day_df["total_drawal"].values if not day_df.empty else np.zeros(96)
-            l1 = _extract_blocks(date1 or (dates[0] if dates else None))
-            l2 = _extract_blocks(date2)
-            l2_safe = np.where(l2 == 0, 1e-6, l2)
-            change_pct = ((l1 - l2) / l2_safe) * 100
-            return _json_safe({
-                "type": "blocks",
-                "blocks": list(range(1, 97)),
-                "change_pct": [round(float(x), 2) for x in change_pct]
-            })
-
-    return await asyncio.to_thread(_work)
+    return await asyncio.to_thread(_v2_load_change_sync, date1, date2, req_dates)
 
 
 @app.post("/api/v2/analysis")
@@ -5483,27 +5507,42 @@ def _v2_load_change_sync(date1: str, date2: str, dates: list):
     if not dates or len(dates) <= 1:
         dates = sorted(df["date"].dropna().astype(str).unique().tolist())
 
-    def _sum(d):
+    def _blocks(d):
+        # 96-aligned MW vector; missing or non-positive blocks are NaN, never 0.
         day_df = df[df["date"] == d]
-        return float(day_df["total_drawal"].sum()) if not day_df.empty else 0.0
+        s = pd.to_numeric(day_df["total_drawal"], errors="coerce").where(lambda v: v > 0)
+        s.index = pd.to_numeric(day_df["time_block"], errors="coerce")
+        s = s[~s.index.duplicated()]
+        return s.reindex(range(1, 97)).to_numpy(dtype=float)
 
     if len(dates) > 1:
         sorted_dates = sorted(dates)
+        sub = df[df["date"].isin(sorted_dates)]
+        grid = (
+            sub.assign(v=pd.to_numeric(sub["total_drawal"], errors="coerce").where(lambda v: v > 0))
+            .pivot_table(index="date", columns="time_block", values="v", aggfunc="first")
+            .reindex(index=sorted_dates, columns=range(1, 97))
+        )
+        vecs = {d: grid.loc[d].to_numpy(dtype=float) for d in sorted_dates}
         daily_trends = []
         for i in range(1, len(sorted_dates)):
-            curr, prev = _sum(sorted_dates[i]), _sum(sorted_dates[i - 1])
-            if prev > 0:
-                daily_trends.append({"date": sorted_dates[i], "value": round(((curr - prev) / prev) * 100, 2)})
+            curr, prev = vecs[sorted_dates[i]], vecs[sorted_dates[i - 1]]
+            # Compare only blocks observed on both days so a partial day is not a "drop".
+            both = ~np.isnan(curr) & ~np.isnan(prev)
+            if both.sum() < 72:  # need >= 75% common coverage
+                continue
+            c, p = curr[both].mean(), prev[both].mean()
+            if p > 0:
+                daily_trends.append({"date": sorted_dates[i], "value": round(((c - p) / p) * 100, 2),
+                                     "blocks_compared": int(both.sum())})
         return _json_safe({"type": "daily", "data": daily_trends})
     else:
-        def _blocks(d):
-            day_df = df[df["date"] == d].sort_values("time_block")
-            return day_df["total_drawal"].values if not day_df.empty else np.zeros(96)
         l1 = _blocks(date1)
         l2 = _blocks(date2)
-        change_pct = ((l1 - l2) / np.where(l2 == 0, 1e-6, l2)) * 100
+        with np.errstate(invalid="ignore", divide="ignore"):
+            change_pct = (l1 - l2) / l2 * 100
         return _json_safe({"type": "blocks", "blocks": list(range(1, 97)),
-                           "change_pct": [round(float(x), 2) for x in change_pct]})
+                           "change_pct": [None if not np.isfinite(x) else round(float(x), 2) for x in change_pct]})
 
 
 def _v2_analysis_fast_sync(date: str, region: str = "haryana"):
